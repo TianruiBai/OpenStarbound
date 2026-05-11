@@ -15,6 +15,7 @@ Use this guide as the entry point, then go deeper in the subsystem and planning 
 - `doc/architecture/flows.md`
 - `doc/architecture/performance-threading-review.md`
 - `doc/architecture/multicore-engineering-plan.md`
+- `doc/architecture/multicore-phase-roadmap.md`
 
 ## 1. Executive Summary
 

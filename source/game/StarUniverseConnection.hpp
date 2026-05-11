@@ -130,12 +130,22 @@ private:
     WorkerStats& operator=(const WorkerStats&) = delete;
   };
 
+  struct WorkerState {
+    Mutex mutex;
+    ConditionVariable condition;
+    List<ConnectionId> connections;
+    bool wakeup = false;
+  };
+
+  void wakeWorker(size_t workerIndex);
+
   PacketReceiveCallback const m_packetReceiver;
 
   mutable RecursiveMutex m_connectionsMutex;
   HashMap<ConnectionId, shared_ptr<Connection>> m_connections;
 
   List<ThreadFunction<void>> m_processingThreads;
+  List<shared_ptr<WorkerState>> m_workerStates;
   List<WorkerStats> m_workerStats;
   atomic<bool> m_shutdown;
   size_t m_numWorkerThreads;

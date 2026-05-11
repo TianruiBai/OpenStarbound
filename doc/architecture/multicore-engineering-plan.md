@@ -6,6 +6,8 @@ The goal is to increase practical multicore utilization on dedicated servers whi
 
 This is not a promise that one crowded world can immediately use every core. The current architecture makes that difficult because the authoritative world tick is mostly serial. The plan therefore improves multicore use in layers: first by reducing scheduler waste and offloading non-simulation work, then by tightening world ownership, then by adding carefully bounded parallel work around the serial simulation lane.
 
+For an execution checklist with Windows tooling notes, researched threading guidance, code touch points, acceptance criteria, and tests for each phase, see `doc/architecture/multicore-phase-roadmap.md`.
+
 ## 1. Design Goals
 
 Primary goals:
