@@ -265,6 +265,51 @@ String CommandProcessor::tickrate(ConnectionId connectionId, String const& argum
   return strf("Set tick rate to {:4.2f}Hz", tickRate);
 }
 
+String CommandProcessor::serverNetStats(ConnectionId connectionId, String const&) {
+  if (auto errorMsg = adminCheck(connectionId, "view server network stats"))
+    return *errorMsg;
+
+  StringList lines;
+  auto stats = m_universe->connectionWorkerStats();
+  lines.append(strf("Network workers: {}", stats.size()));
+
+  uint64_t totalPackets = 0;
+  uint64_t totalScans = 0;
+  uint64_t totalWakeups = 0;
+  uint64_t totalTimedWaits = 0;
+  uint64_t totalIdleTimedWaits = 0;
+
+  for (size_t i = 0; i < stats.size(); ++i) {
+    auto const& workerStats = stats[i];
+    totalPackets += workerStats.packetsProcessed;
+    totalScans += workerStats.connectionScans;
+    totalWakeups += workerStats.wakeups;
+    totalTimedWaits += workerStats.timedWaits;
+    totalIdleTimedWaits += workerStats.idleTimedWaits;
+
+    uint64_t averageCallbackMicroseconds = workerStats.callbackGroupsProcessed
+        ? workerStats.callbackTimeMicroseconds / workerStats.callbackGroupsProcessed
+        : 0;
+
+    lines.append(strf("worker {}: owned={}, handled={}, scans={}, stale={}, packets={}, callbacks={}, avgCallbackUs={}, wakeups={}, waits={}, idleWaits={}",
+        i,
+        workerStats.ownedConnections,
+        workerStats.lastHandledConnections,
+        workerStats.connectionScans,
+        workerStats.staleConnectionScans,
+        workerStats.packetsProcessed,
+        workerStats.callbackGroupsProcessed,
+        averageCallbackMicroseconds,
+        workerStats.wakeups,
+        workerStats.timedWaits,
+        workerStats.idleTimedWaits));
+  }
+
+  lines.append(strf("totals: scans={}, packets={}, wakeups={}, waits={}, idleWaits={}",
+      totalScans, totalPackets, totalWakeups, totalTimedWaits, totalIdleTimedWaits));
+  return lines.join("\n");
+}
+
 String CommandProcessor::setTileProtection(ConnectionId connectionId, String const& argumentString) {
   if (auto errorMsg = adminCheck(connectionId, "modify world properties")) {
     return *errorMsg;
@@ -994,6 +1039,7 @@ const StringMap<std::function<String(CommandProcessor*, ConnectionId, String)>> 
   add("timewarp", &CommandProcessor::timewarp);
   add("timescale", &CommandProcessor::timescale);
   add("tickrate", &CommandProcessor::tickrate);
+  add("servernetstats", &CommandProcessor::serverNetStats);
   add("settileprotection", &CommandProcessor::setTileProtection);
   add("setdungeonid", &CommandProcessor::setDungeonId);
   add("setspawnpoint", &CommandProcessor::setPlayerStart);

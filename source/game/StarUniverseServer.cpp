@@ -212,6 +212,10 @@ uint32_t UniverseServer::maxClients() const {
   return m_maxPlayers;
 }
 
+List<UniverseConnectionServer::NetworkWorkerStats> UniverseServer::connectionWorkerStats() const {
+  return m_connectionServer->workerStats();
+}
+
 bool UniverseServer::isConnectedClient(ConnectionId clientId) const {
   ReadLocker clientsLocker(m_clientsLock);
   return m_clients.contains(clientId);

@@ -30,6 +30,7 @@ private:
   String timewarp(ConnectionId connectionId, String const& argumentString);
   String timescale(ConnectionId connectionId, String const& argumentString);
   String tickrate(ConnectionId connectionId, String const& argumentString);
+  String serverNetStats(ConnectionId connectionId, String const& argumentString);
   String setTileProtection(ConnectionId connectionId, String const& argumentString);
   String setDungeonId(ConnectionId connectionId, String const& argumentString);
   String setPlayerStart(ConnectionId connectionId, String const& argumentString);

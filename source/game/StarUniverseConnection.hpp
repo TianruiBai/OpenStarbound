@@ -72,6 +72,19 @@ private:
 // Uses multiple background threads to handle remote sending and receiving.
 class UniverseConnectionServer {
 public:
+  struct NetworkWorkerStats {
+    size_t ownedConnections = 0;
+    uint64_t lastHandledConnections = 0;
+    uint64_t connectionScans = 0;
+    uint64_t staleConnectionScans = 0;
+    uint64_t packetsProcessed = 0;
+    uint64_t callbackGroupsProcessed = 0;
+    uint64_t callbackTimeMicroseconds = 0;
+    uint64_t wakeups = 0;
+    uint64_t timedWaits = 0;
+    uint64_t idleTimedWaits = 0;
+  };
+
   // The packet receive callback is called asynchronously on every packet group
   // received.  It will be called such that it is safe to recursively call any
   // method on the UniverseConnectionServer without deadlocking.  The receive
@@ -97,6 +110,7 @@ public:
   uint64_t totalPacketsProcessed() const;
   // Get number of worker threads
   size_t numWorkerThreads() const;
+  List<NetworkWorkerStats> workerStats() const;
 
 private:
   struct Connection {
@@ -113,10 +127,18 @@ private:
     atomic<uint64_t> bytesReceived{0};
     atomic<uint64_t> bytesSent{0};
     atomic<uint64_t> connectionsHandled{0};
+    atomic<uint64_t> connectionScans{0};
+    atomic<uint64_t> staleConnectionScans{0};
+    atomic<uint64_t> callbackGroupsProcessed{0};
+    atomic<uint64_t> callbackTimeMicroseconds{0};
+    atomic<uint64_t> wakeups{0};
+    atomic<uint64_t> timedWaits{0};
+    atomic<uint64_t> idleTimedWaits{0};
 
     WorkerStats() = default;
-    WorkerStats(WorkerStats&& other) noexcept : packetsProcessed(other.packetsProcessed.load()), bytesReceived(other.bytesReceived.load()), bytesSent(other.bytesSent.load()), connectionsHandled(other.connectionsHandled.load()) {
-                                                };
+    WorkerStats(WorkerStats&& other) noexcept {
+      *this = std::move(other);
+    };
     WorkerStats(const WorkerStats&) = delete;
     WorkerStats& operator=(WorkerStats&& other) noexcept {
       if (this != &other) {
@@ -124,6 +146,13 @@ private:
         bytesReceived = other.bytesReceived.load();
         bytesSent = other.bytesSent.load();
         connectionsHandled = other.connectionsHandled.load();
+        connectionScans = other.connectionScans.load();
+        staleConnectionScans = other.staleConnectionScans.load();
+        callbackGroupsProcessed = other.callbackGroupsProcessed.load();
+        callbackTimeMicroseconds = other.callbackTimeMicroseconds.load();
+        wakeups = other.wakeups.load();
+        timedWaits = other.timedWaits.load();
+        idleTimedWaits = other.idleTimedWaits.load();
       }
       return *this;
     };

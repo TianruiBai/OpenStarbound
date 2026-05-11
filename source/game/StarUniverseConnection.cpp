@@ -148,13 +148,16 @@ UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetR
 
           bool dataTransmitted = false;
           size_t handledCount = 0;
+          m_workerStats[i].connectionScans += connectionIds.size();
           for (auto clientId : connectionIds) {
             RecursiveMutexLocker connectionsLocker(m_connectionsMutex);
             auto connection = m_connections.value(clientId);
             connectionsLocker.unlock();
 
-            if (!connection || connection->workerIndex != i)
+            if (!connection || connection->workerIndex != i) {
+              m_workerStats[i].staleConnectionScans++;
               continue;
+            }
 
             handledCount++;
             MutexLocker connectionLocker(connection->mutex);
@@ -176,6 +179,7 @@ UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetR
               List<PacketPtr> toReceive = List<PacketPtr>::from(take(connection->receiveQueue));
               connectionLocker.unlock();
 
+              auto callbackStart = Time::monotonicMicroseconds();
               try {
                 m_packetReceiver(this, clientId, std::move(toReceive));
               } catch (std::exception const& e) {
@@ -184,14 +188,20 @@ UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetR
                 connectionLocker.lock();
                 connection->packetSocket->close();
               }
+              m_workerStats[i].callbackGroupsProcessed++;
+              m_workerStats[i].callbackTimeMicroseconds += Time::monotonicMicroseconds() - callbackStart;
             }
           }
           m_workerStats[i].connectionsHandled = handledCount;
 
           if (!dataTransmitted) {
             workerLocker.lock();
-            if (!workerState->wakeup && !m_shutdown)
+            if (!workerState->wakeup && !m_shutdown) {
+              m_workerStats[i].timedWaits++;
               workerState->condition.wait(workerState->mutex, PacketSocketPollSleep);
+              if (!workerState->wakeup)
+                m_workerStats[i].idleTimedWaits++;
+            }
           }
         }
       } catch (std::exception const& e) {
@@ -234,6 +244,7 @@ void UniverseConnectionServer::wakeWorker(size_t workerIndex) {
 
   auto workerState = m_workerStates[workerIndex];
   MutexLocker workerLocker(workerState->mutex);
+  m_workerStats[workerIndex].wakeups++;
   workerState->wakeup = true;
   workerState->condition.signal();
 }
@@ -287,6 +298,7 @@ void UniverseConnectionServer::addConnection(ConnectionId clientId, UniverseConn
   auto workerState = m_workerStates[workerIndex];
   MutexLocker workerLocker(workerState->mutex);
   workerState->connections.append(clientId);
+  m_workerStats[workerIndex].wakeups++;
   workerState->wakeup = true;
   workerState->condition.signal();
 }
@@ -301,6 +313,7 @@ UniverseConnection UniverseConnectionServer::removeConnection(ConnectionId clien
   auto workerState = m_workerStates[conn->workerIndex];
   MutexLocker workerLocker(workerState->mutex);
   workerState->connections.remove(clientId);
+  m_workerStats[conn->workerIndex].wakeups++;
   workerState->wakeup = true;
   workerState->condition.signal();
   workerLocker.unlock();
@@ -348,6 +361,28 @@ uint64_t UniverseConnectionServer::totalPacketsProcessed() const {
 
 size_t UniverseConnectionServer::numWorkerThreads() const {
   return m_numWorkerThreads;
+}
+
+List<UniverseConnectionServer::NetworkWorkerStats> UniverseConnectionServer::workerStats() const {
+  List<NetworkWorkerStats> stats;
+  for (size_t i = 0; i < m_workerStats.size(); ++i) {
+    NetworkWorkerStats workerStats;
+    workerStats.lastHandledConnections = m_workerStats[i].connectionsHandled.load();
+    workerStats.connectionScans = m_workerStats[i].connectionScans.load();
+    workerStats.staleConnectionScans = m_workerStats[i].staleConnectionScans.load();
+    workerStats.packetsProcessed = m_workerStats[i].packetsProcessed.load();
+    workerStats.callbackGroupsProcessed = m_workerStats[i].callbackGroupsProcessed.load();
+    workerStats.callbackTimeMicroseconds = m_workerStats[i].callbackTimeMicroseconds.load();
+    workerStats.wakeups = m_workerStats[i].wakeups.load();
+    workerStats.timedWaits = m_workerStats[i].timedWaits.load();
+    workerStats.idleTimedWaits = m_workerStats[i].idleTimedWaits.load();
+
+    MutexLocker workerLocker(m_workerStates[i]->mutex);
+    workerStats.ownedConnections = m_workerStates[i]->connections.size();
+    stats.append(workerStats);
+  }
+
+  return stats;
 }
 
 }// namespace Star

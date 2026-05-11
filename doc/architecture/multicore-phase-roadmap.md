@@ -111,6 +111,8 @@ Started work:
 - `UniverseConnectionServer` now has worker-owned connection lists.
 - Worker loops now copy only their assigned connection IDs.
 - Add, remove, and send paths wake the owning worker through `ConditionVariable`.
+- Worker scan, stale-id, callback, wakeup, timed-wait, and idle-wait counters are available through `UniverseConnectionServer::workerStats()`.
+- `/servernetstats` exposes the worker counters for live admin profiling.
 - Per-connection packet callback ordering remains owned by one worker.
 
 Acceptance criteria:

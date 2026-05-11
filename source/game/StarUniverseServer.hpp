@@ -58,6 +58,7 @@ public:
   List<pair<ConnectionId, int64_t>> clientIdsAndCreationTime() const;
   size_t numberOfClients() const;
   uint32_t maxClients() const;
+  List<UniverseConnectionServer::NetworkWorkerStats> connectionWorkerStats() const;
   bool isConnectedClient(ConnectionId clientId) const;
 
   String clientDescriptor(ConnectionId clientId) const;
