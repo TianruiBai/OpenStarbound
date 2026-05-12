@@ -26,6 +26,7 @@ SET (star_core_HEADERS
     StarDataStream.hpp
     StarDataStreamDevices.hpp
     StarDataStreamExtra.hpp
+    StarDiagnostics.hpp
     StarDirectives.hpp
     StarDynamicLib.hpp
     StarEither.hpp
@@ -149,6 +150,7 @@ SET (star_core_SOURCES
     StarCurve25519.cpp
     StarDataStream.cpp
     StarDataStreamDevices.cpp
+    StarDiagnostics.cpp
     StarDirectives.cpp
     StarEncode.cpp
     StarFile.cpp

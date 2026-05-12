@@ -1,4 +1,5 @@
 #include "StarException.hpp"
+#include "StarDiagnostics.hpp"
 #include "StarOutputProxy.hpp"
 #include "StarLogging.hpp"
 #include "StarCasting.hpp"
@@ -242,12 +243,21 @@ void printStack(char const* message) {
 
 void fatalError(char const* message, bool showStackTrace) {
   std::ostringstream ss;
+  String caughtAt;
   ss << "v" << OpenStarVersionString << " (" << StarSourceIdentifierString << ")\n"
      << "Fatal Error: " << message << std::endl;
-  if (showStackTrace)
-    ss << outputStack(captureStack());
+  if (showStackTrace) {
+    std::ostringstream stack;
+    stack << outputStack(captureStack());
+    caughtAt = stack.str();
+    ss << caughtAt;
+  }
 
   Logger::log(LogLevel::Error, ss.str().c_str());
+  if (auto reportPath = Diagnostics::writeCrashReport({"fatalError", message, caughtAt})) {
+    Logger::error("Crash report written to {}", *reportPath);
+    ss << std::endl << "Crash report: " << *reportPath << std::endl;
+  }
   MessageBoxW(NULL, stringToUtf16(ss.str()).get(), stringToUtf16("Error").get(), MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
 
   std::abort();
@@ -255,12 +265,22 @@ void fatalError(char const* message, bool showStackTrace) {
 
 void fatalException(std::exception const& e, bool showStackTrace) {
   std::ostringstream ss;
+  String exceptionText = printException(e, showStackTrace);
+  String caughtAt;
   ss << "v" << OpenStarVersionString << " (" << StarSourceIdentifierString << ")\n"
-     << "Fatal Exception: " << outputException(e, showStackTrace) << std::endl;
-  if (showStackTrace)
-    ss << "Caught at:" << std::endl << outputStack(captureStack());
+     << "Fatal Exception: " << exceptionText << std::endl;
+  if (showStackTrace) {
+    std::ostringstream stack;
+    stack << outputStack(captureStack());
+    caughtAt = stack.str();
+    ss << "Caught at:" << std::endl << caughtAt;
+  }
 
   Logger::log(LogLevel::Error, ss.str().c_str());
+  if (auto reportPath = Diagnostics::writeCrashReport({"fatalException", exceptionText, caughtAt})) {
+    Logger::error("Crash report written to {}", *reportPath);
+    ss << std::endl << "Crash report: " << *reportPath << std::endl;
+  }
   MessageBoxW(NULL, stringToUtf16(ss.str()).get(), stringToUtf16("Error").get(), MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
 
   std::abort();

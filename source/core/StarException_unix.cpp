@@ -1,5 +1,6 @@
 #include "StarException.hpp"
 #include "StarCasting.hpp"
+#include "StarDiagnostics.hpp"
 #include "StarLogging.hpp"
 
 #include <execinfo.h>
@@ -150,27 +151,44 @@ void printStack(char const* message) {
 }
 
 void fatalError(char const* message, bool showStackTrace) {
-  if (showStackTrace)
+  String caughtAt;
+  if (showStackTrace) {
 #ifdef STAR_USE_CPPTRACE
-    Logger::error("Fatal Error: {}\n{}", message, captureBacktrace());
+    caughtAt = captureBacktrace();
 #else
-    Logger::error("Fatal Error: {}\n{}", message, outputStack(captureStack()));
+    std::ostringstream stack;
+    stack << outputStack(captureStack());
+    caughtAt = stack.str();
 #endif
-  else
+    Logger::error("Fatal Error: {}\n{}", message, caughtAt);
+  } else {
     Logger::error("Fatal Error: {}", message);
+  }
+
+  if (auto reportPath = Diagnostics::writeCrashReport({"fatalError", message, caughtAt}))
+    Logger::error("Crash report written to {}", *reportPath);
 
   std::abort();
 }
 
 void fatalException(std::exception const& e, bool showStackTrace) {
-  if (showStackTrace)
+  String exceptionText = printException(e, showStackTrace);
+  String caughtAt;
+  if (showStackTrace) {
 #ifdef STAR_USE_CPPTRACE
-    Logger::error("Fatal Exception caught: {}\nCaught at:\n{}", outputException(e, true), captureBacktrace());
+    caughtAt = captureBacktrace();
 #else
-    Logger::error("Fatal Exception caught: {}\nCaught at:\n{}", outputException(e, true), outputStack(captureStack()));
+    std::ostringstream stack;
+    stack << outputStack(captureStack());
+    caughtAt = stack.str();
 #endif
-  else
-    Logger::error("Fatal Exception caught: {}", outputException(e, showStackTrace));
+    Logger::error("Fatal Exception caught: {}\nCaught at:\n{}", exceptionText, caughtAt);
+  } else {
+    Logger::error("Fatal Exception caught: {}", exceptionText);
+  }
+
+  if (auto reportPath = Diagnostics::writeCrashReport({"fatalException", exceptionText, caughtAt}))
+    Logger::error("Crash report written to {}", *reportPath);
 
   std::abort();
 }

@@ -226,6 +226,6 @@ Go/no-go decisions should use these numbers instead of subjective smoothness alo
 - Add more F3-style context to the current `LogMap` overlay: server UUID, player UUID, world id, admin state, player count, and ship/flight state.
 - Add `/serverstatus` as a compact counterpart to `/servernetstats`. Started with uptime, player count, active world counts, pending queue sizes, TCP state, and aggregate network counters.
 - Add a bounded recent-log ring buffer to `Logger`. Started with `Logger::recentLogMessages()` and configurable in-memory retention for formatted log lines.
-- Add a crash report JSON writer that can be called from fatal exception paths.
-- Add a redaction helper and tests before writing diagnostic bundles.
+- Add a crash report JSON writer that can be called from fatal exception paths. Started with a core `StarDiagnostics` writer that emits version metadata, fatal context, and recent logs into `crashes/`.
+- Add a redaction helper and tests before writing diagnostic bundles. Started with redaction for password/token/auth text, IPv4 addresses, and common user-home path forms.
 - Add universe-loop and world-tick timing counters that can feed both `/serverstatus` and crash reports.
