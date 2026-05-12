@@ -72,10 +72,15 @@ public:
     uint64_t networkPacketsProcessed;
     uint64_t networkWakeups;
     uint64_t networkIdleTimedWaits;
+    size_t persistenceBatchesPending;
+    size_t persistenceSnapshotsPending;
+    uint64_t persistenceBatchesCompleted;
     uint64_t persistenceSnapshotsWritten;
     uint64_t persistenceSnapshotBuildTimeMicroseconds;
     uint64_t persistenceWriteTimeMicroseconds;
     uint64_t persistenceFailures;
+    uint64_t persistenceSynchronousFallbacks;
+    uint64_t persistenceQueueFullFallbacks;
   };
 
   UniverseServer(String const& storageDir);
@@ -204,9 +209,26 @@ private:
     String failureReason;
   };
 
-  struct ClientContextStorageSnapshot {
+  struct VersionedJsonStorageSnapshot {
+    String jobType;
     String file;
     VersionedJson store;
+  };
+
+  struct PersistenceWriteResult {
+    String jobType;
+    String file;
+    bool success;
+    String error;
+    int64_t durationMicroseconds;
+  };
+
+  struct PendingPersistenceWrite {
+    PendingPersistenceWrite(WorkerPoolPromise<List<PersistenceWriteResult>> promise, size_t snapshotCount)
+      : promise(std::move(promise)), snapshotCount(snapshotCount) {}
+
+    WorkerPoolPromise<List<PersistenceWriteResult>> promise;
+    size_t snapshotCount;
   };
 
   void processUniverseFlags();
@@ -301,8 +323,16 @@ private:
 
   bool instanceWorldStoredOrActive(InstanceWorldId const& worldId) const;
 
-  List<ClientContextStorageSnapshot> buildClientContextStorageSnapshots();
-  void writeClientContextStorageSnapshots(List<ClientContextStorageSnapshot> snapshots);
+  VersionedJsonStorageSnapshot buildUniverseSettingsStorageSnapshot();
+  VersionedJsonStorageSnapshot buildTempWorldIndexStorageSnapshot();
+  List<VersionedJsonStorageSnapshot> buildClientContextStorageSnapshots();
+  List<VersionedJsonStorageSnapshot> buildTriggeredStorageSnapshots();
+  static List<PersistenceWriteResult> writeVersionedJsonStorageSnapshotsNow(List<VersionedJsonStorageSnapshot> snapshots);
+  void recordPersistenceWriteResults(List<PersistenceWriteResult> results);
+  void writeVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots);
+  void persistVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots);
+  void processPendingPersistenceWrites();
+  void finishPendingPersistenceWrites();
 
   // Signal that a world either failed to load, or died due to an exception,
   // kicks clients if that world is a ship world.  Main lock and clients read
@@ -324,6 +354,7 @@ private:
   ClockPtr m_universeClock;
   UniverseSettingsPtr m_universeSettings;
   WorkerPool m_workerPool;
+  WorkerPool m_persistenceWorkerPool;
 
   int64_t m_storageTriggerDeadline;
   int64_t m_clearBrokenWorldsDeadline;
@@ -349,10 +380,17 @@ private:
   uint64_t m_pendingHandshakeTimedOut;
   LinkedList<shared_ptr<PendingConnection>> m_pendingConnections;
 
+  bool m_useAsyncPersistence;
+  size_t m_persistenceMaxQueuedSnapshots;
+  size_t m_persistenceSnapshotsPending;
+  uint64_t m_persistenceBatchesCompleted;
   uint64_t m_persistenceSnapshotsWritten;
   uint64_t m_persistenceSnapshotBuildTimeMicroseconds;
   uint64_t m_persistenceWriteTimeMicroseconds;
   uint64_t m_persistenceFailures;
+  uint64_t m_persistenceSynchronousFallbacks;
+  uint64_t m_persistenceQueueFullFallbacks;
+  List<PendingPersistenceWrite> m_pendingPersistenceWrites;
 
   mutable RecursiveMutex m_connectionAcceptThreadsMutex;
   List<ThreadFunction<void>> m_connectionAcceptThreads;

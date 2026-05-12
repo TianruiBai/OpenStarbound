@@ -28,5 +28,20 @@
     "op" : "add",
     "path" : "/usePendingConnectionStateMachine",
     "value" : true
+  },
+  {
+    "op" : "add",
+    "path" : "/useAsyncPersistence",
+    "value" : false
+  },
+  {
+    "op" : "add",
+    "path" : "/persistenceWorkerThreads",
+    "value" : 1
+  },
+  {
+    "op" : "add",
+    "path" : "/maxQueuedPersistenceSnapshots",
+    "value" : 128
   }
 ]

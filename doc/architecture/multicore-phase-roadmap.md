@@ -2,7 +2,7 @@
 
 This roadmap turns `multicore-engineering-plan.md` into an execution checklist. It keeps the same compatibility-first strategy: improve multicore use around the serial world simulation lane before attempting world-internal parallel simulation.
 
-Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is now implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback. Phase 3 has started with client-context persistence snapshots and write timing diagnostics while keeping writes synchronous through a shared helper.
+Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is now implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback. Phase 3 has started with immutable versioned persistence snapshots, synchronous shared write helpers, and an opt-in bounded async persistence worker path behind `useAsyncPersistence`.
 
 The observability and crash-reporting work that supports these phases is tracked in `diagnostics-debugging-roadmap.md`. In short: build on the current `/debug` overlay, `LogMap`, `SpatialLogger`, `Logger`, stack traces, Lua profiles, and `/servernetstats` to provide F3-style status, server diagnostic commands, crash bundles, and structured logs.
 
@@ -382,12 +382,21 @@ Proposed persistence job types:
 - `CommitCelestialDatabaseJob`: bounded request or completion marker for celestial commit work if it can be separated safely
 - `WorldStorageSyncJob`: pre-serialized sector/database updates only; never a live `WorldStorage*`
 
+Started work:
+
+- `VersionedJsonStorageSnapshot` now covers `UniverseSettings`, `TempWorldIndex`, and `ClientContext` writes through one snapshot/write path.
+- `UniverseServer::doTriggeredStorage()` builds immutable snapshots first, then persists them through a shared helper before celestial cleanup/commit.
+- `useAsyncPersistence` enables a dedicated `UniverseServerPersistencePool`; it is disabled by default while the path is validated.
+- `maxQueuedPersistenceSnapshots` bounds queued snapshot count. When the queue is full, the server falls back to synchronous writes instead of dropping required state.
+- Shutdown drains pending async persistence writes before final synchronous universe and temp-world index saves, preventing older queued autosaves from overwriting shutdown state.
+- `/serverstatus` reports pending persistence batches, pending snapshots, completed batches, written snapshots, build/write time, failures, synchronous fallbacks, and queue-full fallbacks.
+
 Recommended Phase 3 implementation sequence:
 
-1. Add a small persistence result queue owned by `UniverseServer` with success, failure, path, job type, duration, and retry count.
-2. Add immutable snapshot structs for ship chunk updates, universe settings, temp worlds, and system-world JSON without changing any write path yet.
-3. Extend the current `ClientContextStorageSnapshot` path to cover universe settings and temp-world index snapshots through shared synchronous helpers.
-4. Add a bounded `PersistenceExecutor` using `WorkerPool` or a dedicated worker set with explicit queue-depth limits and shutdown `finish()` behavior.
+1. Add retry count and oldest-pending-age tracking to the current persistence result handling.
+2. Add immutable snapshot structs for ship chunk updates and system-world JSON without changing those write paths yet.
+3. Extend the current versioned snapshot path to include any remaining universe-owned metadata writes that can be serialized before dispatch.
+4. Validate `useAsyncPersistence` under save/load and shutdown tests before enabling it by default.
 5. Move client context and universe settings writes to the executor first, because their snapshots are already plain versioned JSON.
 6. Move ship chunk update writes after proving that `readChunks()` or a future `readChunkUpdate()` happens only on the world owner boundary.
 7. Move system-world storage after adding result reporting and making `SystemWorldServerThread::store()` produce immutable JSON before enqueueing work.

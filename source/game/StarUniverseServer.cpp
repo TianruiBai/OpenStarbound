@@ -26,6 +26,7 @@ namespace Star {
 UniverseServer::UniverseServer(String const& storageDir)
     : Thread("UniverseServer"),
       m_workerPool("UniverseServerWorkerPool"),
+  m_persistenceWorkerPool("UniverseServerPersistencePool"),
       m_clients(MinClientConnectionId, MaxClientConnectionId) {
   m_startTime = Time::monotonicTime();
   String const LockFile = "universe.lock";
@@ -82,21 +83,32 @@ UniverseServer::UniverseServer(String const& storageDir)
   m_pendingHandshakeFinalized = 0;
   m_pendingHandshakeRejected = 0;
   m_pendingHandshakeTimedOut = 0;
+  m_useAsyncPersistence = false;
+  m_persistenceMaxQueuedSnapshots = 0;
+  m_persistenceSnapshotsPending = 0;
+  m_persistenceBatchesCompleted = 0;
   m_persistenceSnapshotsWritten = 0;
   m_persistenceSnapshotBuildTimeMicroseconds = 0;
   m_persistenceWriteTimeMicroseconds = 0;
   m_persistenceFailures = 0;
+  m_persistenceSynchronousFallbacks = 0;
+  m_persistenceQueueFullFallbacks = 0;
 
   m_maxPlayers = configuration->get("maxPlayers").toUInt();
 
   auto universeConfig = assets->json("/universe_server.config");
   m_usePendingConnectionStateMachine = universeConfig.getBool("usePendingConnectionStateMachine", true);
+  auto persistenceWorkerThreads = universeConfig.optUInt("persistenceWorkerThreads").value(1);
+  m_useAsyncPersistence = universeConfig.getBool("useAsyncPersistence", false) && persistenceWorkerThreads > 0;
+  m_persistenceMaxQueuedSnapshots = universeConfig.optUInt("maxQueuedPersistenceSnapshots").value(128);
 
   for (auto const& pair : universeConfig.get("speciesShips").iterateObject())
     m_speciesShips[pair.first] = jsonToStringList(pair.second);
 
   m_teamManager = make_shared<TeamManager>();
   m_workerPool.start(universeConfig.getUInt("workerPoolThreads"));
+  if (m_useAsyncPersistence)
+    m_persistenceWorkerPool.start(persistenceWorkerThreads);
 
   size_t networkWorkerThreads = universeConfig.optUInt("networkWorkerThreads").value(0);
   m_connectionServer = make_shared<UniverseConnectionServer>(
@@ -112,6 +124,8 @@ UniverseServer::~UniverseServer() {
   stop();
   stopLua();
   join();
+  finishPendingPersistenceWrites();
+  m_persistenceWorkerPool.stop();
   m_workerPool.stop();
 
   RecursiveMutexLocker locker(m_mainLock);
@@ -296,10 +310,15 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
     status.pendingWorldMessageWorlds = m_pendingWorldMessages.size();
     for (auto const& pair : m_pendingWorldMessages)
       status.pendingWorldMessages += pair.second.size();
+    status.persistenceBatchesPending = m_pendingPersistenceWrites.size();
+    status.persistenceSnapshotsPending = m_persistenceSnapshotsPending;
+    status.persistenceBatchesCompleted = m_persistenceBatchesCompleted;
     status.persistenceSnapshotsWritten = m_persistenceSnapshotsWritten;
     status.persistenceSnapshotBuildTimeMicroseconds = m_persistenceSnapshotBuildTimeMicroseconds;
     status.persistenceWriteTimeMicroseconds = m_persistenceWriteTimeMicroseconds;
     status.persistenceFailures = m_persistenceFailures;
+    status.persistenceSynchronousFallbacks = m_persistenceSynchronousFallbacks;
+    status.persistenceQueueFullFallbacks = m_persistenceQueueFullFallbacks;
   }
 
   auto workerStats = connectionWorkerStats();
@@ -727,6 +746,7 @@ void UniverseServer::run() {
       clearBrokenWorlds();
       handleWorldMessages();
       shutdownInactiveWorlds();
+      processPendingPersistenceWrites();
       doTriggeredStorage();
     } catch (std::exception const& e) {
       Logger::error("UniverseServer: exception caught: {}", outputException(e, true));
@@ -750,6 +770,8 @@ void UniverseServer::run() {
     clientsLocker.unlock();
     for (auto clientId : clients)
       doDisconnection(clientId, "ServerShutdown");
+
+    finishPendingPersistenceWrites();
 
     RecursiveMutexLocker locker(m_mainLock);
     auto leftoverWorlds = take(m_worlds);
@@ -1440,12 +1462,10 @@ void UniverseServer::doTriggeredStorage() {
 
   if (Time::monotonicMilliseconds() >= m_storageTriggerDeadline) {
     Logger::debug("UniverseServer: periodic sync to disk");
-    saveSettings();
-    saveTempWorldIndex();
 
     clientsLocker.unlock();
     locker.unlock();
-    writeClientContextStorageSnapshots(buildClientContextStorageSnapshots());
+    persistVersionedJsonStorageSnapshots(buildTriggeredStorageSnapshots());
 
     locker.lock();
     clientsLocker.lock();
@@ -1456,10 +1476,31 @@ void UniverseServer::doTriggeredStorage() {
   }
 }
 
-List<UniverseServer::ClientContextStorageSnapshot> UniverseServer::buildClientContextStorageSnapshots() {
-  auto snapshotStart = Time::monotonicMicroseconds();
+UniverseServer::VersionedJsonStorageSnapshot UniverseServer::buildUniverseSettingsStorageSnapshot() {
   auto versioningDatabase = Root::singleton().versioningDatabase();
-  List<ClientContextStorageSnapshot> snapshots;
+
+  RecursiveMutexLocker locker(m_mainLock);
+  return {"UniverseSettings",
+      File::relativeTo(m_storageDirectory, "universe.dat"),
+      versioningDatabase->makeCurrentVersionedJson("UniverseSettings", m_universeSettings->toJson().set("time", m_universeClock->time()))};
+}
+
+UniverseServer::VersionedJsonStorageSnapshot UniverseServer::buildTempWorldIndexStorageSnapshot() {
+  auto versioningDatabase = Root::singleton().versioningDatabase();
+  JsonObject worldIndex = JsonObject();
+
+  RecursiveMutexLocker locker(m_mainLock);
+  for (auto p : m_tempWorldIndex)
+    worldIndex.set(printWorldId(p.first), JsonArray{p.second.first, p.second.second});
+
+  return {"TempWorldIndex",
+      File::relativeTo(m_storageDirectory, "tempworlds.index"),
+      versioningDatabase->makeCurrentVersionedJson("TempWorldIndex", worldIndex)};
+}
+
+List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildClientContextStorageSnapshots() {
+  auto versioningDatabase = Root::singleton().versioningDatabase();
+  List<VersionedJsonStorageSnapshot> snapshots;
 
   ReadLocker clientsLocker(m_clientsLock);
   auto clients = m_clients.values();
@@ -1474,41 +1515,140 @@ List<UniverseServer::ClientContextStorageSnapshot> UniverseServer::buildClientCo
       clientContext->updateShipChunks(shipWorld->readChunks());
 
     String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientContext->playerUuid().hex()));
-    snapshots.append({clientContextFile, versioningDatabase->makeCurrentVersionedJson("ClientContext", clientContext->storeServerData())});
+    snapshots.append({"ClientContext", clientContextFile, versioningDatabase->makeCurrentVersionedJson("ClientContext", clientContext->storeServerData())});
   }
+
+  return snapshots;
+}
+
+List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildTriggeredStorageSnapshots() {
+  auto snapshotStart = Time::monotonicMicroseconds();
+  List<VersionedJsonStorageSnapshot> snapshots;
+
+  snapshots.append(buildUniverseSettingsStorageSnapshot());
+  snapshots.append(buildTempWorldIndexStorageSnapshot());
+  snapshots.appendAll(buildClientContextStorageSnapshots());
 
   RecursiveMutexLocker locker(m_mainLock);
   m_persistenceSnapshotBuildTimeMicroseconds += Time::monotonicMicroseconds() - snapshotStart;
   return snapshots;
 }
 
-void UniverseServer::writeClientContextStorageSnapshots(List<ClientContextStorageSnapshot> snapshots) {
-  auto writeStart = Time::monotonicMicroseconds();
-  uint64_t written = 0;
-  uint64_t failures = 0;
-
+List<UniverseServer::PersistenceWriteResult> UniverseServer::writeVersionedJsonStorageSnapshotsNow(List<VersionedJsonStorageSnapshot> snapshots) {
+  List<PersistenceWriteResult> results;
   for (auto& snapshot : snapshots) {
+    auto writeStart = Time::monotonicMicroseconds();
     try {
       VersionedJson::writeFile(snapshot.store, snapshot.file);
-      written++;
+      results.append({snapshot.jobType, snapshot.file, true, {}, Time::monotonicMicroseconds() - writeStart});
     } catch (std::exception const& e) {
+      results.append({snapshot.jobType, snapshot.file, false, strf("{}", outputException(e, false)), Time::monotonicMicroseconds() - writeStart});
+    }
+  }
+
+  return results;
+}
+
+void UniverseServer::recordPersistenceWriteResults(List<PersistenceWriteResult> results) {
+  uint64_t written = 0;
+  uint64_t failures = 0;
+  uint64_t writeTime = 0;
+
+  for (auto const& result : results) {
+    writeTime += result.durationMicroseconds;
+    if (result.success) {
+      written++;
+    } else {
       failures++;
-      Logger::error("UniverseServer: Failed writing client context snapshot '{}': {}", snapshot.file, outputException(e, false));
+      Logger::error("UniverseServer: Failed writing {} snapshot '{}': {}", result.jobType, result.file, result.error);
     }
   }
 
   RecursiveMutexLocker locker(m_mainLock);
   m_persistenceSnapshotsWritten += written;
   m_persistenceFailures += failures;
-  m_persistenceWriteTimeMicroseconds += Time::monotonicMicroseconds() - writeStart;
+  m_persistenceWriteTimeMicroseconds += writeTime;
+}
+
+void UniverseServer::writeVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots) {
+  recordPersistenceWriteResults(writeVersionedJsonStorageSnapshotsNow(std::move(snapshots)));
+}
+
+void UniverseServer::persistVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots) {
+  if (snapshots.empty())
+    return;
+
+  if (!m_useAsyncPersistence) {
+    writeVersionedJsonStorageSnapshots(std::move(snapshots));
+    return;
+  }
+
+  processPendingPersistenceWrites();
+
+  auto snapshotCount = snapshots.size();
+  bool queueFull = false;
+  {
+    RecursiveMutexLocker locker(m_mainLock);
+    if (m_persistenceMaxQueuedSnapshots != 0 && m_persistenceSnapshotsPending + snapshotCount > m_persistenceMaxQueuedSnapshots) {
+      m_persistenceQueueFullFallbacks++;
+      m_persistenceSynchronousFallbacks++;
+      queueFull = true;
+    } else {
+      m_persistenceSnapshotsPending += snapshotCount;
+    }
+  }
+
+  if (queueFull) {
+    writeVersionedJsonStorageSnapshots(std::move(snapshots));
+    return;
+  }
+
+  auto promise = m_persistenceWorkerPool.addProducer<List<PersistenceWriteResult>>([snapshots = std::move(snapshots)]() mutable {
+      return UniverseServer::writeVersionedJsonStorageSnapshotsNow(std::move(snapshots));
+    });
+
+  RecursiveMutexLocker locker(m_mainLock);
+  m_pendingPersistenceWrites.append({std::move(promise), snapshotCount});
+}
+
+void UniverseServer::processPendingPersistenceWrites() {
+  size_t index = 0;
+  while (true) {
+    RecursiveMutexLocker locker(m_mainLock);
+    while (index < m_pendingPersistenceWrites.size() && !m_pendingPersistenceWrites[index].promise.done())
+      index++;
+
+    if (index == m_pendingPersistenceWrites.size())
+      return;
+
+    auto pendingWrite = m_pendingPersistenceWrites.takeAt(index);
+    m_persistenceSnapshotsPending -= min(m_persistenceSnapshotsPending, pendingWrite.snapshotCount);
+    m_persistenceBatchesCompleted++;
+    locker.unlock();
+
+    recordPersistenceWriteResults(pendingWrite.promise.get());
+  }
+}
+
+void UniverseServer::finishPendingPersistenceWrites() {
+  while (true) {
+    RecursiveMutexLocker locker(m_mainLock);
+    if (m_pendingPersistenceWrites.empty())
+      return;
+
+    auto pendingWrite = m_pendingPersistenceWrites.takeAt(0);
+    m_persistenceSnapshotsPending -= min(m_persistenceSnapshotsPending, pendingWrite.snapshotCount);
+    m_persistenceBatchesCompleted++;
+    locker.unlock();
+
+    recordPersistenceWriteResults(pendingWrite.promise.get());
+  }
 }
 
 void UniverseServer::saveSettings() {
-  RecursiveMutexLocker locker(m_mainLock);
-  auto versioningDatabase = Root::singleton().versioningDatabase();
-  auto versionedSettings = versioningDatabase->makeCurrentVersionedJson("UniverseSettings",
-                                                                        m_universeSettings->toJson().set("time", m_universeClock->time()));
-  VersionedJson::writeFile(versionedSettings, File::relativeTo(m_storageDirectory, "universe.dat"));
+  List<VersionedJsonStorageSnapshot> snapshots;
+  snapshots.append(buildUniverseSettingsStorageSnapshot());
+  writeVersionedJsonStorageSnapshots(std::move(snapshots));
 }
 
 void UniverseServer::loadSettings() {
@@ -1655,14 +1795,9 @@ void UniverseServer::loadTempWorldIndex() {
 }
 
 void UniverseServer::saveTempWorldIndex() {
-  JsonObject worldIndex = JsonObject();
-  for (auto p : m_tempWorldIndex) {
-    worldIndex.set(printWorldId(p.first), JsonArray{p.second.first, p.second.second});
-  }
-
-  auto versioningDatabase = Root::singleton().versioningDatabase();
-  auto versionedJson = versioningDatabase->makeCurrentVersionedJson("TempWorldIndex", worldIndex);
-  VersionedJson::writeFile(versionedJson, File::relativeTo(m_storageDirectory, "tempworlds.index"));
+  List<VersionedJsonStorageSnapshot> snapshots;
+  snapshots.append(buildTempWorldIndexStorageSnapshot());
+  writeVersionedJsonStorageSnapshots(std::move(snapshots));
 }
 
 String UniverseServer::tempWorldFile(InstanceWorldId const& worldId) const {
