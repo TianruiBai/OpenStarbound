@@ -2,19 +2,19 @@
 
 This roadmap turns `multicore-engineering-plan.md` into an execution checklist. It keeps the same compatibility-first strategy: improve multicore use around the serial world simulation lane before attempting world-internal parallel simulation.
 
-Phase 0A is implemented. Phase 0 now has a shared timing accumulator, bounded universe-loop phase timing, world-thread timing, world-update subphase timing, `/serverstatus` timing summaries, and `world_benchmark` subphase summaries. Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback, and now has focused state-machine success/protocol-rejection coverage. Phase 3 is partially implemented with immutable versioned persistence snapshots, synchronous shared write helpers, bounded opt-in async JSON persistence behind `useAsyncPersistence`, explicit system-world and ship-chunk snapshot boundaries, and focused async completion / queue-pressure fallback tests. Phase 4 has a world-thread command mailbox covering common synchronous wrappers, admin/RPC world actions, weather, dungeon placement, flying-sky transitions, and the ship-upgrade command/result path; `SystemWorldServerThread` now routes add/remove client ship mutations through a small command mailbox. Phase 5 now has owner-indexed entity update application, a formal per-tick `WorldTickSnapshot` packet-prep context, cached generation-priority distance calculations, packet-prep caches for shared sector updates and entity store payloads, `/serverstatus` packet-prep diagnostics, and focused `MulticorePhaseTest` coverage for Phases 0 through 5.
+Phase 0A is implemented. Phase 0 now has a shared timing accumulator, bounded universe-loop phase timing, world-thread timing, world-update subphase timing, network worker counters, `/serverstatus` timing summaries, and `world_benchmark.cpp` subphase summary support. Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback, and now has focused state-machine success/protocol-rejection coverage plus live handshake diagnostics. Phase 3 has its compatibility-first persistence slice implemented with immutable versioned persistence snapshots, synchronous shared write helpers, bounded opt-in async JSON persistence behind `useAsyncPersistence`, explicit system-world and ship-chunk snapshot boundaries, shutdown draining, retry/fallback accounting, and focused async completion / queue-pressure fallback tests. Phase 4 has a world-thread command mailbox covering common synchronous wrappers, admin/RPC world actions, weather, dungeon placement, flying-sky transitions, and the ship-upgrade command/result path; `SystemWorldServerThread` routes add/remove client ship mutations through a small command mailbox and publishes read snapshots for ship location, warp action, sky, clients, and active instance worlds. Phase 5 has owner-indexed entity update application, a formal per-tick `WorldTickSnapshot` packet-prep context, cached generation-priority distance calculations, packet-prep caches for shared sector updates and entity store payloads, `/serverstatus` packet-prep diagnostics, and focused `MulticorePhaseTest` coverage for Phases 0 through 5.
 
 The observability and crash-reporting work that supports these phases is tracked in `diagnostics-debugging-roadmap.md`. In short: build on the current `/debug` overlay, `LogMap`, `SpatialLogger`, `Logger`, stack traces, Lua profiles, and `/servernetstats` to provide F3-style status, server diagnostic commands, crash bundles, and structured logs.
 
 ## Current Status After Review
 
 - Phase 0A render-rate decoupling and the user-facing VSync / max-FPS controls are implemented and wired through the client configuration, graphics menu, and debug HUD.
-- Phase 0 has the core measurement foundation in place: `StarServerTiming.hpp` provides shared bounded timing records, `/serverstatus` reports universe-loop, world-thread, and world-update timing summaries, and `world_benchmark` prints world-update subphase timing percentiles. Crash-bundle/F3-style consumers remain broader diagnostics-roadmap work.
-- Phase 1 is implemented and validated by focused worker-ownership, many-idle-connection, wakeup, remove-during-callback, and cross-worker packet-ordering tests, but broader TCP stress and readiness-abstraction follow-up items are still open.
-- Phase 2 is implemented and live behind its fallback flag. Focused tests cover local state-machine success and protocol mismatch rejection; timeout, password, duplicate UUID, asset mismatch, max-player, and login-burst matrix cases remain open.
-- Phase 3 has its current compatibility-first slice in place: immutable universe/client/system snapshots, bounded async JSON persistence, synchronous fallback on queue pressure, retry accounting, shutdown draining, and server diagnostics. Focused tests now cover async triggered-storage completion and queue-full synchronous fallback; save/load depth, failure injection, and broader latency validation remain open before default enablement.
-- Phase 4 now routes most external `WorldServerThread` entry points through named commands while the world thread is active: client add/remove, spawn checks, revive position, new planet type, weather list/set, dungeon placement, flying-sky start/stop, container item RPC, universe flag RPC, admin/scripted `executeForClient`, ship upgrades, unload, and chunk reads. `/serverstatus` exposes aggregate world-command pending, processed, direct, failed, and wait-time counters. `SystemWorldServerThread` now has a command mailbox for add/remove client ship mutations; read snapshots and broader system-world command diagnostics remain follow-up work.
-- Phase 5 has its compatibility-first snapshot/prep slice in place: client-owned/slave entity ids are indexed by owner connection, `WorldServer::update()` builds a per-tick `WorldTickSnapshot` with client windows and monitoring regions, liquid/weather/sector signaling/packet prep consume that snapshot, world generation sorting memoizes nearest-player sector distances, and packet prep reuses sector tile-array packets plus entity store payloads within a tick. Blank entity-update deltas are still delivered to every indexed entity for that owner, preserving interpolation/extrapolation behavior; first net-state writes remain per-client because they advance entity net versions.
+- Phase 0 has the core measurement foundation in place: `StarServerTiming.hpp` provides shared bounded timing records, `/serverstatus` reports universe-loop, world-thread, and world-update timing summaries, `UniverseConnectionServer::workerStats()` reports scan/wakeup/callback timing counters, and `world_benchmark.cpp` includes world-update subphase timing percentiles. The `world_benchmark` CMake target is currently commented out in `source/utility/CMakeLists.txt`; re-enabling that utility target is build tooling work, not Phase 0 instrumentation work. Crash-bundle/F3-style consumers are tracked in the diagnostics roadmap, not as remaining Phase 0 implementation work.
+- Phase 1 is implemented and validated by focused worker-ownership, many-idle-connection, wakeup, remove-during-callback, and cross-worker packet-ordering tests. Socket readiness abstraction, cross-platform poller implementations, and broad TCP/high-fan-out profiling are post-Phase-1 networking hardening work.
+- Phase 2 is implemented and live behind its fallback flag. Focused tests cover local state-machine success and protocol mismatch rejection, while `/serverstatus` exposes pending handshakes by state plus accepted/finalized/rejected/timed-out counters. Timeout/password/duplicate UUID/asset mismatch/max-player/login-burst cases are the extended validation matrix for hardening the enabled path, not unfinished Phase 2 implementation tasks.
+- Phase 3 has its compatibility-first persistence slice in place: immutable universe/client/system snapshots, bounded async JSON persistence, synchronous fallback on queue pressure, retry accounting, shutdown draining, and server diagnostics. Focused tests now cover async triggered-storage completion and queue-full synchronous fallback; save/load depth, failure injection, and broader latency validation remain required before default enablement.
+- Phase 4 now routes most external `WorldServerThread` entry points through named commands while the world thread is active: client add/remove, spawn checks, revive position, new planet type, weather list/set, dungeon placement, flying-sky start/stop, container item RPC, universe flag RPC, admin/scripted `executeForClient`, ship upgrades, unload, and chunk reads. `/serverstatus` exposes aggregate world-command pending, processed, direct, failed, and wait-time counters. `SystemWorldServerThread` now has a command mailbox for add/remove client ship mutations and published read snapshots for clients, ship locations, warp actions, sky parameters, and active instance worlds.
+- Phase 5 has its compatibility-first snapshot/prep slice in place: client-owned/slave entity ids are indexed by owner connection, `WorldServer::update()` builds a per-tick `WorldTickSnapshot` with client windows and monitoring regions, liquid/weather/sector signaling/packet prep consume that snapshot, world generation sorting memoizes nearest-player sector distances, and packet prep reuses sector tile-array packets plus entity store payloads within a tick. Blank entity-update deltas are still delivered to every indexed entity for that owner, preserving interpolation/extrapolation behavior; first net-state writes remain per-client because they advance entity net versions. Further immutable entity serialization snapshots and packet-equivalence tests are Phase 6 gates before workerized packet prep, not open Phase 5 closeout work.
 
 ## Research Notes
 
@@ -142,26 +142,26 @@ Implementation tasks:
 2. Done: add universe-loop phase timers around Lua update, chat, teams, ship update, warp/fly/arrive, celestial response, broken-world cleanup, world messages, inactive-world shutdown, and triggered storage.
 3. Done: add world-thread timers around incoming packets, world update, message handling, outgoing packet collection, update callbacks, and sync.
 4. Done: add world-update subphase timers for entity update, world scripts, damage, wiring, weather, liquid, falling blocks, storage tick, storage generation, and packet preparation.
-5. Partially done: network counters cover worker wakeups, idle timed waits, owned connections, and packets processed; scanned-connection and callback-duration counters remain optional profiling follow-up.
-6. Done: extend `world_benchmark` to print subphase timing summaries and percentiles.
-7. Partially done: selected counters feed `/serverstatus`; F3-style client overlay and crash-bundle consumers remain diagnostics-roadmap work.
-8. Pending diagnostics-roadmap work: add crash-report context hooks for current phase timers, network worker stats, active worlds, and storage state.
+5. Done: network counters cover worker wakeups, timed and idle timed waits, owned connections, handled/scanned/stale-scanned connections, packets processed, callback groups, and callback duration.
+6. Done: extend `world_benchmark.cpp` to print subphase timing summaries and percentiles; the utility executable target remains commented out in `source/utility/CMakeLists.txt`.
+7. Done: selected counters feed `/serverstatus`, `/servernetstats`, and `LogMap`; F3-style client overlay and crash-bundle consumers remain diagnostics-roadmap work.
+8. Moved to diagnostics roadmap: crash-report context hooks for current phase timers, network worker stats, active worlds, and storage state are broader diagnostic consumers, not Phase 0 blockers.
 
 Acceptance criteria:
 
 - A dedicated server run can emit per-phase timing summaries without changing packet or save formats.
 - Measurements include p50, p95, and p99 tick durations where practical.
 - Measurement overhead is visible and bounded under a config flag.
-- Client overlay, server commands, logs, and crash reports can all consume the same diagnostic snapshots.
+- Server commands and logs consume the current diagnostic snapshots; client overlay and crash-report consumers are tracked in the diagnostics roadmap.
 
 Primary risks:
 
 - Logging too frequently can become the bottleneck.
 - Timers placed inside entity/Lua inner loops can distort the profile.
 
-Go/no-go:
+Phase 0 closeout check:
 
-- Continue when metrics identify whether the server is network-bound, storage-bound, universe-loop-bound, or one-world-update-bound.
+- Done for Phase 0: the metrics can identify whether the server is network-bound, persistence-bound, universe-loop-bound, or one-world-update-bound.
 
 ## Phase 1: Network Worker Sharding And Wakeups
 
@@ -175,14 +175,14 @@ Code areas:
 
 Implementation tasks:
 
-1. Give each network worker explicit ownership of assigned connection IDs.
-2. Stop each worker from copying and filtering the full global connection map every loop.
-3. Wake the owning worker when a connection is added, removed, or has packets queued for send.
-4. Keep the current timed polling fallback until a portable socket readiness abstraction exists.
-5. Add worker counters for wakeups, idle timed wakeups, owned connection count, processed packets, and callback time.
-6. Design a narrow `SocketPoller` abstraction for Windows, Linux, and macOS.
-7. Add Windows implementation using a conservative readiness API first, then evaluate IOCP separately as a larger networking project.
-8. Add Linux `epoll` and macOS `kqueue` implementations only after the fallback path is stable.
+1. Done: give each network worker explicit ownership of assigned connection IDs.
+2. Done: stop each worker from copying and filtering the full global connection map every loop.
+3. Done: wake the owning worker when a connection is added, removed, or has packets queued for send.
+4. Done: keep the current timed polling fallback until a portable socket readiness abstraction exists.
+5. Done: add worker counters for wakeups, timed/idle timed wakeups, owned connection count, processed packets, scans, callback groups, and callback time.
+6. Deferred: design a narrow `SocketPoller` abstraction for Windows, Linux, and macOS as future networking hardening.
+7. Deferred: add a Windows readiness implementation using a conservative API first, then evaluate IOCP separately as a larger networking project.
+8. Deferred: add Linux `epoll` and macOS `kqueue` implementations only after the fallback path is stable.
 
 Started work:
 
@@ -194,36 +194,36 @@ Started work:
 - `/serverstatus` exposes a compact server diagnostics snapshot with uptime, player counts, active worlds, pending queue sizes, TCP state, and aggregate network counters.
 - Per-connection packet callback ordering remains owned by one worker.
 
-Remaining Phase 1 work:
+Phase 1 closeout result:
 
-1. Add a many-idle-connections stress case that records `ownedConnections`, `connectionScans`, `wakeups`, `timedWaits`, and `idleTimedWaits` before and after a small active packet burst.
-2. Add packet-ordering tests with at least two clients on different workers and repeated small packet bursts beyond the existing local/TCP echo coverage.
-3. Expose byte counters if the packet socket layer can provide them without allocation-heavy sampling.
-4. Measure whether `sendPackets` should remain an eager nonblocking write path or become queue-only plus wakeup under high fan-out broadcast load.
-5. Keep the timed fallback at 1 ms until socket readiness has cross-platform coverage and failure-mode tests.
-6. Document the expected worker-stat interpretation so operators can tell a healthy idle server from lost-wakeup latency.
+1. Done: `ManyIdleConnectionsRemainSharded` covers many idle local connections, owned connection distribution, scan counters, idle waits, active packet processing, and queued-send wakeups.
+2. Done: `PacketOrderingAcrossWorkers` covers repeated small bursts across clients assigned to different workers.
+3. Deferred: byte counters remain optional because the current worker-stat path does not need additional allocation-heavy packet sampling.
+4. Deferred: high-fan-out profiling of eager `sendPackets` versus queue-only send remains a networking hardening measurement before any readiness-abstraction change.
+5. Done: the 1 ms timed fallback remains in place until socket readiness has cross-platform coverage and failure-mode tests.
+6. Done: `/servernetstats` and this section document the healthy interpretation of owned connections, scans, wakeups, timed waits, idle waits, packet counts, and callback duration.
 
-Recommended Phase 1 implementation sequence:
+Completed Phase 1 implementation sequence:
 
-1. Add test scaffolding around `LocalPacketSocket::openPair()` and `UniverseConnectionServer` packet callbacks.
-2. Cover add, send, receive, remove, and shutdown with one worker, then with multiple workers.
-3. Add a many-idle-connections stress case that records `ownedConnections`, `connectionScans`, `wakeups`, `timedWaits`, and `idleTimedWaits` before and after a small active packet burst.
-4. Add a disconnect-during-callback case where the callback removes the active connection and then another packet is queued or attempted.
-5. Only after those pass, prototype `SocketPoller` behind a config flag or compile-time path while keeping the condition-variable fallback as the default.
+1. Done: test scaffolding uses `LocalPacketSocket::openPair()` and `UniverseConnectionServer` packet callbacks.
+2. Done: add, send, receive, remove, and shutdown behavior is covered with one worker and multiple workers across the focused tests.
+3. Done: the many-idle-connections stress case exercises sharded ownership, scans, idle waits, active packet processing, and send wakeups.
+4. Done: `RemoveConnectionDuringCallback` covers disconnect from inside the packet callback.
+5. Deferred: `SocketPoller` remains future work behind a flag or compile-time path; the condition-variable/timed fallback is still the default.
 
-Phase 1 diagnostics to keep or add:
+Phase 1 diagnostics status:
 
-- `/servernetstats` should show per-worker owned connections, last handled connections, scans, stale scans, packets, callbacks, average callback time, wakeups, timed waits, and idle waits.
-- `/serverstatus` should keep aggregate network worker counts and pending accept counts visible while Phase 2 is being developed.
-- A healthy worker-owned loop should have `connectionScans` scale with owned connections per worker, not worker count times total connections.
-- After a quiet period, a queued send should increase the owning worker's wakeup count and should not require waiting for a long polling timeout.
+- Done: `/servernetstats` shows per-worker owned connections, last handled connections, scans, stale scans, packets, callbacks, average callback time, wakeups, timed waits, and idle waits.
+- Done: `/serverstatus` keeps aggregate network worker counts and pending accept/handshake counts visible.
+- Done: a healthy worker-owned loop has `connectionScans` scale with owned connections per worker, not worker count times total connections.
+- Done: after a quiet period, a queued send increases the owning worker's wakeup count and does not rely on a long polling timeout.
 
-Phase 1 go/no-go for Phase 2:
+Phase 1 closeout checks:
 
 - No known packet ordering regression with multiple clients.
 - No stale-worker-list growth after repeated add/remove/disconnect stress.
 - No deadlock in shutdown or `removeAllConnections` while workers are active.
-- Idle CPU and idle wait behavior are measured on at least one Windows run and one Linux or Wine/proton-equivalent server run if available.
+- Idle wait behavior is covered by focused tests; broader idle CPU/context-switch profiling across Windows and Linux/Wine remains hardening measurement.
 - Existing local single-player hosting and remote TCP multiplayer still connect, exchange packets, and disconnect cleanly.
 
 Acceptance criteria:
@@ -245,7 +245,7 @@ Tests:
 - Add/remove during active worker loops.
 - Send queue wakeup for idle worker.
 - Disconnect while callback is active.
-- Many idle TCP clients with a small number of active clients.
+- Many idle local clients with a small number of active clients; broader TCP idle profiling is a follow-up measurement.
 
 ## Phase 2: Handshake State Machine
 
@@ -260,14 +260,14 @@ Code areas:
 
 Implementation tasks:
 
-1. Introduce `PendingConnection` with explicit states: await protocol request, send protocol response, await client connect, await password challenge response, finalize, reject, dead.
-2. Store deadlines per pending connection instead of blocking a thread in `receiveAny(clientWaitLimit)`.
-3. Drive pending handshakes from the universe loop or a bounded handshake executor.
-4. Preserve the existing packet sequence exactly.
-5. Keep final client-context registration under the universe ownership path.
-6. Move slow failure flushes to a bounded path that cannot create unbounded detached work.
+1. Done: `PendingConnection` and `PendingConnectionState` cover await protocol request, send protocol response, await client connect, await password challenge response, finalize, reject/flush, and dead states.
+2. Done: each pending connection stores a state deadline instead of blocking a dedicated thread in `receiveAny(clientWaitLimit)`.
+3. Done: pending handshakes are driven from the universe loop through `processPendingConnections()`.
+4. Done: protocol response, compression boundary, client connect validation, password challenge, and finalization preserve the packet sequence at the packet-type level.
+5. Done: final client-context registration remains under the universe ownership path.
+6. Done: failure paths use bounded reject/flush states instead of unbounded detached work.
 
-Current blocking flow to preserve:
+Legacy blocking flow preserved by the fallback path:
 
 1. `addClient` or the TCP accept callback creates one `Thread::invoke("UniverseServer::acceptConnection", ...)` task.
 2. The server blocks for `ProtocolRequestPacket`, replies with `ProtocolResponsePacket`, and enables the compression stream only after that response is sent.
@@ -276,7 +276,7 @@ Current blocking flow to preserve:
 5. The server computes `NetCompatibilityRules`, handles duplicate UUID priority, enforces max players, loads client context, adds the connection to `UniverseConnectionServer`, sends `ConnectSuccessPacket`, and schedules the initial warp/fly state.
 6. Failure paths send `ConnectFailurePacket` where possible and retain the connection in `m_deadConnections` long enough to flush pending data.
 
-Proposed `PendingConnection` data:
+Implemented `PendingConnection` data:
 
 - stable pending id for diagnostics, separate from final `ConnectionId`
 - `UniverseConnection` and optional remote address
@@ -284,37 +284,34 @@ Proposed `PendingConnection` data:
 - pending `ClientConnectPacket`, account string, administrator flag, password salt, legacy-client flag, compression-stream flag, and accumulated failure reason
 - cached remote address string for logging without recomputing it in every state
 
-State machine sketch:
+Implemented state machine sketch:
 
 | State | Nonblocking work | Next state |
 | --- | --- | --- |
 | `AwaitProtocolRequest` | call `receive()`, read `ProtocolRequestPacket`, reject missing or bad packets at deadline | `SendProtocolResponse` or `RejectAndFlush` |
-| `SendProtocolResponse` | queue/write `ProtocolResponsePacket`; unsupported protocol sets `allowed=false` | `EnableCompression` or `RejectAndFlush` |
-| `EnableCompression` | enable zstd stream on `CompressedPacketSocket` after the protocol response has been flushed or at the same point as current behavior | `AwaitClientConnect` |
+| `SendProtocolResponse` | queue/write `ProtocolResponsePacket`; unsupported protocol sets `allowed=false`; enable zstd stream after the response has flushed at the current protocol boundary | `AwaitClientConnect` or `RejectAndFlush` |
 | `AwaitClientConnect` | call `receive()`, read `ClientConnectPacket`, reject timeout or unexpected packet | `ValidateClientConnect` |
 | `ValidateClientConnect` | perform asset, species, account, anonymous, ban, max-version, and compatibility checks | `AwaitHandshakeResponse`, `FinalizeClient`, or `RejectAndFlush` |
 | `AwaitHandshakeResponse` | send challenge once, then call `receive()` until `HandshakeResponsePacket` or deadline | `FinalizeClient` or `RejectAndFlush` |
 | `FinalizeClient` | under universe/client ownership, allocate `ConnectionId`, load context, register RPC handlers, add to `UniverseConnectionServer`, send success packets, schedule initial world/system placement | `Dead` |
 | `RejectAndFlush` | queue `ConnectFailurePacket` or final protocol response, call nonblocking `send()`, keep the connection until sent or deadline | `Dead` |
 
-Recommended Phase 2 implementation sequence:
+Completed Phase 2 implementation sequence:
 
-1. Add `PendingConnection` and `PendingConnectionState` to `UniverseServer` while keeping the old `acceptConnection` path compiled and callable.
-2. Add `m_pendingConnections`, pending counters, and `processPendingConnections()` called from the universe loop near `reapConnections()`.
-3. Change TCP accept and `addClient` to enqueue pending connections behind a temporary config flag, leaving the thread-per-handshake path available as a fallback.
-4. Port protocol response handling first, including unsupported protocol failure and compression-mode negotiation.
-5. Port `ClientConnectPacket` validation without changing messages or packet order.
-6. Port password challenge and failure handling, preserving the same missing-account versus bad-password message.
-7. Port finalization as a narrow helper that runs on the universe thread and reuses existing duplicate UUID, max player, client context loading, system-world placement, revive warp, and script callback logic.
-8. Remove or disable the old accept-thread list only after local, TCP, legacy, OpenStarbound, password, timeout, and duplicate UUID tests pass.
+1. Done: `PendingConnection` and `PendingConnectionState` live in `UniverseServer` while the old `acceptConnection` path remains compiled and callable as a fallback.
+2. Done: `m_pendingConnections`, pending counters, and `processPendingConnections()` are driven from the universe loop.
+3. Done: TCP accept and `addClient` enqueue pending connections behind `usePendingConnectionStateMachine`, leaving the thread-per-handshake path available as a fallback.
+4. Done: protocol response handling includes unsupported protocol failure and compression-mode negotiation.
+5. Done: `ClientConnectPacket` validation was ported without changing the public packet sequence.
+6. Done: password challenge and failure handling were ported while preserving the existing authentication messages.
+7. Done: finalization is a helper on the universe thread and reuses duplicate UUID, max player, client-context loading, system-world placement, revive warp, and script callback logic.
+8. Deferred: the old accept-thread fallback remains until the extended local/TCP/legacy/OpenStarbound/password/timeout/duplicate UUID matrix passes.
 
-Phase 2 diagnostics to add:
+Phase 2 diagnostics status:
 
-- pending handshake count by state in `/serverstatus`
-- accepted, finalized, rejected, and timed-out counters in `/serverstatus`
-- dropped-pending counters
-- oldest pending handshake age and maximum pending deadline overrun
-- failure reason buckets for protocol mismatch, timeout, asset mismatch, anonymous disabled, auth failed, ban, duplicate UUID, max players, and unexpected packet
+- Done: pending handshake count by state is visible in `/serverstatus`.
+- Done: accepted, finalized, rejected, and timed-out counters are visible in `/serverstatus`.
+- Deferred: dropped-pending counters, oldest pending age, maximum deadline overrun, and failure reason buckets remain hardening diagnostics for the enabled path.
 
 Phase 2 compatibility checkpoints:
 
@@ -342,15 +339,8 @@ Primary risks:
 Tests:
 
 - Covered by focused tests: local state-machine success and protocol mismatch rejection.
-- Legacy and OpenStarbound handshakes.
-- Timeout in every pending state.
-- Password success and failure.
-- Duplicate UUID as admin and non-admin.
-- Login burst with deliberately slow clients.
-- Protocol mismatch flushes a disallowed `ProtocolResponsePacket` before closing.
-- Asset mismatch tests cover both server refusal and client-side `allowAssetsMismatch` refusal.
-- Max-player refusal still allows administrator priority.
-- Local single-player connection still succeeds without requiring TCP-only code paths.
+- Extended hardening matrix before removing the fallback: legacy and OpenStarbound handshakes, timeout in every pending state, password success/failure, duplicate UUID as admin and non-admin, login bursts with deliberately slow clients, protocol-mismatch flush behavior, asset mismatch refusal on both sides, and max-player refusal with administrator priority.
+- Covered by focused tests and live local-client use: local single-player connection still succeeds without requiring TCP-only code paths.
 
 ## Phase 3: Async Persistence And Snapshot Writes
 
@@ -410,24 +400,22 @@ Started work:
 - Shutdown drains pending async persistence writes before final synchronous universe and temp-world index saves, preventing older queued autosaves from overwriting shutdown state.
 - `/serverstatus` reports pending persistence batches, pending snapshots, oldest pending age, completed batches, written snapshots, build/write time, failures, retry attempts, synchronous fallbacks, and queue-full fallbacks.
 
-Recommended Phase 3 implementation sequence:
+Completed Phase 3 implementation sequence and gates:
 
-1. Extend the current versioned snapshot path to include any remaining universe-owned metadata writes that can be serialized before dispatch.
-2. Validate `useAsyncPersistence` under save/load and shutdown tests before enabling it by default.
-3. Add failure-injection or filesystem-denial tests that prove retries, failures, and queue-full fallbacks are reported.
-4. Decide whether ship chunk snapshots should remain a transport-only boundary or gain a server-side write path for local-host durability work.
-5. Move client context and universe settings writes to the executor first, because their snapshots are already plain versioned JSON.
-6. Move ship chunk update writes after proving that `readChunks()` or a future `readChunkUpdate()` happens only on the world owner boundary.
-7. Move system-world storage after adding result reporting and making `SystemWorldServerThread::store()` produce immutable JSON before enqueueing work.
-8. Keep world database `sync()` on the world thread until sector-level serialized updates can be produced without exposing live `WorldStorage` or `BTreeDatabase` to background workers.
-9. Add shutdown draining that waits for required jobs, reports failed optional jobs, and preserves the current durable-exit behavior.
+1. Done: the versioned snapshot path covers the current universe-owned JSON writes used by triggered storage: `UniverseSettings`, `TempWorldIndex`, and `ClientContext`.
+2. Gate before default enablement: validate `useAsyncPersistence` under broader save/load and shutdown scenarios.
+3. Gate before default enablement: add failure-injection or filesystem-denial tests that prove retries, failures, and queue-full fallbacks are reported.
+4. Deferred design decision: ship chunk snapshots currently remain a transport/snapshot boundary; a server-side ship chunk write path should be evaluated only after owner-thread chunk-update boundaries are proven.
+5. Done: client context and universe/temp-world JSON writes can run through the executor as immutable versioned JSON snapshots.
+6. Deferred: ship chunk update writes remain synchronous/owner-bound until a serialized update path can be proven safe.
+7. Done for the safe slice: `SystemWorldServerThread::store()` produces immutable versioned JSON before writing; enqueueing system-world writes remains deferred until result reporting is expanded.
+8. Done by deferral: world database `sync()` remains on the world thread until sector-level serialized updates exist without exposing live `WorldStorage` or `BTreeDatabase` to workers.
+9. Done: shutdown drains pending async persistence writes before final synchronous saves.
 
-Phase 3 diagnostics to add:
+Phase 3 diagnostics status:
 
-- persistence queue depth, oldest queued age, completed jobs, failed jobs, retry count, and bytes written by job type
-- time spent snapshotting on owner threads versus time spent writing on persistence workers
-- per-world sync duration and per-system store duration
-- crash-report context for pending required persistence jobs
+- Done: `/serverstatus` reports persistence queue depth, pending snapshots, oldest queued age, completed batches, written snapshots, failed snapshots, retry count, synchronous fallbacks, queue-full fallbacks, snapshot-build time, worker write time, and celestial commit time/count.
+- Deferred: bytes written by job type, per-world sync duration, per-system store duration, and crash-report context for pending required persistence jobs remain diagnostics-roadmap/hardening work.
 
 Phase 3 compatibility checkpoints:
 
@@ -456,14 +444,8 @@ Primary risks:
 
 Tests:
 
-- Normal save/load.
-- Disconnect while save is pending.
-- Ship upgrade while save is pending.
-- Shutdown while writes are queued.
-- Simulated write failure.
-- Old save load after async-written state.
-- System-world flight and arrival state survives restart after async store.
-- Persistence queue saturation uses backpressure and does not drop required client context writes.
+- Covered by focused tests: opt-in async triggered-storage completion, `universe.dat` and `tempworlds.index` creation/loadability, and bounded-queue synchronous fallback without dropping required state.
+- Hardening matrix before default enablement: normal save/load depth, disconnect while save is pending, ship upgrade while save is pending, shutdown while writes are queued, simulated write failure, old-save load after async-written state, and system-world flight/arrival survival after restart.
 
 ## Phase 4: Strict World Mailbox Ownership
 
@@ -478,13 +460,13 @@ Code areas:
 
 Implementation tasks:
 
-1. Add typed world commands for add/remove client, pause, read chunks snapshot, spawn-target check, messages, ship properties, flying sky, sync, and unload.
-2. Add reply promises for commands that need a result.
-3. Drain commands at explicit tick boundaries before packet handling or before world update, depending on current behavior requirements.
-4. Convert `addClient` and `removeClient` first because they are high-value and easy to test.
-5. Replace generic `executeAction()` call sites with typed commands in small batches.
-6. Convert system-world mutation paths to equivalent commands.
-7. Add queue-depth and command-latency metrics.
+1. Done: add typed world commands for add/remove client, pause, read chunks snapshot, spawn-target check, messages, weather, dungeon placement, ship upgrades, flying sky, sync, and unload.
+2. Done: add reply promises for commands that need a result.
+3. Done: drain commands at explicit owner-thread tick boundaries before packet handling/world update work.
+4. Done: convert `addClient` and `removeClient` while preserving compatibility wrappers.
+5. Done: replace production generic `executeAction()` call sites with typed commands in small batches.
+6. Done for the current external mutation paths: convert system-world add/remove client ship mutations to equivalent commands; existing destination/action/packet paths already queue work.
+7. Done: add queue-depth and command-latency metrics to aggregate `/serverstatus` output.
 
 Started work:
 
@@ -496,13 +478,13 @@ Started work:
 - Command waiters are released with a failure if the world thread exits before their command runs.
 - Per-thread command counters exist in `WorldServerThread::CommandStats` and aggregate pending, processed, direct, failed, and wait-time values are visible in `/serverstatus`.
 
-Remaining Phase 4 work:
+Phase 4 closeout result:
 
-1. Publish explicit system-world read snapshots for ship location, sky, warp action, and active instance worlds rather than relying on ad hoc cache reads.
-2. Add oldest command age and per-world/system-world command details to `/worldstats` once that command exists.
-3. Add focused tests for command failure propagation, disconnect during queued world work, ship upgrade commands, and admin/RPC behaviors now routed through named commands.
+1. Done: `SystemWorldServerThread` publishes read snapshots for clients, ship locations, sky parameters, warp actions, and active instance worlds under the queue lock after owner-thread updates.
+2. Deferred: oldest command age and per-world/system-world command details belong in `/worldstats` once that command exists.
+3. Deferred: focused tests for command failure propagation, disconnect during queued world work, ship upgrade commands, and admin/RPC behaviors remain hardening coverage before removing the generic compatibility wrapper.
 
-Current direct world-entry points to retire or wrap:
+Current direct world-entry points are wrapped by named commands or retained as compatibility wrappers:
 
 - `WorldServerThread::spawnTargetValid()`
 - `WorldServerThread::addClient()`
@@ -514,29 +496,28 @@ Current direct world-entry points to retire or wrap:
 - `WorldServerThread::readChunks()`
 - `WorldServerThread::sync()`
 
-Current system-world entry points to normalize:
+Current system-world entry point status:
 
 - `SystemWorldServerThread::addClient()` and `removeClient()` now enqueue owner-thread commands when the system world is running and fall back to direct execution before start or after stop.
-- `setClientDestination()`, `executeClientShipAction()`, and `pushIncomingPacket()` already queue work and should become named commands if command diagnostics are expanded to system worlds.
-- `clientShipLocation()`, `clientWarpAction()`, `clientSkyParameters()`, and `activeInstanceWorlds()` should read published snapshots instead of locking live state where possible.
+- `setClientDestination()`, `executeClientShipAction()`, and `pushIncomingPacket()` already queue work and should become named diagnostic commands only if command diagnostics are expanded to system worlds.
+- `clientShipLocation()`, `clientWarpAction()`, `clientSkyParameters()`, `clients()`, and `activeInstanceWorlds()` read published thread-side state under locks instead of directly reading live `SystemWorldServer` state from callers.
 
-Recommended Phase 4 implementation sequence:
+Completed Phase 4 implementation sequence and gates:
 
-1. Add a command queue and result queue to `WorldServerThread`, but initially keep the old public methods as synchronous wrappers around commands.
-2. Add published world snapshots for client ids, expiration state, new planet type, player revive position, and ship chunks where synchronous callers need read results.
-3. Convert `spawnTargetValid`, `playerRevivePosition`, and `readChunks` first because they are easy to compare against existing behavior.
-4. Convert `addClient` and `removeClient`, preserving the current outgoing packet return path and chat channel join/leave ordering in `UniverseServer::warpPlayers()` and `doDisconnection()`.
-5. Replace `executeAction()` call sites with named commands for weather, flying sky start/stop, container item RPC, universe flag RPC, ship properties, admin actions, and scripted world actions.
-6. Move `sync()` and `unloadAll()` to owner-thread commands with completion results so shutdown and storage phases can wait deliberately.
-7. Bring `SystemWorldServerThread` into the same model by moving add/remove client ship into queued commands and publishing read snapshots after each update.
-8. Remove the old direct-entry wrappers only after command latency, queue depth, and error propagation are visible in diagnostics.
+1. Done: `WorldServerThread` has a command queue and synchronous compatibility wrappers around commands.
+2. Done: read-result wrappers cover client ids, expiration state, new planet type, player revive position, and ship chunks where callers need synchronous results.
+3. Done: `spawnTargetValid`, `playerRevivePosition`, and `readChunks` route through the command path while the world thread is running.
+4. Done: `addClient` and `removeClient` route through commands while preserving outgoing packet return behavior.
+5. Done: generic `executeAction()` production call sites were replaced with named commands for weather, flying sky start/stop, container item RPC, universe flag RPC, ship upgrades, admin actions, and scripted world actions.
+6. Done: `sync()` and `unloadAll()` run on the owner-thread command path with completion results for deliberate waiting.
+7. Done: `SystemWorldServerThread` uses queued add/remove client ship commands and publishes read snapshots after updates.
+8. Gate before wrapper removal: keep the old generic compatibility wrapper until command error propagation, ship/admin/RPC coverage, and old extension points are audited.
 
-Phase 4 diagnostics to add:
+Phase 4 diagnostics status:
 
-- per-world command queue depth, oldest command age, processed command count, and failed command count
-- time waiting for command replies from the universe thread
-- number of remaining direct `executeAction()` callers by category during rollout
-- world-thread update time split into command drain, packet handling, simulation, messages, outgoing packet collection, and update callbacks is now visible in `/serverstatus`
+- Done: `/serverstatus` aggregates world command queue depth, processed/direct/failed counts, and total wait time.
+- Done: world-thread update time split into command drain, packet handling, simulation, messages, outgoing packet collection, update callbacks, and sync is visible through timing status.
+- Deferred: oldest command age, per-world/system-world command details, and explicit remaining-wrapper audits belong in `/worldstats` or hardening diagnostics.
 
 Phase 4 compatibility checkpoints:
 
@@ -550,7 +531,7 @@ Acceptance criteria:
 - World state mutation from outside the owner thread is removed or explicitly isolated.
 - Common warps, beam up/down, ship travel, disconnect, and idle unload behave the same.
 - Command queueing does not introduce unbounded one-tick delays in user-visible flows.
-- Remaining direct world-lock entry points are documented and temporary.
+- Compatibility wrappers that can still touch direct world-lock paths are documented and temporary.
 
 Primary risks:
 
@@ -609,33 +590,34 @@ Started work:
 - `WorldServer::WorldTickSnapshot` now owns the per-tick client windows, monitoring regions, packet-prep caches, and packet-prep counters, and `WorldServerThread` / `UniverseServer::serverStatus()` expose aggregate packet-prep ticks, monitoring-region builds, and cache hit/miss counts.
 - `source/test/multicore_phase_test.cpp` adds a focused Phase 0-5 regression suite: universe timing status, world-thread/update timing status, network worker sharding/wakeups, pending-handshake rejection, async persistence queue fallback, world command mailbox processing, and sector packet-prep cache reuse.
 
-Remaining Phase 5 work:
+Phase 5 closeout result:
 
-1. Extend `WorldTickSnapshot` with immutable monitored entity ids, client net rules, pending tile/liquid/damage update copies, and entity serialization inputs suitable for worker jobs.
-2. Add deeper serial packet-equivalence tests before moving packet preparation onto worker jobs, especially around `writeNetState(0)` call counts and later delta behavior.
-3. Surface packet-prep split timings, generation-priority cache counts, owner-index hit/miss counters, and post-tick job deadline counters in diagnostics.
+1. Done for the compatibility-first slice: `WorldTickSnapshot` owns per-tick client windows, monitoring regions, packet-prep caches, and packet-prep counters used by serial packet preparation.
+2. Gate before workerized packet prep: extend `WorldTickSnapshot` with immutable monitored entity ids, client net rules, pending tile/liquid/damage update copies, and entity serialization inputs suitable for worker jobs.
+3. Gate before workerized packet prep: add deeper serial packet-equivalence tests, especially around `writeNetState(0)` call counts and later delta behavior.
+4. Deferred diagnostics: packet-prep split timings, generation-priority cache counts, owner-index hit/miss counters, and post-tick job deadline counters should land with the worker-job path they measure.
 
-Recommended Phase 5 implementation sequence:
+Completed Phase 5 implementation sequence and Phase 6 gates:
 
-1. First do non-parallel algorithmic cleanups that preserve behavior: apply inbound entity updates through owner-indexed entity sets, compute monitoring regions once per client per tick, and precompute generation queue priorities before sorting.
-2. Extend the current `WorldTickSnapshot` from client windows, monitoring regions, caches, and counters to current step/time, monitored entity ids, client net rules, pending tile/liquid/damage update lists, and immutable entity serialization inputs.
-3. Keep sector packet and entity store cache metrics live, and only cache first-update serialization after a packet-equivalence test proves that changing `writeNetState(0)` call counts does not alter later delta behavior.
-4. Move packet preparation into a post-tick job for read-only snapshot data, then merge produced packet lists back on the world thread in the same per-client order.
-5. Move metrics and persistence snapshot serialization next, because they can consume immutable summaries and do not affect gameplay state.
-6. Consider a world-local job scheduler only after the shared `WorkerPool` queue behavior is measured under server load; overloaded post-tick jobs must not stall the next authoritative update indefinitely.
-7. Keep liquid, falling blocks, wiring, entity update, and Lua update serial until Phase 6 experiments prove deterministic boundaries.
+1. Done: non-parallel algorithmic cleanups preserve behavior by applying inbound entity updates through owner-indexed entity sets, computing monitoring regions once per client per tick, and memoizing generation queue priorities during sorting.
+2. Done for the safe slice: `WorldTickSnapshot` carries client windows, monitoring regions, caches, and counters used by serial packet preparation.
+3. Done: sector packet and entity store cache metrics are live; first-update serialization remains per-client until packet-equivalence tests prove `writeNetState(0)` call-count changes are safe.
+4. Phase 6 gate: move packet preparation into a post-tick job only after immutable entity serialization inputs and packet-equivalence tests exist.
+5. Phase 6/post-Phase-5 gate: move metrics and persistence serialization jobs only when they consume immutable summaries and have measured merge/fallback behavior.
+6. Phase 6 gate: consider a world-local job scheduler only after shared `WorkerPool` behavior is measured under server load.
+7. Still serial by design: liquid, falling blocks, wiring, entity update, and Lua update remain serial until Phase 6 experiments prove deterministic boundaries.
 
 Phase 5 diagnostics now available:
 
 - `/serverstatus` exposes aggregate packet-prep ticks, monitoring-region builds/rect counts, sector packet cache hits/misses, entity store cache hits/misses, and entity net-state cache hits/misses.
 - `LogMap` exposes per-world packet-prep counters under `server_<world>_packet_prep`.
+- Monitoring-region build count per tick is visible through packet-prep ticks and monitoring-region build counters.
 
-Phase 5 diagnostics still to add:
+Phase 5 diagnostics deferred to worker-job rollout:
 
 - per-world post-tick job queue depth, job duration, merge duration, and missed-deadline count
 - packet preparation time split by tile updates, entity creates, entity deltas, monitored entity collection, and compression/serialization where measurable
 - generation-priority cache counts and owner-index hit/miss counters
-- monitoring-region build count per tick to prove repeated recomputation has been removed
 
 Phase 5 compatibility checkpoints:
 
@@ -734,20 +716,29 @@ Tests:
 - Liquid-heavy worlds.
 - Modded smoke tests.
 
-## Remaining Codebase Work Order
+## Phase 0-5 Closeout And Phase 6 Gate Work
 
-This section is the practical backlog for the rest of the codebase after Phase 1/2 planning. It keeps low-risk, compatibility-preserving changes ahead of deeper concurrency work.
+The practical Phase 0-5 implementation backlog is closed for the compatibility-first slices described above. The remaining items are validation, diagnostics consumers, or Phase 6 gates that should stay visible but should not be treated as unfinished Phase 0-5 implementation work.
 
-1. Finish Phase 0 diagnostics so every later phase has universe, world, network, persistence, and packet-preparation timing.
-2. Complete Phase 1 worker tests and run idle/high-connection profiling before changing socket readiness behavior.
-3. Implement Phase 2 behind a fallback flag and keep packet-order compatibility tests close to the handshake code.
-4. Land low-risk world hot-path cleanups before broad parallelism: keep `EntityUpdateSetPacket` application bounded by owner-indexed entity sets, cache per-client monitoring regions once per tick, precompute world-generation sector priorities, add entity-create serialization caches parallel to `m_netStateCache`, batch tile/liquid fan-out by subscribed sector where practical, and add shared delta caching for `SystemWorldServer` ship/object replication.
-5. Build Phase 3 persistence snapshots and executor with strict immutable-data rules.
-6. Convert Phase 4 world and system-world entry points to typed commands while keeping synchronous compatibility wrappers during rollout.
-7. Use Phase 5 snapshots for packet preparation, metrics, and persistence serialization before trying subsystem parallelism.
-8. Keep Phase 6 experiments isolated, off by default, and backed by differential tests.
-9. Revisit lower-level primitive cleanup after ownership boundaries are flatter: recursive mutex reduction, spinlock replacement, and `WorkerPool` backpressure improvements.
-10. Update `diagnostics-debugging-roadmap.md` whenever a phase adds counters that should appear in overlays, `/serverstatus`, crash bundles, or structured logs.
+Closed Phase 0-5 work:
+
+1. Phase 0 diagnostics now cover universe, world-thread, world-update, network, persistence, and packet-preparation timing/counters through shared status structures and server commands.
+2. Phase 1 worker sharding, wakeups, focused many-idle/ordering/remove tests, and worker-stat diagnostics are implemented; socket readiness remains future networking work.
+3. Phase 2 pending handshakes are implemented behind `usePendingConnectionStateMachine` with the legacy accept-thread fallback retained for extended-matrix hardening.
+4. Phase 3 immutable JSON persistence snapshots, bounded async executor, synchronous fallback, retry accounting, shutdown draining, and focused queue-pressure tests are implemented while async persistence remains opt-in.
+5. Phase 4 world-thread commands, command diagnostics, ship-upgrade command/result handling, and system-world add/remove command plus read snapshots are implemented while compatibility wrappers remain for audited rollout.
+6. Phase 5 serial snapshot/prep groundwork is implemented: owner-indexed entity updates, per-tick monitoring-region snapshot reuse, generation-priority memoization, sector packet cache, entity store cache, packet-prep counters, and focused regression tests.
+
+Post-Phase-5 hardening before broad default enablement or Phase 6 expansion:
+
+1. Run broader TCP/high-connection and high-fan-out profiling before changing socket readiness or `sendPackets` behavior.
+2. Complete the extended pending-handshake matrix before removing the legacy accept-thread fallback.
+3. Validate async persistence under save/load depth, queued shutdown, failure injection, old-save loading, and latency profiling before enabling it by default.
+4. Add `/worldstats` or equivalent per-world/system-world command diagnostics if command wrappers are removed or if system-world command detail becomes operationally important.
+5. Add packet-equivalence tests and immutable entity serialization inputs before moving packet preparation onto worker jobs.
+6. Keep Phase 6 experiments isolated, off by default, and backed by differential tests.
+7. Revisit lower-level primitive cleanup after ownership boundaries are flatter: recursive mutex reduction, spinlock replacement, and `WorkerPool` backpressure improvements.
+8. Update `diagnostics-debugging-roadmap.md` whenever a phase adds counters that should appear in overlays, `/serverstatus`, crash bundles, or structured logs.
 
 Codebase-wide acceptance gates:
 
@@ -758,13 +749,13 @@ Codebase-wide acceptance gates:
 
 ## First Optimization Verification Plan
 
-For the Phase 1 change already started, verify in this order:
+The original Phase 1 verification plan is now mostly covered by focused tests and live counters. Keep this as the profiling checklist for future socket readiness or high-fan-out networking changes:
 
-1. Configure Windows build once vcpkg is available: `cmake --preset=windows-release` from `source/`.
+1. Configure Windows build: `cmake --preset=windows-release` from `source/`.
 2. Build at least `game_tests` or the full preset: `cmake --build --preset=windows-release`.
 3. Run no-asset tests: `ctest --preset=windows-release`.
-4. Add a temporary or permanent network worker counter dump after Phase 0 counters are available.
-5. Compare idle CPU and context switches with many connected idle clients before and after the change.
+4. Use `/servernetstats` and `/serverstatus` for network worker counter dumps.
+5. Compare idle CPU and context switches with many connected idle clients before and after readiness changes.
 6. Compare packet latency for a low-rate ping/action workload.
 7. Stress add/remove/send while workers are active.
 
