@@ -47,6 +47,14 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
       Root::singleton().configuration()->set("cameraSpeedFactor", m_cameraSpeedList[cameraSpeedSlider->val()]);
       syncGui();
     });
+  reader.registerCallback("renderFrameRateSlider", [=](Widget*) {
+      auto renderFrameRateSlider = fetchChild<SliderBarWidget>("renderFrameRateSlider");
+      auto renderFrameRate = m_renderFrameRateList[renderFrameRateSlider->val()];
+      m_localChanges.set("renderFrameRate", renderFrameRate);
+      Root::singleton().configuration()->set("renderFrameRate", renderFrameRate);
+      GuiContext::singleton().applicationController()->setTargetRenderRate(renderFrameRate > 0.0f ? Maybe<float>(renderFrameRate) : Maybe<float>());
+      syncGui();
+    });
   reader.registerCallback("speechBubbleCheckbox", [=](Widget*) {
       auto button = fetchChild<ButtonWidget>("speechBubbleCheckbox");
       m_localChanges.set("speechBubbles", button->isChecked());
@@ -87,6 +95,13 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
     Root::singleton().configuration()->set("antiAliasing", checked);
     syncGui();
   });
+  reader.registerCallback("vsyncCheckbox", [=](Widget*) {
+    bool checked = fetchChild<ButtonWidget>("vsyncCheckbox")->isChecked();
+    m_localChanges.set("vsync", checked);
+    Root::singleton().configuration()->set("vsync", checked);
+    GuiContext::singleton().applicationController()->setVSyncEnabled(checked);
+    syncGui();
+  });
   reader.registerCallback("hardwareCursorCheckbox", [=](Widget*) {
     bool checked = fetchChild<ButtonWidget>("hardwareCursorCheckbox")->isChecked();
     m_localChanges.set("hardwareCursor", checked);
@@ -118,6 +133,7 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
   m_resList = jsonToVec2UList(assets->json("/interface/windowconfig/graphicsmenu.config:resolutionList"));
   m_zoomList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:zoomList"));
   m_cameraSpeedList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:cameraSpeedList"));
+  m_renderFrameRateList = jsonToFloatList(assets->json("/interface/windowconfig/graphicsmenu.config:renderFrameRateList"));
 
   reader.construct(paneLayout, this);
 
@@ -125,6 +141,7 @@ GraphicsMenu::GraphicsMenu(PaneManager* manager,UniverseClientPtr client)
   fetchChild<SliderBarWidget>("resSlider")->setRange(0, m_resList.size() - 1, 1);
   fetchChild<SliderBarWidget>("zoomSlider")->setRange(0, m_zoomList.size() - 1, 1);
   fetchChild<SliderBarWidget>("cameraSpeedSlider")->setRange(0, m_cameraSpeedList.size() - 1, 1);
+  fetchChild<SliderBarWidget>("renderFrameRateSlider")->setRange(0, m_renderFrameRateList.size() - 1, 1);
 
   initConfig();
   syncGui();
@@ -168,6 +185,8 @@ StringList const GraphicsMenu::ConfigKeys = {
   "limitTextureAtlasSize",
   "useMultiTexturing",
   "antiAliasing",
+  "vsync",
+  "renderFrameRate",
   "hardwareCursor",
   "monochromeLighting",
   "newLighting"
@@ -229,6 +248,17 @@ void GraphicsMenu::syncGui() {
   }
   fetchChild<LabelWidget>("cameraSpeedValueLabel")->setText(strf("{}x", cameraSpeedFactor));
 
+  auto renderFrameRateSlider = fetchChild<SliderBarWidget>("renderFrameRateSlider");
+  auto renderFrameRate = m_localChanges.get("renderFrameRate").optFloat().value(60.0f);
+  auto renderFrameRateIt = std::lower_bound(m_renderFrameRateList.begin(), m_renderFrameRateList.end(), renderFrameRate);
+  if (renderFrameRateIt != m_renderFrameRateList.end()) {
+    size_t renderFrameRateIndex = renderFrameRateIt - m_renderFrameRateList.begin();
+    renderFrameRateSlider->setVal(std::min(renderFrameRateIndex, m_renderFrameRateList.size() - 1), false);
+  } else {
+    renderFrameRateSlider->setVal(m_renderFrameRateList.size() - 1);
+  }
+  fetchChild<LabelWidget>("renderFrameRateValueLabel")->setText(renderFrameRate > 0.0f ? strf("{} FPS", (unsigned)renderFrameRate) : "UNCAPPED");
+
   fetchChild<ButtonWidget>("speechBubbleCheckbox")->setChecked(m_localChanges.get("speechBubbles").toBool());
   fetchChild<ButtonWidget>("interactiveHighlightCheckbox")->setChecked(m_localChanges.get("interactiveHighlight").toBool());
   fetchChild<ButtonWidget>("fullscreenCheckbox")->setChecked(m_localChanges.get("fullscreen").toBool());
@@ -236,6 +266,7 @@ void GraphicsMenu::syncGui() {
   fetchChild<ButtonWidget>("textureLimitCheckbox")->setChecked(m_localChanges.get("limitTextureAtlasSize").toBool());
   fetchChild<ButtonWidget>("multiTextureCheckbox")->setChecked(m_localChanges.get("useMultiTexturing").optBool().value(true));
   fetchChild<ButtonWidget>("antiAliasingCheckbox")->setChecked(m_localChanges.get("antiAliasing").toBool());
+  fetchChild<ButtonWidget>("vsyncCheckbox")->setChecked(m_localChanges.get("vsync").toBool());
   fetchChild<ButtonWidget>("monochromeCheckbox")->setChecked(m_localChanges.get("monochromeLighting").toBool());
   fetchChild<ButtonWidget>("newLightingCheckbox")->setChecked(m_localChanges.get("newLighting").optBool().value(true));
   fetchChild<ButtonWidget>("hardwareCursorCheckbox")->setChecked(m_localChanges.get("hardwareCursor").toBool());

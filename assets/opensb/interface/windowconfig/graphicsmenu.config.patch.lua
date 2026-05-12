@@ -42,9 +42,18 @@ function patch(config)
   config.interfaceScaleList = {0} -- 0 = AUTO!
   for i = 1, 17 do config.interfaceScaleList[i + 1] = 0.75 + i / 4 end
 
+  -- Create the max FPS widgets
+  shift(clone(layout, "zoomLabel", "renderFrameRateLabel"), 100, 28).value = "MAXIMUM FPS"
+  shift(clone(layout, "zoomSlider", "renderFrameRateSlider"), 100, 28)
+  shift(clone(layout, "zoomValueLabel", "renderFrameRateValueLabel"), 100, 28)
+  config.renderFrameRateList = {0, 30, 45, 60, 75, 90, 120, 144, 165, 180, 200, 240, 300, 360}
+
   -- Create anti-aliasing toggle
   shift(clone(layout, "multiTextureLabel", "antiAliasingLabel"), 98).value = "SUPER-SAMPLED AA"
   shift(clone(layout, "multiTextureCheckbox", "antiAliasingCheckbox"), 99)
+  -- Create VSync toggle
+  shift(clone(layout, "multiTextureLabel", "vsyncLabel"), 198).value = "VSYNC"
+  shift(clone(layout, "multiTextureCheckbox", "vsyncCheckbox"), 199)
   -- Create new lighting toggle
   shift(clone(layout, "multiTextureLabel", "newLightingLabel"), 0, -11).value = "NEW LIGHTING"
   shift(clone(layout, "multiTextureCheckbox", "newLightingCheckbox"), 0, -11)
@@ -53,7 +62,7 @@ function patch(config)
   shift(clone(layout, "multiTextureCheckbox", "hardwareCursorCheckbox"), 99, -11)
   
   -- Create shader menu button
-  shift(moveto(clone(layout, "accept", "showShadersMenu"), layout.interfaceScaleSlider), 112, -2).caption = "Shaders"
+  shift(moveto(clone(layout, "accept", "showShadersMenu"), layout.cameraSpeedSlider), 112, -2).caption = "Shaders"
   
 
   shift(layout.title, 0, 24)

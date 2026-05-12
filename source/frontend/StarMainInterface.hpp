@@ -5,6 +5,7 @@
 #include "StarItemDescriptor.hpp"
 #include "StarGameTypes.hpp"
 #include "StarInterfaceCursor.hpp"
+#include "StarLogging.hpp"
 #include "StarMainInterfaceTypes.hpp"
 #include "StarWarping.hpp"
 
@@ -207,6 +208,14 @@ private:
   GameTimer m_debugSpatialClearTimer;
   GameTimer m_debugMapClearTimer;
   RectF m_debugTextRect{RectF::null()};
+  uint64_t m_debugSpatialStep{};
+  bool m_debugSpatialCacheValid{};
+  Deque<SpatialLogger::Line> m_debugWorldLines;
+  Deque<SpatialLogger::Line> m_debugScreenLines;
+  Deque<SpatialLogger::Point> m_debugWorldPoints;
+  Deque<SpatialLogger::Point> m_debugScreenPoints;
+  Deque<SpatialLogger::LogText> m_debugWorldText;
+  Deque<SpatialLogger::LogText> m_debugScreenText;
 
   NameplatePainterPtr m_nameplatePainter;
   QuestIndicatorPainterPtr m_questIndicatorPainter;

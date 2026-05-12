@@ -1410,6 +1410,13 @@ void MainInterface::renderWindows() {
 void MainInterface::renderDebug() {
   if (!isDebugDisplayed()) {
     SpatialLogger::clear();
+    m_debugSpatialCacheValid = false;
+    m_debugWorldLines.clear();
+    m_debugScreenLines.clear();
+    m_debugWorldPoints.clear();
+    m_debugScreenPoints.clear();
+    m_debugWorldText.clear();
+    m_debugScreenText.clear();
     m_debugTextRect = RectF::null();
     LogMap::clear();
     SpatialLogger::setObserved(false);
@@ -1453,19 +1460,38 @@ void MainInterface::renderDebug() {
   }
 
   auto const& camera = m_worldPainter->camera();
+  auto worldClient = m_client->worldClient();
+  bool refreshSpatial = !m_debugSpatialCacheValid;
+  uint64_t currentStep = 0;
+  if (worldClient) {
+    currentStep = worldClient->currentStep();
+    refreshSpatial |= currentStep != m_debugSpatialStep;
+  } else {
+    refreshSpatial = true;
+  }
 
-  bool clearSpatial = m_debugSpatialClearTimer.wrapTick();
+  if (refreshSpatial) {
+    bool clearSpatial = m_debugSpatialClearTimer.wrapTick();
+    m_debugWorldLines = SpatialLogger::getLines("world", clearSpatial);
+    m_debugScreenLines = SpatialLogger::getLines("screen", clearSpatial);
+    m_debugWorldPoints = SpatialLogger::getPoints("world", clearSpatial);
+    m_debugScreenPoints = SpatialLogger::getPoints("screen", clearSpatial);
+    m_debugWorldText = SpatialLogger::getText("world", clearSpatial);
+    m_debugScreenText = SpatialLogger::getText("screen", clearSpatial);
+    m_debugSpatialStep = currentStep;
+    m_debugSpatialCacheValid = true;
+  }
 
-  for (auto const& line : SpatialLogger::getLines("world", clearSpatial)) {
+  for (auto const& line : m_debugWorldLines) {
     Vec2F begin = camera.worldToScreen(line.begin);
     Vec2F end = camera.worldGeometry().diff(line.end, line.begin) * camera.pixelRatio() * TilePixels + begin;
     m_guiContext->drawLine(begin, end, line.color, 1);
   }
 
-  for (auto const& line : SpatialLogger::getLines("screen", clearSpatial))
+  for (auto const& line : m_debugScreenLines)
     m_guiContext->drawLine(Vec2F(line.begin), Vec2F(line.end), line.color, 1);
 
-  for (auto const& point : SpatialLogger::getPoints("world", clearSpatial)) {
+  for (auto const& point : m_debugWorldPoints) {
     auto position = camera.worldToScreen(point.position);
     m_guiContext->drawLine(position + Vec2F(-2, -2), position + Vec2F(-2, 2), point.color, 1);
     m_guiContext->drawLine(position + Vec2F(-2, 2), position + Vec2F(2, 2), point.color, 1);
@@ -1473,7 +1499,7 @@ void MainInterface::renderDebug() {
     m_guiContext->drawLine(position + Vec2F(2, -2), position + Vec2F(-2, -2), point.color, 1);
   }
 
-  for (auto const& point : SpatialLogger::getPoints("screen", clearSpatial)) {
+  for (auto const& point : m_debugScreenPoints) {
     auto position = point.position;
     m_guiContext->drawLine(position + Vec2F(-2, -2), position + Vec2F(-2, 2), point.color, 1);
     m_guiContext->drawLine(position + Vec2F(-2, 2), position + Vec2F(2, 2), point.color, 1);
@@ -1483,12 +1509,12 @@ void MainInterface::renderDebug() {
 
   m_guiContext->setTextStyle(m_config->debugTextStyle);
 
-  for (auto const& logText : SpatialLogger::getText("world", clearSpatial)) {
+  for (auto const& logText : m_debugWorldText) {
     m_guiContext->setFontColor(logText.color);
     m_guiContext->renderText(logText.text.utf8Ptr(), camera.worldToScreen(logText.position));
   }
 
-  for (auto const& logText : SpatialLogger::getText("screen", clearSpatial)) {
+  for (auto const& logText : m_debugScreenText) {
     m_guiContext->setFontColor(logText.color);
     m_guiContext->renderText(logText.text.utf8Ptr(), logText.position);
   }
