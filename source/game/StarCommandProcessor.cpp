@@ -314,6 +314,12 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.networkPacketsProcessed,
       status.networkWakeups,
       status.networkIdleTimedWaits));
+  lines.append(strf("World commands: pending={}, processed={}, direct={}, failed={}, waitUs={}",
+      status.worldCommandQueueDepth,
+      status.worldCommandsProcessed,
+      status.worldCommandsDirect,
+      status.worldCommandsFailed,
+      status.worldCommandWaitMicroseconds));
   lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,

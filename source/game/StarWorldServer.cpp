@@ -671,9 +671,12 @@ void WorldServer::update(float dt) {
 
   List<RectI> clientWindows;
   List<RectI> clientMonitoringRegions;
+  HashMap<ConnectionId, List<RectI>> clientMonitoringRegionsByConnection;
   for (auto const& pair : m_clientInfo) {
     clientWindows.append(pair.second->clientState.window());
-    for (auto const& region : pair.second->monitoringRegions(m_entityMap))
+    auto monitoringRegions = pair.second->monitoringRegions(m_entityMap);
+    clientMonitoringRegionsByConnection.set(pair.first, monitoringRegions);
+    for (auto const& region : monitoringRegions)
       clientMonitoringRegions.appendAll(m_geometry.splitRect(region));
   }
 
@@ -698,14 +701,23 @@ void WorldServer::update(float dt) {
     m_worldStorage->tick(*delta * GlobalTimestep, &m_worldId);
 
   if (auto delta = shouldRunThisStep("worldStorageGenerate")) {
-    m_worldStorage->generateQueue(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), [this](WorldStorage::Sector a, WorldStorage::Sector b) {
-        auto distanceToClosestPlayer = [this](WorldStorage::Sector sector) {
+    List<Vec2F> playerPositions;
+    for (auto const& pair : m_clientInfo) {
+      if (auto player = get<Player>(pair.second->clientState.playerId()))
+        playerPositions.append(player->position());
+    }
+
+    HashMap<WorldStorage::Sector, float> sectorDistances;
+    m_worldStorage->generateQueue(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), [this, playerPositions, sectorDistances = std::move(sectorDistances)](WorldStorage::Sector a, WorldStorage::Sector b) mutable {
+        auto distanceToClosestPlayer = [this, &playerPositions, &sectorDistances](WorldStorage::Sector sector) {
+          if (auto distance = sectorDistances.ptr(sector))
+            return *distance;
+
           Vec2F sectorCenter = RectF(*m_worldStorage->regionForSector(sector)).center();
           float distance = highest<float>();
-          for (auto const& pair : m_clientInfo) {
-            if (auto player = get<Player>(pair.second->clientState.playerId()))
-              distance = min(vmag(sectorCenter - player->position()), distance);
-          }
+          for (auto const& playerPosition : playerPositions)
+            distance = min(vmag(sectorCenter - playerPosition), distance);
+          sectorDistances.set(sector, distance);
           return distance;
         };
 
@@ -718,9 +730,10 @@ void WorldServer::update(float dt) {
 
   bool sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
   for (auto const& pair : m_clientInfo) {
-    for (auto const& monitoredRegion : pair.second->monitoringRegions(m_entityMap))
+    auto const& monitoringRegions = clientMonitoringRegionsByConnection.get(pair.first);
+    for (auto const& monitoredRegion : monitoringRegions)
       signalRegion(monitoredRegion.padded(jsonToVec2I(m_serverConfig.get("playerActiveRegionPad"))));
-    queueUpdatePackets(pair.first, sendRemoteUpdates);
+    queueUpdatePackets(pair.first, sendRemoteUpdates, monitoringRegions);
   }
   m_netStateCache.clear();
 
@@ -1151,6 +1164,19 @@ ItemDescriptor WorldServer::collectLiquid(List<Vec2I> const& tilePositions, Liqu
   }
 
   return ItemDescriptor();
+}
+
+List<ItemDescriptor> WorldServer::containerPutItems(EntityId entityId, List<ItemDescriptor> items) {
+  auto overflow = items;
+  if (auto containerEntity = as<ContainerEntity>(entity(entityId))) {
+    auto itemDatabase = Root::singleton().itemDatabase();
+    overflow.clear();
+    for (auto const& itemDescriptor : items) {
+      if (auto left = containerEntity->addItems(itemDatabase->item(itemDescriptor)).result().value())
+        overflow.append(left->descriptor());
+    }
+  }
+  return overflow;
 }
 
 bool WorldServer::placeDungeon(String const& dungeonName, Vec2I const& position, Maybe<DungeonId> dungeonId, bool forcePlacement) {
@@ -1927,7 +1953,7 @@ List<ItemDescriptor> WorldServer::destroyBlock(TileLayer layer, Vec2I const& pos
   return drops;
 }
 
-void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdates) {
+void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdates, List<RectI> const& monitoringRegions) {
   auto const& clientInfo = m_clientInfo.get(clientId);
   clientInfo->outgoingPackets.append(make_shared<StepUpdatePacket>(m_currentTime));
 
@@ -1986,7 +2012,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdat
   clientInfo->pendingLiquidUpdates.clear();
 
   HashSet<EntityPtr> monitoredEntities;
-  for (auto const& monitoredRegion : clientInfo->monitoringRegions(m_entityMap))
+  for (auto const& monitoredRegion : monitoringRegions)
     monitoredEntities.addAll(m_entityMap->entityQuery(RectF(monitoredRegion)));
 
   auto entityFactory = Root::singleton().entityFactory();

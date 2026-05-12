@@ -79,6 +79,11 @@ public:
     size_t pendingChatMessages;
     size_t pendingWorldMessageWorlds;
     size_t pendingWorldMessages;
+    size_t worldCommandQueueDepth;
+    uint64_t worldCommandsProcessed;
+    uint64_t worldCommandsDirect;
+    uint64_t worldCommandsFailed;
+    uint64_t worldCommandWaitMicroseconds;
     size_t networkWorkers;
     size_t networkOwnedConnections;
     uint64_t networkPacketsProcessed;

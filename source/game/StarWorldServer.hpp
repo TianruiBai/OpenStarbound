@@ -15,6 +15,7 @@
 #include "StarWorldRenderData.hpp"
 #include "StarWarping.hpp"
 #include "StarRpcThreadPromise.hpp"
+#include "StarItemDescriptor.hpp"
 
 namespace Star {
 
@@ -256,6 +257,7 @@ public:
   bool isPlayerModified(RectI const& region) const;
 
   ItemDescriptor collectLiquid(List<Vec2I> const& tilePositions, LiquidId liquidId);
+  List<ItemDescriptor> containerPutItems(EntityId entityId, List<ItemDescriptor> items);
 
   bool placeDungeon(String const& dungeonName, Vec2I const& position, Maybe<DungeonId> dungeonId = {}, bool forcePlacement = true);
 
@@ -336,7 +338,7 @@ private:
   TileModificationList doApplyTileModifications(TileModificationList const& modificationList, bool allowEntityOverlap, bool ignoreTileProtection = false, bool updateNeighbors = true);
 
   // Queues pending (step based) updates to the given player
-  void queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdates);
+  void queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdates, List<RectI> const& monitoringRegions);
   void updateDamage(float dt);
 
   void updateDamagedBlocks(float dt);

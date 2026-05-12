@@ -6,6 +6,7 @@
 #include "StarAssets.hpp"
 #include "StarPlayer.hpp"
 #include "StarTime.hpp"
+#include "StarUniverseSettings.hpp"
 
 namespace Star {
 
@@ -67,6 +68,17 @@ WorldServerThread::CommandStats WorldServerThread::commandStats() const {
   stats.failed = m_commandsFailed;
   stats.waitMicroseconds = m_commandWaitMicroseconds;
   return stats;
+}
+
+void WorldServerThread::setWorldPause(bool pause) {
+  try {
+    executeCommand("setWorldPause", [pause](WorldServerThread*, WorldServer* worldServer) {
+        worldServer->setPause(pause);
+      });
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+  }
 }
 
 void WorldServerThread::executeCommand(String const& name, WorldServerAction action) {
@@ -209,6 +221,24 @@ List<PacketPtr> WorldServerThread::removeClient(ConnectionId clientId) {
   return outgoingPackets;
 }
 
+bool WorldServerThread::executeForClient(ConnectionId clientId, function<void(WorldServer*, PlayerPtr)> action) {
+  bool success = false;
+  std::exception_ptr actionException;
+  executeCommand("executeForClient", [clientId, action = std::move(action), &success, &actionException](WorldServerThread*, WorldServer* worldServer) {
+        if (auto player = worldServer->clientPlayer(clientId)) {
+          try {
+            action(worldServer, player);
+            success = true;
+          } catch (...) {
+            actionException = std::current_exception();
+          }
+        }
+      });
+  if (actionException)
+    std::rethrow_exception(actionException);
+  return success;
+}
+
 List<ConnectionId> WorldServerThread::clients() const {
   RecursiveMutexLocker locker(m_mutex);
   return m_clients.values();
@@ -267,6 +297,92 @@ Maybe<pair<String, String>> WorldServerThread::pullNewPlanetType() {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
     return {};
+  }
+}
+
+void WorldServerThread::setWeather(String const& weatherName, bool force) {
+  try {
+    executeCommand("setWeather", [weatherName, force](WorldServerThread*, WorldServer* worldServer) {
+        worldServer->setWeather(weatherName, force);
+      });
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+  }
+}
+
+StringList WorldServerThread::weatherList() {
+  try {
+    StringList result;
+    executeCommand("weatherList", [&result](WorldServerThread*, WorldServer* worldServer) {
+        result = worldServer->weatherList();
+      });
+    return result;
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+    return {};
+  }
+}
+
+List<ItemDescriptor> WorldServerThread::containerPutItems(EntityId entityId, List<ItemDescriptor> items) {
+  try {
+    List<ItemDescriptor> result;
+    executeCommand("containerPutItems", [entityId, items, &result](WorldServerThread*, WorldServer* worldServer) {
+        result = worldServer->containerPutItems(entityId, items);
+      });
+    return result;
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+    return items;
+  }
+}
+
+void WorldServerThread::setUniverseFlag(String const& flagName) {
+  try {
+    executeCommand("setUniverseFlag", [flagName](WorldServerThread*, WorldServer* worldServer) {
+        worldServer->universeSettings()->setFlag(flagName);
+      });
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+  }
+}
+
+bool WorldServerThread::placeDungeon(String const& dungeonName, Vec2I const& position, Maybe<DungeonId> dungeonId, bool forcePlacement) {
+  try {
+    bool result = false;
+    executeCommand("placeDungeon", [dungeonName, position, dungeonId, forcePlacement, &result](WorldServerThread*, WorldServer* worldServer) {
+        result = worldServer->placeDungeon(dungeonName, position, dungeonId, forcePlacement);
+      });
+    return result;
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+    return false;
+  }
+}
+
+void WorldServerThread::startFlyingSky(bool enterHyperspace, bool startInWarp, Json settings) {
+  try {
+    executeCommand("startFlyingSky", [enterHyperspace, startInWarp, settings = std::move(settings)](WorldServerThread*, WorldServer* worldServer) mutable {
+        worldServer->startFlyingSky(enterHyperspace, startInWarp, std::move(settings));
+      });
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+  }
+}
+
+void WorldServerThread::stopFlyingSkyAt(SkyParameters const& destination) {
+  try {
+    executeCommand("stopFlyingSkyAt", [destination](WorldServerThread*, WorldServer* worldServer) {
+        worldServer->stopFlyingSkyAt(destination);
+      });
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
   }
 }
 

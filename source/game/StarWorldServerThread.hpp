@@ -45,11 +45,14 @@ public:
   bool shouldExpire();
   CommandStats commandStats() const;
 
+  void setWorldPause(bool pause);
+
   bool spawnTargetValid(SpawnTarget const& spawnTarget);
 
   bool addClient(ConnectionId clientId, SpawnTarget const& spawnTarget, bool isLocal, bool isAdmin = false, NetCompatibilityRules netRules = {});
   // Returns final outgoing packets
   List<PacketPtr> removeClient(ConnectionId clientId);
+  bool executeForClient(ConnectionId clientId, function<void(WorldServer*, PlayerPtr)> action);
 
   List<ConnectionId> clients() const;
   bool hasClient(ConnectionId clientId) const;
@@ -68,6 +71,14 @@ public:
 
   // Worlds use this to notify the universe server that their celestial type should change
   Maybe<pair<String, String>> pullNewPlanetType();
+
+  void setWeather(String const& weatherName, bool force = false);
+  StringList weatherList();
+  List<ItemDescriptor> containerPutItems(EntityId entityId, List<ItemDescriptor> items);
+  void setUniverseFlag(String const& flagName);
+  bool placeDungeon(String const& dungeonName, Vec2I const& position, Maybe<DungeonId> dungeonId = {}, bool forcePlacement = true);
+  void startFlyingSky(bool enterHyperspace, bool startInWarp, Json settings = {});
+  void stopFlyingSkyAt(SkyParameters const& destination);
 
   // Executes the given action on the world in a thread safe context.  This
   // does *not* catch exceptions thrown by the action or set the server error

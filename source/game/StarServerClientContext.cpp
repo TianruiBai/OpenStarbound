@@ -35,31 +35,16 @@ ServerClientContext::ServerClientContext(ConnectionId clientId, Maybe<HostAddres
   m_rpc.registerHandler("world.containerPutItems", [this](Json const& args) -> Json {
       List<ItemDescriptor> overflow = args.getArray("items").transformed(construct<ItemDescriptor>());
       RecursiveMutexLocker locker(m_mutex);
-      if (m_worldThread) {
-        m_worldThread->executeAction([args, &overflow](WorldServerThread*, WorldServer* server) {
-          EntityId entityId = args.getInt("entityId");
-          Json items = args.get("items");
-          auto itemDatabase = Root::singleton().itemDatabase();
-          if (auto containerEntity = as<ContainerEntity>(server->entity(entityId))) {
-            overflow.clear();
-            for (auto const& itemDescriptor : items.iterateArray()) {
-              if (auto left = containerEntity->addItems(itemDatabase->item(ItemDescriptor(itemDescriptor))).result().value())
-                overflow.append(left->descriptor());
-            }
-          }
-        });
-      }
+      if (m_worldThread)
+        overflow = m_worldThread->containerPutItems(args.getInt("entityId"), overflow);
       return overflow.transformed(mem_fn(&ItemDescriptor::toJson));
     });
 
   m_rpc.registerHandler("universe.setFlag", [this](Json const& args) -> Json {
       auto flagName = args.toString();
       RecursiveMutexLocker locker(m_mutex);
-      if (m_worldThread) {
-        m_worldThread->executeAction([flagName](WorldServerThread*, WorldServer* server) {
-          server->universeSettings()->setFlag(flagName);
-        });
-      }
+      if (m_worldThread)
+        m_worldThread->setUniverseFlag(flagName);
       return Json();
     });
 

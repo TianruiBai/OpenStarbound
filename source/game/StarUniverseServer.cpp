@@ -211,7 +211,7 @@ void UniverseServer::setPause(bool pause) {
   for (auto const& worldId : m_worlds.keys()) {
     if (auto world = getWorld(worldId)) {
       locker.unlock();
-      world->executeAction([&pause](WorldServerThread *, WorldServer *world) {world->setPause(pause);});
+      world->setWorldPause(pause);
       locker.lock();
     }
   }
@@ -333,6 +333,23 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
     status.pendingWorldMessageWorlds = m_pendingWorldMessages.size();
     for (auto const& pair : m_pendingWorldMessages)
       status.pendingWorldMessages += pair.second.size();
+    for (auto const& pair : m_worlds) {
+      auto const& maybeWorldPromise = pair.second;
+      if (!maybeWorldPromise || !maybeWorldPromise->poll())
+        continue;
+
+      try {
+        if (auto world = maybeWorldPromise->get()) {
+          auto commandStats = world->commandStats();
+          status.worldCommandQueueDepth += commandStats.pending;
+          status.worldCommandsProcessed += commandStats.processed;
+          status.worldCommandsDirect += commandStats.direct;
+          status.worldCommandsFailed += commandStats.failed;
+          status.worldCommandWaitMicroseconds += commandStats.waitMicroseconds;
+        }
+      } catch (std::exception const&) {
+      }
+    }
     status.persistenceBatchesPending = m_pendingPersistenceWrites.size();
     status.persistenceSnapshotsPending = m_persistenceSnapshotsPending;
     auto now = Time::monotonicMilliseconds();
@@ -647,13 +664,10 @@ bool UniverseServer::executeForClient(ConnectionId clientId, function<void(World
   if (auto clientContext = m_clients.value(clientId)) {
     if (auto currentWorld = clientContext->playerWorld()) {
       locker.unlock();
-      currentWorld->executeAction([clientId, action, &success, &locker](WorldServerThread*, WorldServer* worldServer) {
-        locker.lock();
-        if (auto player = worldServer->clientPlayer(clientId)) {
+      success = currentWorld->executeForClient(clientId, [this, action](WorldServer* worldServer, PlayerPtr player) {
+          RecursiveMutexLocker actionLocker(m_mainLock);
           action(worldServer, player);
-          success = true;
-        }
-      });
+        });
     }
   }
   return success;
@@ -776,7 +790,7 @@ bool UniverseServer::setWeather(CelestialCoordinate const& coordinate, String co
   if (!coordinate.isNull() && m_celestialDatabase->coordinateValid(coordinate)) {
     if (auto world = createWorld(CelestialWorldId(coordinate))) {
       locker.unlock();
-      world->executeAction([weatherName, force](WorldServerThread*, WorldServer* ws) { ws->setWeather(weatherName, force); });
+      world->setWeather(weatherName, force);
       return true;
     }
   }
@@ -791,7 +805,7 @@ StringList UniverseServer::weatherList(CelestialCoordinate const& coordinate) {
   if (!coordinate.isNull() && m_celestialDatabase->coordinateValid(coordinate)) {
     if (auto world = createWorld(CelestialWorldId(coordinate))) {
       locker.unlock();
-      world->executeAction([&result](WorldServerThread*, WorldServer* ws) { result = ws->weatherList(); });
+      result = world->weatherList();
     }
   }
 
@@ -955,9 +969,7 @@ void UniverseServer::processUniverseFlags() {
           if (p.second.is<PlaceDungeonFlagAction>()) {
             auto placeDungeonAction = p.second.get<PlaceDungeonFlagAction>();
             locker.unlock();
-            targetWorld->executeAction([&](WorldServerThread*, WorldServer* worldServer) {
-              worldServer->placeDungeon(placeDungeonAction.dungeonId, placeDungeonAction.targetPosition, 0);
-            });
+            targetWorld->placeDungeon(placeDungeonAction.dungeonId, placeDungeonAction.targetPosition, 0);
             locker.lock();
           }
           return true;
@@ -1353,9 +1365,7 @@ void UniverseServer::flyShips() {
 
     bool startInWarp = system == Vec3I();
     locker.unlock();
-    clientShip->executeAction([&](WorldServerThread*, WorldServer* worldServer) {
-      worldServer->startFlyingSky(interstellar, startInWarp, settings);
-    });
+    clientShip->startFlyingSky(interstellar, startInWarp, settings);
 
     auto clients = clientShip->clients();
     locker.lock();
@@ -1418,9 +1428,7 @@ void UniverseServer::arriveShips() {
     if (auto clientShip = createWorld(ClientShipWorldId(clientContext->playerUuid()))) {
       auto skyParameters = clientSystem->clientSkyParameters(clientId);
       locker.unlock();
-      clientShip->executeAction([&](WorldServerThread*, WorldServer* worldServer) {
-        worldServer->stopFlyingSkyAt(skyParameters);
-      });
+      clientShip->stopFlyingSkyAt(skyParameters);
       auto clients = clientShip->clients();
       locker.lock();
 
