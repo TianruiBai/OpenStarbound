@@ -293,10 +293,8 @@ bool WorldServer::addClient(ConnectionId clientId, SpawnTarget const& spawnTarge
 List<PacketPtr> WorldServer::removeClient(ConnectionId clientId) {
   auto const& info = m_clientInfo.get(clientId);
 
-  for (auto const& entityId : m_entityMap->entityIds()) {
-    if (connectionForEntity(entityId) == clientId)
-      removeEntity(entityId, false);
-  }
+  for (auto const& entityId : info->clientMasterEntities.values())
+    removeEntity(entityId, false);
 
   for (auto const& uuid : m_entityMessageResponses.keys()) {
     if (m_entityMessageResponses[uuid].first == clientId) {
@@ -458,6 +456,7 @@ void WorldServer::handleIncomingPackets(ConnectionId clientId, List<PacketPtr> c
         entity->readNetState(entityCreate->firstNetState, 0.0f, netRules);
         entity->init(this, entityCreate->entityId, EntityMode::Slave);
         m_entityMap->addEntity(entity);
+        clientInfo->clientMasterEntities.add(entityCreate->entityId);
 
         if (clientInfo->interpolationTracker.interpolationEnabled())
           entity->enableInterpolation(clientInfo->interpolationTracker.extrapolationHint());
@@ -465,13 +464,12 @@ void WorldServer::handleIncomingPackets(ConnectionId clientId, List<PacketPtr> c
 
     } else if (auto entityUpdateSet = as<EntityUpdateSetPacket>(packet)) {
       float interpolationLeadTime = clientInfo->interpolationTracker.interpolationLeadTime();
-      m_entityMap->forAllEntities([&](EntityPtr const& entity) {
-          EntityId entityId = entity->entityId();
-          if (connectionForEntity(entityId) == clientId) {
-            starAssert(entity->isSlave());
-            entity->readNetState(entityUpdateSet->deltas.value(entityId), interpolationLeadTime, clientInfo->clientState.netCompatibilityRules());
-          }
-        });
+      for (auto const& entityId : clientInfo->clientMasterEntities.values()) {
+        if (auto entity = m_entityMap->entity(entityId)) {
+          starAssert(entity->isSlave());
+          entity->readNetState(entityUpdateSet->deltas.value(entityId), interpolationLeadTime, clientInfo->clientState.netCompatibilityRules());
+        }
+      }
       clientInfo->pendingForward = true;
 
     } else if (auto entityDestroy = as<EntityDestroyPacket>(packet)) {
@@ -2232,6 +2230,9 @@ void WorldServer::removeEntity(EntityId entityId, bool andDie) {
       clientInfo->outgoingPackets.append(make_shared<EntityDestroyPacket>(entity->entityId(), std::move(finalDelta), andDie));
     }
   }
+
+  if (auto clientInfo = m_clientInfo.value(connectionForEntity(entityId)))
+    clientInfo->clientMasterEntities.remove(entityId);
 
   m_entityMap->removeEntity(entityId);
   entity->uninit();

@@ -19,6 +19,14 @@ public:
     RpcThreadPromiseKeeper<Json> promise;
   };
 
+  struct CommandStats {
+    size_t pending;
+    uint64_t processed;
+    uint64_t direct;
+    uint64_t failed;
+    uint64_t waitMicroseconds;
+  };
+
   typedef function<void(WorldServerThread*, WorldServer*)> WorldServerAction;
 
   WorldServerThread(WorldServerPtr server, WorldId worldId);
@@ -35,6 +43,7 @@ public:
   // WorldServerThread has stopped running.
   bool serverErrorOccurred();
   bool shouldExpire();
+  CommandStats commandStats() const;
 
   bool spawnTargetValid(SpawnTarget const& spawnTarget);
 
@@ -82,6 +91,25 @@ protected:
   virtual void run();
 
 private:
+  struct CommandState {
+    Mutex mutex;
+    ConditionVariable condition;
+    bool finished = false;
+    bool failed = false;
+    String error;
+  };
+
+  struct Command {
+    String name;
+    WorldServerAction action;
+    shared_ptr<CommandState> state;
+    int64_t queuedAt;
+  };
+
+  void executeCommand(String const& name, WorldServerAction action);
+  void processCommands();
+  void failPendingCommands(String const& error);
+
   void update(WorldServerFidelity fidelity);
   void sync();
 
@@ -99,6 +127,13 @@ private:
 
   mutable RecursiveMutex m_messageMutex;
   List<Message> m_messages;
+
+  mutable Mutex m_commandMutex;
+  List<Command> m_commandQueue;
+  atomic<uint64_t> m_commandsProcessed{0};
+  atomic<uint64_t> m_commandsProcessedDirect{0};
+  atomic<uint64_t> m_commandsFailed{0};
+  atomic<uint64_t> m_commandWaitMicroseconds{0};
 
   atomic<bool> m_stop;
   shared_ptr<const atomic<bool>> m_pause;

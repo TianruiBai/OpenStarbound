@@ -5,6 +5,7 @@
 #include "StarLogging.hpp"
 #include "StarAssets.hpp"
 #include "StarPlayer.hpp"
+#include "StarTime.hpp"
 
 namespace Star {
 
@@ -55,10 +56,101 @@ bool WorldServerThread::shouldExpire() {
   return m_shouldExpire;
 }
 
+WorldServerThread::CommandStats WorldServerThread::commandStats() const {
+  CommandStats stats{};
+  {
+    MutexLocker locker(m_commandMutex);
+    stats.pending = m_commandQueue.size();
+  }
+  stats.processed = m_commandsProcessed;
+  stats.direct = m_commandsProcessedDirect;
+  stats.failed = m_commandsFailed;
+  stats.waitMicroseconds = m_commandWaitMicroseconds;
+  return stats;
+}
+
+void WorldServerThread::executeCommand(String const& name, WorldServerAction action) {
+  if (!isRunning() || m_stop || m_errorOccurred) {
+    RecursiveMutexLocker locker(m_mutex);
+    action(this, m_worldServer.get());
+    ++m_commandsProcessedDirect;
+    return;
+  }
+
+  auto state = make_shared<CommandState>();
+  {
+    MutexLocker locker(m_commandMutex);
+    m_commandQueue.append(Command{name, std::move(action), state, Time::monotonicMicroseconds()});
+  }
+
+  MutexLocker stateLocker(state->mutex);
+  while (!state->finished)
+    state->condition.wait(state->mutex);
+
+  if (state->failed)
+    throw StarException::format("World server queued command failed: {}", state->error);
+}
+
+void WorldServerThread::processCommands() {
+  List<Command> commands;
+  {
+    MutexLocker locker(m_commandMutex);
+    commands = take(m_commandQueue);
+  }
+
+  for (auto& command : commands) {
+    bool failed = false;
+    String error;
+    try {
+      command.action(this, m_worldServer.get());
+    } catch (std::exception const& e) {
+      failed = true;
+      error = printException(e, true);
+      Logger::error("WorldServerThread exception caught running queued command '{}': {}", command.name, error);
+      m_errorOccurred = true;
+    }
+
+    ++m_commandsProcessed;
+    m_commandWaitMicroseconds += Time::monotonicMicroseconds() - command.queuedAt;
+    if (failed)
+      ++m_commandsFailed;
+
+    {
+      MutexLocker stateLocker(command.state->mutex);
+      command.state->failed = failed;
+      command.state->error = std::move(error);
+      command.state->finished = true;
+    }
+    command.state->condition.broadcast();
+  }
+}
+
+void WorldServerThread::failPendingCommands(String const& error) {
+  List<Command> commands;
+  {
+    MutexLocker locker(m_commandMutex);
+    commands = take(m_commandQueue);
+  }
+
+  for (auto& command : commands) {
+    ++m_commandsFailed;
+    {
+      MutexLocker stateLocker(command.state->mutex);
+      command.state->failed = true;
+      command.state->error = error;
+      command.state->finished = true;
+    }
+    command.state->condition.broadcast();
+  }
+}
+
 bool WorldServerThread::spawnTargetValid(SpawnTarget const& spawnTarget) {
   try {
-    RecursiveMutexLocker locker(m_mutex);
-    return m_worldServer->spawnTargetValid(spawnTarget);
+    bool result = false;
+    executeCommand("spawnTargetValid", [&spawnTarget, &result](WorldServerThread*, WorldServer* worldServer) {
+        result = worldServer->spawnTargetValid(spawnTarget);
+      });
+    return result;
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
@@ -68,13 +160,14 @@ bool WorldServerThread::spawnTargetValid(SpawnTarget const& spawnTarget) {
 
 bool WorldServerThread::addClient(ConnectionId clientId, SpawnTarget const& spawnTarget, bool isLocal, bool isAdmin, NetCompatibilityRules netRules) {
   try {
-    RecursiveMutexLocker locker(m_mutex);
-    if (m_worldServer->addClient(clientId, spawnTarget, isLocal, isAdmin, netRules)) {
-      m_clients.add(clientId);
-      return true;
-    }
-
-    return false;
+    bool added = false;
+    executeCommand("addClient", [this, clientId, spawnTarget, isLocal, isAdmin, netRules, &added](WorldServerThread*, WorldServer* worldServer) {
+        if (worldServer->addClient(clientId, spawnTarget, isLocal, isAdmin, netRules)) {
+          m_clients.add(clientId);
+          added = true;
+        }
+      });
+    return added;
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
@@ -83,30 +176,36 @@ bool WorldServerThread::addClient(ConnectionId clientId, SpawnTarget const& spaw
 }
 
 List<PacketPtr> WorldServerThread::removeClient(ConnectionId clientId) {
-  RecursiveMutexLocker locker(m_mutex);
-  if (!m_clients.contains(clientId))
-    return {};
-
-  RecursiveMutexLocker queueLocker(m_queueMutex);
-
   List<PacketPtr> outgoingPackets;
   try {
-    auto incomingPackets = take(m_incomingPacketQueue[clientId]);
-    if (m_worldServer->hasClient(clientId))
-      m_worldServer->handleIncomingPackets(clientId, std::move(incomingPackets));
+    executeCommand("removeClient", [this, clientId, &outgoingPackets](WorldServerThread*, WorldServer* worldServer) {
+        if (!m_clients.contains(clientId))
+          return;
 
-    outgoingPackets = take(m_outgoingPacketQueue[clientId]);
-    if (m_worldServer->hasClient(clientId))
-      outgoingPackets.appendAll(m_worldServer->removeClient(clientId));
+        RecursiveMutexLocker queueLocker(m_queueMutex);
+        try {
+          auto incomingPackets = take(m_incomingPacketQueue[clientId]);
+          if (worldServer->hasClient(clientId))
+            worldServer->handleIncomingPackets(clientId, std::move(incomingPackets));
+
+          outgoingPackets = take(m_outgoingPacketQueue[clientId]);
+          if (worldServer->hasClient(clientId))
+            outgoingPackets.appendAll(worldServer->removeClient(clientId));
+
+        } catch (std::exception const& e) {
+          Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+          m_errorOccurred = true;
+        }
+
+        m_clients.remove(clientId);
+        m_incomingPacketQueue.remove(clientId);
+        m_outgoingPacketQueue.remove(clientId);
+      });
 
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
   }
-
-  m_clients.remove(clientId);
-  m_incomingPacketQueue.remove(clientId);
-  m_outgoingPacketQueue.remove(clientId);
   return outgoingPackets;
 }
 
@@ -144,10 +243,12 @@ List<PacketPtr> WorldServerThread::pullOutgoingPackets(ConnectionId clientId) {
 
 Maybe<Vec2F> WorldServerThread::playerRevivePosition(ConnectionId clientId) const {
   try {
-    RecursiveMutexLocker locker(m_mutex);
-    if (auto player = m_worldServer->clientPlayer(clientId))
-      return player->position() + player->feetOffset();
-    return {};
+    Maybe<Vec2F> result;
+    const_cast<WorldServerThread*>(this)->executeCommand("playerRevivePosition", [clientId, &result](WorldServerThread*, WorldServer* worldServer) {
+        if (auto player = worldServer->clientPlayer(clientId))
+          result = player->position() + player->feetOffset();
+      });
+    return result;
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
@@ -157,8 +258,11 @@ Maybe<Vec2F> WorldServerThread::playerRevivePosition(ConnectionId clientId) cons
 
 Maybe<pair<String, String>> WorldServerThread::pullNewPlanetType() {
   try {
-    RecursiveMutexLocker locker(m_mutex);
-    return m_worldServer->pullNewPlanetType();
+    Maybe<pair<String, String>> result;
+    executeCommand("pullNewPlanetType", [&result](WorldServerThread*, WorldServer* worldServer) {
+        result = worldServer->pullNewPlanetType();
+      });
+    return result;
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
@@ -183,8 +287,9 @@ void WorldServerThread::passMessages(List<Message>&& messages) {
 
 void WorldServerThread::unloadAll(bool force) {
   try {
-    RecursiveMutexLocker locker(m_mutex);
-    m_worldServer->unloadAll(force);
+    executeCommand("unloadAll", [force](WorldServerThread*, WorldServer* worldServer) {
+        worldServer->unloadAll(force);
+      });
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
@@ -193,8 +298,11 @@ void WorldServerThread::unloadAll(bool force) {
 
 WorldChunks WorldServerThread::readChunks() {
   try {
-    RecursiveMutexLocker locker(m_mutex);
-    return m_worldServer->readChunks();
+    WorldChunks chunks;
+    executeCommand("readChunks", [&chunks](WorldServerThread*, WorldServer* worldServer) {
+        chunks = worldServer->readChunks();
+      });
+    return chunks;
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
@@ -258,10 +366,14 @@ void WorldServerThread::run() {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;
   }
+
+  failPendingCommands("World server thread stopped before queued command could run");
 }
 
 void WorldServerThread::update(WorldServerFidelity fidelity) {
   RecursiveMutexLocker locker(m_mutex);
+  processCommands();
+
   auto unerroredClientIds = m_worldServer->clientIds();
   for (auto clientId : unerroredClientIds) {
     RecursiveMutexLocker queueLocker(m_queueMutex);

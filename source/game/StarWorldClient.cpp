@@ -194,6 +194,9 @@ void WorldClient::removeEntity(EntityId entityId, bool andDie) {
     m_outgoingPackets.append(make_shared<EntityDestroyPacket>(entity->entityId(), std::move(finalNetState), andDie));
   }
 
+  if (auto slaveEntityIds = m_slaveEntityIdsByConnection.ptr(connectionForEntity(entityId)))
+    slaveEntityIds->remove(entityId);
+
   m_entityMap->removeEntity(entityId);
   entity->uninit();
 }
@@ -833,6 +836,7 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
       entity->readNetState(entityCreate->firstNetState, 0.0f, netRules);
       entity->init(this, entityCreate->entityId, EntityMode::Slave);
       m_entityMap->addEntity(entity);
+      m_slaveEntityIdsByConnection[connectionForEntity(entityCreate->entityId)].add(entityCreate->entityId);
 
       if (m_interpolationTracker.interpolationEnabled()) {
         entity->enableInterpolation(m_interpolationTracker.extrapolationHint());
@@ -847,13 +851,14 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
 
     } else if (auto entityUpdateSet = as<EntityUpdateSetPacket>(packet)) {
       float interpolationLeadTime = m_interpolationTracker.interpolationLeadTime();
-      m_entityMap->forAllEntities([&](EntityPtr const& entity) {
-          EntityId entityId = entity->entityId();
-          if (connectionForEntity(entityId) == entityUpdateSet->forConnection) {
+      if (auto slaveEntityIds = m_slaveEntityIdsByConnection.ptr(entityUpdateSet->forConnection)) {
+        for (auto const& entityId : slaveEntityIds->values()) {
+          if (auto entity = m_entityMap->entity(entityId)) {
             starAssert(entity->isSlave());
             entity->readNetState(entityUpdateSet->deltas.value(entityId), interpolationLeadTime, m_clientState.netCompatibilityRules());
           }
-        });
+        }
+      }
 
     } else if (auto entityDestroy = as<EntityDestroyPacket>(packet)) {
       if (auto entity = m_entityMap->entity(entityDestroy->entityId)) {
@@ -1891,6 +1896,7 @@ void WorldClient::clearWorld() {
   m_interpolationTracker = InterpolationTracker();
 
   m_masterEntitiesNetVersion.clear();
+  m_slaveEntityIdsByConnection.clear();
   m_outgoingPackets.clear();
 
   m_pingTime.reset();

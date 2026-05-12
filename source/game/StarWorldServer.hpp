@@ -307,6 +307,7 @@ private:
 
     // All slave entities for which the player should be knowledgable about.
     HashMap<EntityId, uint64_t> clientSlavesNetVersion;
+    HashSet<EntityId> clientMasterEntities;
 
     // Batch send tile updates
     HashSet<Vec2I> pendingTileUpdates;

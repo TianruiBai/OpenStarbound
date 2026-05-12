@@ -2,7 +2,7 @@
 
 This roadmap turns `multicore-engineering-plan.md` into an execution checklist. It keeps the same compatibility-first strategy: improve multicore use around the serial world simulation lane before attempting world-internal parallel simulation.
 
-Phase 0A is implemented. Phase 0 has started with bounded universe-loop phase timing in `/serverstatus`, while world-thread and benchmark timing remain pending. Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback, and now has focused state-machine success/protocol-rejection coverage. Phase 3 is partially implemented with immutable versioned persistence snapshots, synchronous shared write helpers, bounded opt-in async JSON persistence behind `useAsyncPersistence`, explicit system-world and ship-chunk snapshot boundaries, and focused async completion / queue-pressure fallback tests.
+Phase 0A is implemented. Phase 0 has started with bounded universe-loop phase timing in `/serverstatus`, while world-thread and benchmark timing remain pending. Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback, and now has focused state-machine success/protocol-rejection coverage. Phase 3 is partially implemented with immutable versioned persistence snapshots, synchronous shared write helpers, bounded opt-in async JSON persistence behind `useAsyncPersistence`, explicit system-world and ship-chunk snapshot boundaries, and focused async completion / queue-pressure fallback tests. Phase 4 has started with a world-thread command mailbox for the safest synchronous wrappers. Phase 5 has started with owner-indexed entity update application on both server and client packet receive paths.
 
 The observability and crash-reporting work that supports these phases is tracked in `diagnostics-debugging-roadmap.md`. In short: build on the current `/debug` overlay, `LogMap`, `SpatialLogger`, `Logger`, stack traces, Lua profiles, and `/servernetstats` to provide F3-style status, server diagnostic commands, crash bundles, and structured logs.
 
@@ -13,6 +13,8 @@ The observability and crash-reporting work that supports these phases is tracked
 - Phase 1 is implemented and validated by focused worker-ownership, many-idle-connection, wakeup, remove-during-callback, and cross-worker packet-ordering tests, but broader TCP stress and readiness-abstraction follow-up items are still open.
 - Phase 2 is implemented and live behind its fallback flag. Focused tests cover local state-machine success and protocol mismatch rejection; timeout, password, duplicate UUID, asset mismatch, max-player, and login-burst matrix cases remain open.
 - Phase 3 has its current compatibility-first slice in place: immutable universe/client/system snapshots, bounded async JSON persistence, synchronous fallback on queue pressure, retry accounting, shutdown draining, and server diagnostics. Focused tests now cover async triggered-storage completion and queue-full synchronous fallback; save/load depth, failure injection, and broader latency validation remain open before default enablement.
+- Phase 4 has its first owner-thread mailbox slice in `WorldServerThread`: `spawnTargetValid`, `addClient`, `removeClient`, `playerRevivePosition`, `pullNewPlanetType`, `unloadAll`, and `readChunks` now run as queued commands while the world thread is active, with direct fallback for stopped/not-yet-started worlds and shutdown failure signaling for pending waiters. Generic `executeAction()` and system-world direct mutations remain to be retired in later batches.
+- Phase 5 has its first non-parallel cleanup: client-owned/slave entity ids are indexed by owner connection, so `EntityUpdateSetPacket` handling no longer scans the whole entity map just to apply one connection's updates. Blank deltas are still delivered to every indexed entity for that owner, preserving interpolation/extrapolation behavior.
 
 ## Research Notes
 
@@ -23,12 +25,16 @@ Relevant guidance from C++ and Windows threading references maps cleanly onto th
 - Keep long blocking operations off latency-sensitive orchestration threads. Disk flush, compression, serialization, and slow handshakes should not sit directly in the universe update lane.
 - Do not solve scheduler contention with high thread priority. Windows scheduling guidance recommends brief high-priority work only; server throughput should come from ownership, queues, batching, and reduced contention.
 - Preserve per-connection and owner-thread ordering. For this codebase, that means connection packets stay ordered per client and `WorldServer` mutation stays on the owning world thread unless a snapshot boundary exists.
+- For game-loop ownership, use single-reader command queues rather than global event buses. Queued commands should carry the data they need because delayed processing must not assume the current mutable world still matches the sender's original context.
+- For snapshot/post-tick work, double-buffer style boundaries are the right mental model: readers should see a complete current snapshot while the owner thread prepares the next one, and swaps/merges must stay explicit and cheap.
 
 Sources consulted:
 
 - Microsoft Learn, Windows thread pools: `https://learn.microsoft.com/en-us/windows/win32/procthread/thread-pools`
 - Microsoft Learn, Windows scheduling priorities: `https://learn.microsoft.com/en-us/windows/win32/procthread/scheduling-priorities`
 - C++ condition-variable model: `std::condition_variable` behavior and predicate-based waiting patterns
+- Game Programming Patterns, Event Queue: `https://gameprogrammingpatterns.com/event-queue.html`
+- Game Programming Patterns, Double Buffer: `https://gameprogrammingpatterns.com/double-buffer.html`
 
 ## Windows Tooling Baseline
 
@@ -480,6 +486,20 @@ Implementation tasks:
 6. Convert system-world mutation paths to equivalent commands.
 7. Add queue-depth and command-latency metrics.
 
+Started work:
+
+- `WorldServerThread` now has a command mailbox drained at the beginning of the owner-thread update tick.
+- Synchronous wrappers for `spawnTargetValid`, `addClient`, `removeClient`, `playerRevivePosition`, `pullNewPlanetType`, `unloadAll`, and `readChunks` enqueue commands when the world thread is running and fall back to direct execution before start or after stop.
+- Command waiters are released with a failure if the world thread exits before their command runs.
+- Basic per-thread command counters exist in `WorldServerThread::CommandStats`; the next diagnostics pass should surface them in `/serverstatus` or `/worldstats`.
+
+Remaining Phase 4 work:
+
+1. Replace generic `executeAction()` call sites with typed commands instead of routing them through the generic mailbox; several current call sites capture `UniverseServer` lock guards and need purpose-built rewrites.
+2. Convert system-world add/remove client ship paths to commands and publish read snapshots for ship location, sky, warp action, and active instance worlds.
+3. Add visible command queue depth, oldest age, processed, failed, and wait-time metrics to live diagnostics.
+4. Add focused tests for command failure propagation, disconnect during queued world work, and admin/RPC behaviors currently using `executeAction()`.
+
 Current direct world-entry points to retire or wrap:
 
 - `WorldServerThread::spawnTargetValid()`
@@ -570,15 +590,29 @@ Implementation tasks:
 
 Current serial work to split carefully:
 
-- `WorldServer::handleIncomingPackets()` applies `EntityUpdateSetPacket` by scanning all entities instead of iterating packet delta keys.
+- `WorldServer::handleIncomingPackets()` now applies `EntityUpdateSetPacket` by iterating an owner-indexed set of client-master entity ids instead of scanning all entities. This keeps blank-delta delivery for interpolation while bounding work to the packet owner.
+- `WorldClient::handleIncomingPackets()` mirrors that owner-indexed receive path for slaved entities.
 - `WorldServer::update()` rebuilds per-client monitoring regions for weather/liquid, sector signaling, and packet generation.
 - `WorldServer::queueUpdatePackets()` serializes tile updates, liquid updates, entity creates, entity deltas, and destroy packets for each client.
 - `m_netStateCache` already caches repeated entity delta serialization within one tick, but first-observation entity create payloads are not cached the same way.
 - `WorldStorage::generateQueue()` can sort queued sectors using a comparator that recomputes nearest-player distance repeatedly.
 
+Started work:
+
+- `WorldServer::ClientInfo` tracks `clientMasterEntities`, populated from legal `EntityCreatePacket` ids and cleaned during entity removal and client removal.
+- `WorldClient` tracks slave entity ids by `ConnectionId` for incoming `EntityUpdateSetPacket` application.
+- Packet update receive paths still pass empty deltas for owner entities without payload entries, preserving `NetElementTop::blankNetDelta()` behavior when interpolation is enabled.
+
+Remaining Phase 5 work:
+
+1. Cache per-client monitoring regions once per tick and reuse them for weather/liquid, sector activation, visibility checks, and packet preparation.
+2. Precompute world-generation sector priorities instead of recomputing nearest-player distance inside the sort comparator.
+3. Add `WorldTickSnapshot` and serial packet-equivalence tests before moving packet preparation onto worker jobs.
+4. Surface packet-prep split timings and owner-index hit/miss counters in diagnostics.
+
 Recommended Phase 5 implementation sequence:
 
-1. First do non-parallel algorithmic cleanups that preserve behavior: iterate inbound entity deltas by packet keys, compute monitoring regions once per client per tick, and precompute generation queue priorities before sorting.
+1. First do non-parallel algorithmic cleanups that preserve behavior: apply inbound entity updates through owner-indexed entity sets, compute monitoring regions once per client per tick, and precompute generation queue priorities before sorting.
 2. Add a `WorldTickSnapshot` containing current step/time, per-client monitoring regions, monitored entity ids, client net rules, pending tile/liquid/damage update lists, and immutable entity serialization inputs.
 3. Add create-packet and first-update serialization caches keyed by entity id and `NetCompatibilityRules`, cleared with `m_netStateCache`.
 4. Move packet preparation into a post-tick job for read-only snapshot data, then merge produced packet lists back on the world thread in the same per-client order.
@@ -697,7 +731,7 @@ This section is the practical backlog for the rest of the codebase after Phase 1
 1. Finish Phase 0 diagnostics so every later phase has universe, world, network, persistence, and packet-preparation timing.
 2. Complete Phase 1 worker tests and run idle/high-connection profiling before changing socket readiness behavior.
 3. Implement Phase 2 behind a fallback flag and keep packet-order compatibility tests close to the handshake code.
-4. Land low-risk world hot-path cleanups before broad parallelism: iterate `EntityUpdateSetPacket` deltas by packet keys, cache per-client monitoring regions once per tick, precompute world-generation sector priorities, add entity-create serialization caches parallel to `m_netStateCache`, batch tile/liquid fan-out by subscribed sector where practical, and add shared delta caching for `SystemWorldServer` ship/object replication.
+4. Land low-risk world hot-path cleanups before broad parallelism: keep `EntityUpdateSetPacket` application bounded by owner-indexed entity sets, cache per-client monitoring regions once per tick, precompute world-generation sector priorities, add entity-create serialization caches parallel to `m_netStateCache`, batch tile/liquid fan-out by subscribed sector where practical, and add shared delta caching for `SystemWorldServer` ship/object replication.
 5. Build Phase 3 persistence snapshots and executor with strict immutable-data rules.
 6. Convert Phase 4 world and system-world entry points to typed commands while keeping synchronous compatibility wrappers during rollout.
 7. Use Phase 5 snapshots for packet preparation, metrics, and persistence serialization before trying subsystem parallelism.

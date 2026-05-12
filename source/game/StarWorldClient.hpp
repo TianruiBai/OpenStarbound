@@ -331,6 +331,7 @@ private:
   List<AudioInstancePtr> m_music;
 
   HashMap<EntityId, uint64_t> m_masterEntitiesNetVersion;
+  HashMap<ConnectionId, HashSet<EntityId>> m_slaveEntityIdsByConnection;
 
   InterpolationTracker m_interpolationTracker;
   GameTimer m_entityUpdateTimer;
