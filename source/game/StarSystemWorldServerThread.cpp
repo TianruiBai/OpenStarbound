@@ -2,6 +2,7 @@
 #include "StarRoot.hpp"
 #include "StarTickRateMonitor.hpp"
 #include "StarNetPackets.hpp"
+#include "StarLogging.hpp"
 
 namespace Star {
 
@@ -23,28 +24,35 @@ Vec3I SystemWorldServerThread::location() const {
 }
 
 List<ConnectionId> SystemWorldServerThread::clients() {
+  ReadLocker locker(m_queueMutex);
   return m_clients.values();
 }
 
 void SystemWorldServerThread::addClient(ConnectionId clientId, Uuid const& uuid, float shipSpeed, SystemLocation const& location) {
-  WriteLocker locker(m_mutex);
-  m_clients.add(clientId);
-  m_outgoingPacketQueue.set(clientId, List<PacketPtr>());
+  executeCommand("addClient", [this, clientId, uuid, shipSpeed, location]() {
+      m_clients.add(clientId);
+      m_outgoingPacketQueue.set(clientId, List<PacketPtr>());
 
-  m_systemWorld->addClientShip(clientId, uuid, shipSpeed, location);
+      m_systemWorld->addClientShip(clientId, uuid, shipSpeed, location);
 
-  m_clientShipLocations.set(clientId, {m_systemWorld->clientShipLocation(clientId), m_systemWorld->clientSkyParameters(clientId)});
-  if (auto warpAction = m_systemWorld->clientWarpAction(clientId))
-    m_clientWarpActions.set(clientId, *warpAction);
+      m_clientShipLocations.set(clientId, {m_systemWorld->clientShipLocation(clientId), m_systemWorld->clientSkyParameters(clientId)});
+      if (auto warpAction = m_systemWorld->clientWarpAction(clientId))
+        m_clientWarpActions.set(clientId, *warpAction);
+    });
 }
 
 void SystemWorldServerThread::removeClient(ConnectionId clientId) {
-  WriteLocker locker(m_mutex);
-  m_systemWorld->removeClientShip(clientId);
-  m_clients.remove(clientId);
-  m_clientShipDestinations.remove(clientId);
-  m_clientShipLocations.remove(clientId);
-  m_outgoingPacketQueue.remove(clientId);
+  executeCommand("removeClient", [this, clientId]() {
+      m_systemWorld->removeClientShip(clientId);
+      m_clients.remove(clientId);
+      m_clientShipDestinations.remove(clientId);
+      m_clientShipLocations.remove(clientId);
+      m_clientWarpActions.remove(clientId);
+      m_outgoingPacketQueue.remove(clientId);
+      eraseWhere(m_incomingPacketQueue, [clientId](pair<ConnectionId, PacketPtr> const& packet) {
+          return packet.first == clientId;
+        });
+    });
 }
 
 void SystemWorldServerThread::setPause(shared_ptr<const atomic<bool>> pause) {
@@ -75,15 +83,86 @@ void SystemWorldServerThread::run() {
   }
 
   store();
+  failPendingCommands("System world server thread stopped before queued command could run");
 }
 
 void SystemWorldServerThread::stop() {
   m_stop = true;
 }
 
+void SystemWorldServerThread::executeCommand(String const& name, function<void()> action) {
+  if (!isRunning() || m_stop) {
+    WriteLocker queueLocker(m_queueMutex);
+    WriteLocker locker(m_mutex);
+    action();
+    return;
+  }
+
+  auto state = make_shared<CommandState>();
+  {
+    MutexLocker locker(m_commandMutex);
+    m_commandQueue.append(Command{name, std::move(action), state});
+  }
+
+  MutexLocker stateLocker(state->mutex);
+  while (!state->finished)
+    state->condition.wait(state->mutex);
+
+  if (state->failed)
+    throw StarException::format("System world server queued command failed: {}", state->error);
+}
+
+void SystemWorldServerThread::processCommands() {
+  List<Command> commands;
+  {
+    MutexLocker locker(m_commandMutex);
+    commands = take(m_commandQueue);
+  }
+
+  for (auto& command : commands) {
+    bool failed = false;
+    String error;
+    try {
+      command.action();
+    } catch (std::exception const& e) {
+      failed = true;
+      error = printException(e, true);
+      Logger::error("SystemWorldServerThread exception caught running queued command '{}': {}", command.name, error);
+    }
+
+    {
+      MutexLocker stateLocker(command.state->mutex);
+      command.state->failed = failed;
+      command.state->error = std::move(error);
+      command.state->finished = true;
+    }
+    command.state->condition.broadcast();
+  }
+}
+
+void SystemWorldServerThread::failPendingCommands(String const& error) {
+  List<Command> commands;
+  {
+    MutexLocker locker(m_commandMutex);
+    commands = take(m_commandQueue);
+  }
+
+  for (auto& command : commands) {
+    {
+      MutexLocker stateLocker(command.state->mutex);
+      command.state->failed = true;
+      command.state->error = error;
+      command.state->finished = true;
+    }
+    command.state->condition.broadcast();
+  }
+}
+
 void SystemWorldServerThread::update() {
   WriteLocker queueLocker(m_queueMutex);
   WriteLocker locker(m_mutex);
+
+  processCommands();
 
   for (auto p : take(m_incomingPacketQueue))
     m_systemWorld->handleIncomingPacket(p.first, p.second);
@@ -152,6 +231,7 @@ SkyParameters SystemWorldServerThread::clientSkyParameters(ConnectionId clientId
 }
 
 List<InstanceWorldId> SystemWorldServerThread::activeInstanceWorlds() const {
+  ReadLocker locker(m_queueMutex);
   return m_activeInstanceWorlds;
 }
 

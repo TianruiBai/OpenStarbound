@@ -16,6 +16,7 @@
 #include "StarWarping.hpp"
 #include "StarRpcThreadPromise.hpp"
 #include "StarItemDescriptor.hpp"
+#include "StarServerTiming.hpp"
 
 namespace Star {
 
@@ -52,6 +53,19 @@ public:
   typedef LuaMessageHandlingComponent<LuaUpdatableComponent<LuaWorldComponent<LuaBaseComponent>>> ScriptComponent;
   typedef shared_ptr<ScriptComponent> ScriptComponentPtr;
   typedef function<void(Json const&)> WorldPropertyListener;
+
+  struct PacketPreparationStats {
+    uint64_t ticks = 0;
+    uint64_t monitoringRegionBuilds = 0;
+    uint64_t monitoringRegionRects = 0;
+    uint64_t monitoringRegionSplitRects = 0;
+    uint64_t sectorPacketCacheHits = 0;
+    uint64_t sectorPacketCacheMisses = 0;
+    uint64_t entityStoreCacheHits = 0;
+    uint64_t entityStoreCacheMisses = 0;
+    uint64_t entityNetStateCacheHits = 0;
+    uint64_t entityNetStateCacheMisses = 0;
+  };
 
   // Create a new world with the given template, writing new storage file.
   WorldServer(WorldTemplatePtr const& worldTemplate, IODevicePtr storage);
@@ -128,6 +142,9 @@ public:
   ConnectionId connection() const override;
   WorldGeometry geometry() const override;
   uint64_t currentStep() const override;
+  PacketPreparationStats packetPreparationStats() const;
+  List<ServerTimingRecord> updateTimingRecords() const;
+  List<ServerTimingStatus> updateTimingStatus() const;
   MaterialId material(Vec2I const& position, TileLayer layer) const override;
   MaterialHue materialHueShift(Vec2I const& position, TileLayer layer) const override;
   ModId mod(Vec2I const& position, TileLayer layer) const override;
@@ -326,7 +343,38 @@ private:
     List<Vec2I> roots;
   };
 
+  struct WorldTickSnapshot {
+    bool sendRemoteUpdates = false;
+    List<RectI> clientWindows;
+    List<RectI> monitoringRegions;
+    HashMap<ConnectionId, List<RectI>> monitoringRegionsByConnection;
+    HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdateCache;
+    HashMap<NetCompatibilityRules, HashMap<EntityId, ByteArray>> entityStoreCache;
+    PacketPreparationStats packetPreparationStats;
+  };
+
   typedef function<ServerTile const& (Vec2I)> ServerTileGetter;
+
+  enum class UpdateTimingPhase : uint8_t {
+    FrameStart,
+    Spawner,
+    Entities,
+    Scripts,
+    Damage,
+    Wiring,
+    Sky,
+    Snapshot,
+    Weather,
+    Liquid,
+    FallingBlocks,
+    BlockDamage,
+    StorageTick,
+    StorageGenerate,
+    RemoveEntities,
+    PacketPreparation,
+    ExpiryAndLogs,
+    Count
+  };
 
   void init(bool firstTime);
 
@@ -335,10 +383,15 @@ private:
   // of ticks since the last run.
   Maybe<unsigned> shouldRunThisStep(String const& timingConfiguration);
 
+  WorldTickSnapshot buildWorldTickSnapshot();
+  void recordPacketPreparationStats(WorldTickSnapshot const& snapshot);
+  static char const* updateTimingPhaseName(UpdateTimingPhase phase);
+  void recordUpdateTiming(UpdateTimingPhase phase, int64_t durationMicroseconds);
+
   TileModificationList doApplyTileModifications(TileModificationList const& modificationList, bool allowEntityOverlap, bool ignoreTileProtection = false, bool updateNeighbors = true);
 
   // Queues pending (step based) updates to the given player
-  void queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdates, List<RectI> const& monitoringRegions);
+  void queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& snapshot);
   void updateDamage(float dt);
 
   void updateDamagedBlocks(float dt);
@@ -405,6 +458,8 @@ private:
   List<CollisionBlock> m_workingCollisionBlocks;
 
   HashMap<NetCompatibilityRules, HashMap<pair<EntityId, uint64_t>, pair<ByteArray, uint64_t>>> m_netStateCache;
+  PacketPreparationStats m_packetPreparationStats;
+  List<ServerTimingAccumulator> m_updateTimings;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
 
   GameTimer m_entityUpdateTimer;

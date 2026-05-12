@@ -24,6 +24,7 @@
 #include "StarWarpTargetEntity.hpp"
 #include "StarUniverseSettings.hpp"
 #include "StarUniverseServerLuaBindings.hpp"
+#include "StarTime.hpp"
 
 namespace Star {
 
@@ -618,134 +619,265 @@ float WorldServer::expiryTime() {
   return m_expiryTimer.timer;
 }
 
-void WorldServer::update(float dt) {
-  m_currentTime += dt;
-  ++m_currentStep;
-  for (auto const& pair : m_clientInfo)
-    pair.second->interpolationTracker.update(m_currentTime);
+WorldServer::WorldTickSnapshot WorldServer::buildWorldTickSnapshot() {
+  WorldTickSnapshot snapshot;
+  snapshot.packetPreparationStats.ticks = 1;
 
-  List<WorldAction> triggeredActions;
-  eraseWhere(m_timers, [&triggeredActions, dt](pair<float, WorldAction>& timer) {
-      if ((timer.first -= dt) <= 0) {
-        triggeredActions.append(timer.second);
-        return true;
-      }
-      return false;
-    });
-  for (auto const& action : triggeredActions)
-    action(this);
-
-  m_spawner.update(dt);
-
-  bool doBreakChecks = m_tileEntityBreakCheckTimer.wrapTick(m_currentTime) && m_needsGlobalBreakCheck;
-  if (doBreakChecks)
-    m_needsGlobalBreakCheck = false;
-
-  List<EntityId> toRemove;
-  m_entityMap->updateAllEntities([&](EntityPtr const& entity) {
-      entity->update(dt, m_currentStep);
-
-      if (auto tileEntity = as<TileEntity>(entity)) {
-        // Only do break checks on objects if all sectors the object touches
-        // *and surrounding sectors* are active.  Objects that this object
-        // rests on can be up to an entire sector large in any direction.
-        if (doBreakChecks && regionActive(RectI::integral(tileEntity->metaBoundBox().translated(tileEntity->position())).padded(WorldSectorSize)))
-          tileEntity->checkBroken();
-        updateTileEntityTiles(tileEntity);
-      }
-
-      if (entity->shouldDestroy() && entity->entityMode() == EntityMode::Master)
-        toRemove.append(entity->entityId());
-    }, [](EntityPtr const& a, EntityPtr const& b) {
-      return a->entityType() < b->entityType();
-    });
-
-  for (auto& pair : m_scriptContexts)
-    pair.second->update(pair.second->updateDt(dt));
-
-  updateDamage(dt);
-  if (shouldRunThisStep("wiringUpdate"))
-    m_wireProcessor->process();
-
-  m_sky->update(dt);
-
-  List<RectI> clientWindows;
-  List<RectI> clientMonitoringRegions;
-  HashMap<ConnectionId, List<RectI>> clientMonitoringRegionsByConnection;
   for (auto const& pair : m_clientInfo) {
-    clientWindows.append(pair.second->clientState.window());
+    snapshot.clientWindows.append(pair.second->clientState.window());
+
     auto monitoringRegions = pair.second->monitoringRegions(m_entityMap);
-    clientMonitoringRegionsByConnection.set(pair.first, monitoringRegions);
-    for (auto const& region : monitoringRegions)
-      clientMonitoringRegions.appendAll(m_geometry.splitRect(region));
-  }
+    snapshot.packetPreparationStats.monitoringRegionBuilds += 1;
+    snapshot.packetPreparationStats.monitoringRegionRects += monitoringRegions.size();
+    snapshot.monitoringRegionsByConnection.set(pair.first, monitoringRegions);
 
-  m_weather.setClientVisibleRegions(clientWindows);
-  m_weather.update(dt);
-  for (auto projectile : m_weather.pullNewProjectiles())
-    addEntity(std::move(projectile));
-
-  if (shouldRunThisStep("liquidUpdate")) {
-    m_liquidEngine->setProcessingLimit(m_fidelityConfig.optUInt("liquidEngineBackgroundProcessingLimit"));
-    m_liquidEngine->setNoProcessingLimitRegions(clientMonitoringRegions);
-    m_liquidEngine->update();
-  }
-
-  if (shouldRunThisStep("fallingBlocksUpdate"))
-    m_fallingBlocksAgent->update();
-
-  if (auto delta = shouldRunThisStep("blockDamageUpdate"))
-    updateDamagedBlocks(*delta * dt);
-
-  if (auto delta = shouldRunThisStep("worldStorageTick"))
-    m_worldStorage->tick(*delta * GlobalTimestep, &m_worldId);
-
-  if (auto delta = shouldRunThisStep("worldStorageGenerate")) {
-    List<Vec2F> playerPositions;
-    for (auto const& pair : m_clientInfo) {
-      if (auto player = get<Player>(pair.second->clientState.playerId()))
-        playerPositions.append(player->position());
+    for (auto const& region : monitoringRegions) {
+      auto splitRegions = m_geometry.splitRect(region);
+      snapshot.packetPreparationStats.monitoringRegionSplitRects += splitRegions.size();
+      snapshot.monitoringRegions.appendAll(splitRegions);
     }
+  }
 
-    HashMap<WorldStorage::Sector, float> sectorDistances;
-    m_worldStorage->generateQueue(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), [this, playerPositions, sectorDistances = std::move(sectorDistances)](WorldStorage::Sector a, WorldStorage::Sector b) mutable {
-        auto distanceToClosestPlayer = [this, &playerPositions, &sectorDistances](WorldStorage::Sector sector) {
-          if (auto distance = sectorDistances.ptr(sector))
-            return *distance;
+  return snapshot;
+}
 
-          Vec2F sectorCenter = RectF(*m_worldStorage->regionForSector(sector)).center();
-          float distance = highest<float>();
-          for (auto const& playerPosition : playerPositions)
-            distance = min(vmag(sectorCenter - playerPosition), distance);
-          sectorDistances.set(sector, distance);
-          return distance;
-        };
+void WorldServer::recordPacketPreparationStats(WorldTickSnapshot const& snapshot) {
+  m_packetPreparationStats.ticks += snapshot.packetPreparationStats.ticks;
+  m_packetPreparationStats.monitoringRegionBuilds += snapshot.packetPreparationStats.monitoringRegionBuilds;
+  m_packetPreparationStats.monitoringRegionRects += snapshot.packetPreparationStats.monitoringRegionRects;
+  m_packetPreparationStats.monitoringRegionSplitRects += snapshot.packetPreparationStats.monitoringRegionSplitRects;
+  m_packetPreparationStats.sectorPacketCacheHits += snapshot.packetPreparationStats.sectorPacketCacheHits;
+  m_packetPreparationStats.sectorPacketCacheMisses += snapshot.packetPreparationStats.sectorPacketCacheMisses;
+  m_packetPreparationStats.entityStoreCacheHits += snapshot.packetPreparationStats.entityStoreCacheHits;
+  m_packetPreparationStats.entityStoreCacheMisses += snapshot.packetPreparationStats.entityStoreCacheMisses;
+  m_packetPreparationStats.entityNetStateCacheHits += snapshot.packetPreparationStats.entityNetStateCacheHits;
+  m_packetPreparationStats.entityNetStateCacheMisses += snapshot.packetPreparationStats.entityNetStateCacheMisses;
+}
 
-        return distanceToClosestPlayer(a) < distanceToClosestPlayer(b);
+char const* WorldServer::updateTimingPhaseName(UpdateTimingPhase phase) {
+  switch (phase) {
+    case UpdateTimingPhase::FrameStart:
+      return "frameStart";
+    case UpdateTimingPhase::Spawner:
+      return "spawner";
+    case UpdateTimingPhase::Entities:
+      return "entities";
+    case UpdateTimingPhase::Scripts:
+      return "scripts";
+    case UpdateTimingPhase::Damage:
+      return "damage";
+    case UpdateTimingPhase::Wiring:
+      return "wiring";
+    case UpdateTimingPhase::Sky:
+      return "sky";
+    case UpdateTimingPhase::Snapshot:
+      return "snapshot";
+    case UpdateTimingPhase::Weather:
+      return "weather";
+    case UpdateTimingPhase::Liquid:
+      return "liquid";
+    case UpdateTimingPhase::FallingBlocks:
+      return "fallingBlocks";
+    case UpdateTimingPhase::BlockDamage:
+      return "blockDamage";
+    case UpdateTimingPhase::StorageTick:
+      return "storageTick";
+    case UpdateTimingPhase::StorageGenerate:
+      return "storageGenerate";
+    case UpdateTimingPhase::RemoveEntities:
+      return "removeEntities";
+    case UpdateTimingPhase::PacketPreparation:
+      return "packetPreparation";
+    case UpdateTimingPhase::ExpiryAndLogs:
+      return "expiryAndLogs";
+    case UpdateTimingPhase::Count:
+      break;
+  }
+
+  return "unknown";
+}
+
+void WorldServer::recordUpdateTiming(UpdateTimingPhase phase, int64_t durationMicroseconds) {
+  auto index = static_cast<size_t>(phase);
+  if (index >= m_updateTimings.size())
+    return;
+
+  recordServerTiming(m_updateTimings[index], durationMicroseconds);
+}
+
+void WorldServer::update(float dt) {
+  auto timePhase = [this](UpdateTimingPhase phase, auto&& action) {
+    auto start = Time::monotonicMicroseconds();
+    action();
+    recordUpdateTiming(phase, Time::monotonicMicroseconds() - start);
+  };
+
+  bool doBreakChecks = false;
+  List<WorldAction> triggeredActions;
+  List<EntityId> toRemove;
+  WorldTickSnapshot tickSnapshot;
+
+  timePhase(UpdateTimingPhase::FrameStart, [&]() {
+    m_currentTime += dt;
+    ++m_currentStep;
+    for (auto const& pair : m_clientInfo)
+      pair.second->interpolationTracker.update(m_currentTime);
+
+    eraseWhere(m_timers, [&triggeredActions, dt](pair<float, WorldAction>& timer) {
+        if ((timer.first -= dt) <= 0) {
+          triggeredActions.append(timer.second);
+          return true;
+        }
+        return false;
       });
-  }
+    for (auto const& action : triggeredActions)
+      action(this);
 
-  for (EntityId entityId : toRemove)
-    removeEntity(entityId, true);
+    doBreakChecks = m_tileEntityBreakCheckTimer.wrapTick(m_currentTime) && m_needsGlobalBreakCheck;
+    if (doBreakChecks)
+      m_needsGlobalBreakCheck = false;
+  });
 
-  bool sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
-  for (auto const& pair : m_clientInfo) {
-    auto const& monitoringRegions = clientMonitoringRegionsByConnection.get(pair.first);
-    for (auto const& monitoredRegion : monitoringRegions)
-      signalRegion(monitoredRegion.padded(jsonToVec2I(m_serverConfig.get("playerActiveRegionPad"))));
-    queueUpdatePackets(pair.first, sendRemoteUpdates, monitoringRegions);
-  }
-  m_netStateCache.clear();
+  timePhase(UpdateTimingPhase::Spawner, [&]() {
+    m_spawner.update(dt);
+  });
 
-  for (auto& pair : m_clientInfo)
-    pair.second->pendingForward = false;
+  timePhase(UpdateTimingPhase::Entities, [&]() {
+    m_entityMap->updateAllEntities([&](EntityPtr const& entity) {
+        entity->update(dt, m_currentStep);
 
-  m_expiryTimer.tick(dt);
+        if (auto tileEntity = as<TileEntity>(entity)) {
+          // Only do break checks on objects if all sectors the object touches
+          // *and surrounding sectors* are active.  Objects that this object
+          // rests on can be up to an entire sector large in any direction.
+          if (doBreakChecks && regionActive(RectI::integral(tileEntity->metaBoundBox().translated(tileEntity->position())).padded(WorldSectorSize)))
+            tileEntity->checkBroken();
+          updateTileEntityTiles(tileEntity);
+        }
 
-  LogMap::set(strf("server_{}_entities", m_worldId), strf("{} in {} sectors", m_entityMap->size(), m_tileArray->loadedSectorCount()));
-  LogMap::set(strf("server_{}_time", m_worldId), strf("age = {:4.2f}, day = {:4.2f}/{:4.2f}s", epochTime(), timeOfDay(), dayLength()));
-  LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
-  LogMap::set(strf("server_{}_lua_mem", m_worldId), m_luaRoot->luaMemoryUsage());
+        if (entity->shouldDestroy() && entity->entityMode() == EntityMode::Master)
+          toRemove.append(entity->entityId());
+      }, [](EntityPtr const& a, EntityPtr const& b) {
+        return a->entityType() < b->entityType();
+      });
+  });
+
+  timePhase(UpdateTimingPhase::Scripts, [&]() {
+    for (auto& pair : m_scriptContexts)
+      pair.second->update(pair.second->updateDt(dt));
+  });
+
+  timePhase(UpdateTimingPhase::Damage, [&]() {
+    updateDamage(dt);
+  });
+
+  timePhase(UpdateTimingPhase::Wiring, [&]() {
+    if (shouldRunThisStep("wiringUpdate"))
+      m_wireProcessor->process();
+  });
+
+  timePhase(UpdateTimingPhase::Sky, [&]() {
+    m_sky->update(dt);
+  });
+
+  timePhase(UpdateTimingPhase::Snapshot, [&]() {
+    tickSnapshot = buildWorldTickSnapshot();
+  });
+
+  timePhase(UpdateTimingPhase::Weather, [&]() {
+    m_weather.setClientVisibleRegions(tickSnapshot.clientWindows);
+    m_weather.update(dt);
+    for (auto projectile : m_weather.pullNewProjectiles())
+      addEntity(std::move(projectile));
+  });
+
+  timePhase(UpdateTimingPhase::Liquid, [&]() {
+    if (shouldRunThisStep("liquidUpdate")) {
+      m_liquidEngine->setProcessingLimit(m_fidelityConfig.optUInt("liquidEngineBackgroundProcessingLimit"));
+      m_liquidEngine->setNoProcessingLimitRegions(tickSnapshot.monitoringRegions);
+      m_liquidEngine->update();
+    }
+  });
+
+  timePhase(UpdateTimingPhase::FallingBlocks, [&]() {
+    if (shouldRunThisStep("fallingBlocksUpdate"))
+      m_fallingBlocksAgent->update();
+  });
+
+  timePhase(UpdateTimingPhase::BlockDamage, [&]() {
+    if (auto delta = shouldRunThisStep("blockDamageUpdate"))
+      updateDamagedBlocks(*delta * dt);
+  });
+
+  timePhase(UpdateTimingPhase::StorageTick, [&]() {
+    if (auto delta = shouldRunThisStep("worldStorageTick"))
+      m_worldStorage->tick(*delta * GlobalTimestep, &m_worldId);
+  });
+
+  timePhase(UpdateTimingPhase::StorageGenerate, [&]() {
+    if (auto delta = shouldRunThisStep("worldStorageGenerate")) {
+      List<Vec2F> playerPositions;
+      for (auto const& pair : m_clientInfo) {
+        if (auto player = get<Player>(pair.second->clientState.playerId()))
+          playerPositions.append(player->position());
+      }
+
+      HashMap<WorldStorage::Sector, float> sectorDistances;
+      m_worldStorage->generateQueue(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), [this, playerPositions, sectorDistances = std::move(sectorDistances)](WorldStorage::Sector a, WorldStorage::Sector b) mutable {
+          auto distanceToClosestPlayer = [this, &playerPositions, &sectorDistances](WorldStorage::Sector sector) {
+            if (auto distance = sectorDistances.ptr(sector))
+              return *distance;
+
+            Vec2F sectorCenter = RectF(*m_worldStorage->regionForSector(sector)).center();
+            float distance = highest<float>();
+            for (auto const& playerPosition : playerPositions)
+              distance = min(vmag(sectorCenter - playerPosition), distance);
+            sectorDistances.set(sector, distance);
+            return distance;
+          };
+
+          return distanceToClosestPlayer(a) < distanceToClosestPlayer(b);
+        });
+    }
+  });
+
+  timePhase(UpdateTimingPhase::RemoveEntities, [&]() {
+    for (EntityId entityId : toRemove)
+      removeEntity(entityId, true);
+  });
+
+  timePhase(UpdateTimingPhase::PacketPreparation, [&]() {
+    tickSnapshot.sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
+    for (auto const& pair : m_clientInfo) {
+      auto const& monitoringRegions = tickSnapshot.monitoringRegionsByConnection.get(pair.first);
+      for (auto const& monitoredRegion : monitoringRegions)
+        signalRegion(monitoredRegion.padded(jsonToVec2I(m_serverConfig.get("playerActiveRegionPad"))));
+      queueUpdatePackets(pair.first, tickSnapshot);
+    }
+    m_netStateCache.clear();
+    recordPacketPreparationStats(tickSnapshot);
+
+    for (auto& pair : m_clientInfo)
+      pair.second->pendingForward = false;
+  });
+
+  timePhase(UpdateTimingPhase::ExpiryAndLogs, [&]() {
+    m_expiryTimer.tick(dt);
+
+    LogMap::set(strf("server_{}_entities", m_worldId), strf("{} in {} sectors", m_entityMap->size(), m_tileArray->loadedSectorCount()));
+    LogMap::set(strf("server_{}_time", m_worldId), strf("age = {:4.2f}, day = {:4.2f}/{:4.2f}s", epochTime(), timeOfDay(), dayLength()));
+    LogMap::set(strf("server_{}_packet_prep", m_worldId), strf("ticks={}, regions={}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}",
+        m_packetPreparationStats.ticks,
+        m_packetPreparationStats.monitoringRegionBuilds,
+        m_packetPreparationStats.sectorPacketCacheHits,
+        m_packetPreparationStats.sectorPacketCacheMisses,
+        m_packetPreparationStats.entityStoreCacheHits,
+        m_packetPreparationStats.entityStoreCacheMisses,
+        m_packetPreparationStats.entityNetStateCacheHits,
+        m_packetPreparationStats.entityNetStateCacheMisses));
+    LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
+    LogMap::set(strf("server_{}_lua_mem", m_worldId), m_luaRoot->luaMemoryUsage());
+  });
 }
 
 WorldGeometry WorldServer::geometry() const {
@@ -754,6 +886,21 @@ WorldGeometry WorldServer::geometry() const {
 
 uint64_t WorldServer::currentStep() const {
   return m_currentStep;
+}
+
+WorldServer::PacketPreparationStats WorldServer::packetPreparationStats() const {
+  return m_packetPreparationStats;
+}
+
+List<ServerTimingRecord> WorldServer::updateTimingRecords() const {
+  List<ServerTimingRecord> records;
+  for (size_t i = 0; i < m_updateTimings.size(); ++i)
+    records.append({updateTimingPhaseName(static_cast<UpdateTimingPhase>(i)), m_updateTimings[i]});
+  return records;
+}
+
+List<ServerTimingStatus> WorldServer::updateTimingStatus() const {
+  return serverTimingStatusList(updateTimingRecords());
 }
 
 MaterialId WorldServer::material(Vec2I const& pos, TileLayer layer) const {
@@ -1428,6 +1575,7 @@ void WorldServer::init(bool firstTime) {
 
   m_currentTime = 0;
   m_currentStep = 0;
+  m_updateTimings.resize(static_cast<size_t>(UpdateTimingPhase::Count));
   m_generatingDungeon = false;
   m_geometry = WorldGeometry(m_worldTemplate->size());
   m_entityMap = m_worldStorage->entityMap();
@@ -1953,7 +2101,7 @@ List<ItemDescriptor> WorldServer::destroyBlock(TileLayer layer, Vec2I const& pos
   return drops;
 }
 
-void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdates, List<RectI> const& monitoringRegions) {
+void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& snapshot) {
   auto const& clientInfo = m_clientInfo.get(clientId);
   clientInfo->outgoingPackets.append(make_shared<StepUpdatePacket>(m_currentTime));
 
@@ -1972,16 +2120,23 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdat
     if (!m_worldStorage->sectorActive(sector))
       continue;
 
-    auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
-    auto sectorTiles = m_tileArray->sectorRegion(sector);
-    tileArrayUpdate->min = sectorTiles.min();
-    tileArrayUpdate->array.resize(Vec2S(sectorTiles.width(), sectorTiles.height()));
-    for (int x = sectorTiles.xMin(); x < sectorTiles.xMax(); ++x) {
-      for (int y = sectorTiles.yMin(); y < sectorTiles.yMax(); ++y)
-        writeNetTile({x, y}, tileArrayUpdate->array(x - sectorTiles.xMin(), y - sectorTiles.yMin()));
+    auto i = snapshot.sectorUpdateCache.find(sector);
+    if (i == snapshot.sectorUpdateCache.end()) {
+      snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
+      auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
+      auto sectorTiles = m_tileArray->sectorRegion(sector);
+      tileArrayUpdate->min = sectorTiles.min();
+      tileArrayUpdate->array.resize(Vec2S(sectorTiles.width(), sectorTiles.height()));
+      for (int x = sectorTiles.xMin(); x < sectorTiles.xMax(); ++x) {
+        for (int y = sectorTiles.yMin(); y < sectorTiles.yMax(); ++y)
+          writeNetTile({x, y}, tileArrayUpdate->array(x - sectorTiles.xMin(), y - sectorTiles.yMin()));
+      }
+      i = snapshot.sectorUpdateCache.insert(sector, tileArrayUpdate).first;
+    } else {
+      snapshot.packetPreparationStats.sectorPacketCacheHits += 1;
     }
 
-    clientInfo->outgoingPackets.append(tileArrayUpdate);
+    clientInfo->outgoingPackets.append(i->second);
     clientInfo->pendingSectors.remove(sector);
   }
 
@@ -2012,6 +2167,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdat
   clientInfo->pendingLiquidUpdates.clear();
 
   HashSet<EntityPtr> monitoredEntities;
+  auto const& monitoringRegions = snapshot.monitoringRegionsByConnection.get(clientId);
   for (auto const& monitoredRegion : monitoringRegions)
     monitoredEntities.addAll(m_entityMap->entityQuery(RectF(monitoredRegion)));
 
@@ -2025,7 +2181,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdat
   }
 
   HashMap<ConnectionId, shared_ptr<EntityUpdateSetPacket>> updateSetPackets;
-  if (sendRemoteUpdates || clientInfo->local)
+  if (snapshot.sendRemoteUpdates || clientInfo->local)
     updateSetPackets.add(ServerConnectionId, make_shared<EntityUpdateSetPacket>(ServerConnectionId));
   for (auto const& p : m_clientInfo) {
     if (p.first != clientId && p.second->pendingForward)
@@ -2042,8 +2198,12 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdat
           auto pair = make_pair(entityId, *version);
           auto& cache = m_netStateCache[netRules];
           auto i = cache.find(pair);
-          if (i == cache.end())
+          if (i == cache.end()) {
+            snapshot.packetPreparationStats.entityNetStateCacheMisses += 1;
             i = cache.insert(pair, monitoredEntity->writeNetState(*version, netRules)).first;
+          } else {
+            snapshot.packetPreparationStats.entityNetStateCacheHits += 1;
+          }
           const auto& netState = i->second;
           if (!netState.first.empty())
             updateSetPacket->deltas[entityId] = netState.first;
@@ -2053,8 +2213,16 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, bool sendRemoteUpdat
         // Client was unaware of this entity until now
         auto firstUpdate = monitoredEntity->writeNetState(0, netRules);
         clientInfo->clientSlavesNetVersion.add(entityId, firstUpdate.second);
+        auto& storeCache = snapshot.entityStoreCache[netRules];
+        auto i = storeCache.find(entityId);
+        if (i == storeCache.end()) {
+          snapshot.packetPreparationStats.entityStoreCacheMisses += 1;
+          i = storeCache.insert(entityId, entityFactory->netStoreEntity(monitoredEntity, netRules)).first;
+        } else {
+          snapshot.packetPreparationStats.entityStoreCacheHits += 1;
+        }
         clientInfo->outgoingPackets.append(make_shared<EntityCreatePacket>(monitoredEntity->entityType(),
-              entityFactory->netStoreEntity(monitoredEntity, netRules), std::move(firstUpdate.first), entityId));
+              i->second, std::move(firstUpdate.first), entityId));
       }
     }
   }

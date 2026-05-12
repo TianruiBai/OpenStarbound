@@ -116,6 +116,7 @@ SET (star_game_HEADERS
     StarRoot.hpp
     StarRootLoader.hpp
     StarServerClientContext.hpp
+    StarServerTiming.hpp
     StarSky.hpp
     StarSkyParameters.hpp
     StarSkyRenderData.hpp

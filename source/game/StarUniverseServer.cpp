@@ -287,6 +287,8 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
 
   {
     RecursiveMutexLocker locker(m_mainLock);
+    List<ServerTimingRecord> worldThreadTimingRecords;
+    List<ServerTimingRecord> worldUpdateTimingRecords;
     status.pendingHandshakes = m_pendingConnections.size();
     status.pendingHandshakeAccepted = m_pendingHandshakeAccepted;
     status.pendingHandshakeFinalized = m_pendingHandshakeFinalized;
@@ -346,10 +348,29 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.worldCommandsDirect += commandStats.direct;
           status.worldCommandsFailed += commandStats.failed;
           status.worldCommandWaitMicroseconds += commandStats.waitMicroseconds;
+
+          auto packetPreparationStats = world->packetPreparationStats();
+          status.worldPacketPrepTicks += packetPreparationStats.ticks;
+          status.worldPacketPrepMonitoringRegionBuilds += packetPreparationStats.monitoringRegionBuilds;
+          status.worldPacketPrepMonitoringRegionRects += packetPreparationStats.monitoringRegionRects;
+          status.worldPacketPrepMonitoringRegionSplitRects += packetPreparationStats.monitoringRegionSplitRects;
+          status.worldPacketPrepSectorCacheHits += packetPreparationStats.sectorPacketCacheHits;
+          status.worldPacketPrepSectorCacheMisses += packetPreparationStats.sectorPacketCacheMisses;
+          status.worldPacketPrepEntityStoreCacheHits += packetPreparationStats.entityStoreCacheHits;
+          status.worldPacketPrepEntityStoreCacheMisses += packetPreparationStats.entityStoreCacheMisses;
+          status.worldPacketPrepNetStateCacheHits += packetPreparationStats.entityNetStateCacheHits;
+          status.worldPacketPrepNetStateCacheMisses += packetPreparationStats.entityNetStateCacheMisses;
+
+          for (auto const& timingRecord : world->threadTimingRecords())
+            mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);
+          for (auto const& timingRecord : world->worldTimingRecords())
+            mergeServerTimingRecord(worldUpdateTimingRecords, timingRecord);
         }
       } catch (std::exception const&) {
       }
     }
+    status.worldThreadTimings = serverTimingStatusList(worldThreadTimingRecords);
+    status.worldUpdateTimings = serverTimingStatusList(worldUpdateTimingRecords);
     status.persistenceBatchesPending = m_pendingPersistenceWrites.size();
     status.persistenceSnapshotsPending = m_persistenceSnapshotsPending;
     auto now = Time::monotonicMilliseconds();
@@ -449,27 +470,8 @@ char const* UniverseServer::universeTimingPhaseName(UniverseTimingPhase phase) {
   return "unknown";
 }
 
-UniverseServer::ServerStatus::TimingStatus UniverseServer::timingStatus(char const* name, TimingAccumulator const& timing) {
-  ServerStatus::TimingStatus status{};
-  status.name = name;
-  status.samples = timing.samples;
-  status.totalMicroseconds = timing.totalMicroseconds;
-  status.averageMicroseconds = timing.samples ? timing.totalMicroseconds / timing.samples : 0;
-  status.latestMicroseconds = timing.latestMicroseconds;
-  status.maxMicroseconds = timing.maxMicroseconds;
-
-  auto samples = timing.recentSamples;
-  if (!samples.empty()) {
-    samples.sort();
-    auto percentile = [&samples](size_t percent) {
-      return samples[(samples.size() - 1) * percent / 100];
-    };
-    status.p50Microseconds = percentile(50);
-    status.p95Microseconds = percentile(95);
-    status.p99Microseconds = percentile(99);
-  }
-
-  return status;
+UniverseServer::ServerStatus::TimingStatus UniverseServer::timingStatus(char const* name, ServerTimingAccumulator const& timing) {
+  return serverTimingStatus(name, timing);
 }
 
 void UniverseServer::recordUniverseTiming(UniverseTimingPhase phase, int64_t durationMicroseconds) {
@@ -477,21 +479,8 @@ void UniverseServer::recordUniverseTiming(UniverseTimingPhase phase, int64_t dur
   if (durationMicroseconds < 0 || index >= m_universeTimings.size())
     return;
 
-  auto duration = static_cast<uint64_t>(durationMicroseconds);
   MutexLocker timingLocker(m_universeTimingsMutex);
-  auto& timing = m_universeTimings[index];
-  timing.samples++;
-  timing.totalMicroseconds += duration;
-  timing.latestMicroseconds = duration;
-  if (duration > timing.maxMicroseconds)
-    timing.maxMicroseconds = duration;
-
-  if (timing.recentSamples.size() < UniverseTimingSampleLimit)
-    timing.recentSamples.append(duration);
-  else {
-    timing.recentSamples[timing.recentSampleIndex] = duration;
-    timing.recentSampleIndex = (timing.recentSampleIndex + 1) % UniverseTimingSampleLimit;
-  }
+  recordServerTiming(m_universeTimings[index], durationMicroseconds);
 }
 
 bool UniverseServer::isConnectedClient(ConnectionId clientId) const {
@@ -1033,39 +1022,15 @@ void UniverseServer::updateShips() {
     auto newShipUpgrades = p.second->shipUpgrades();
     if (auto shipWorld = getWorld(ClientShipWorldId(p.second->playerUuid()))) {
       locker.unlock();
-      shipWorld->executeAction([&](WorldServerThread*, WorldServer* shipWorld) {
-        locker.lock();
-        String species;
-        Json jSpecies = shipWorld->getProperty("ship.species");
-        if (jSpecies.isType(Json::Type::String))
-          species = jSpecies.toString();
-        else
-          shipWorld->setProperty("ship.species", species = p.second->shipSpecies());
-
-        p.second->setShipSpecies(species);
-        auto const& speciesShips = m_speciesShips.get(species);
-        Json jOldShipLevel = shipWorld->getProperty("ship.level");
-        unsigned newShipLevel = min<unsigned>(speciesShips.size() - 1, newShipUpgrades.shipLevel);
-
-        if (jOldShipLevel.isType(Json::Type::Int)) {
-          auto oldShipLevel = jOldShipLevel.toUInt();
-          if (oldShipLevel < newShipLevel) {
-            for (unsigned i = oldShipLevel + 1; i <= newShipLevel; ++i) {
-              auto shipStructure = WorldStructure(speciesShips[i]);
-              shipWorld->setCentralStructure(shipStructure);
-              newShipUpgrades.apply(shipStructure.configValue("shipUpgrades"));
-            }
-
-            p.second->setShipUpgrades(newShipUpgrades);
-            auto shipChunksSnapshot = p.second->buildShipChunksSnapshot(shipWorld->readChunks());
-            p.second->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
-          }
-        }
-        shipWorld->setProperty("ship.level", newShipUpgrades.shipLevel);
-        shipWorld->setProperty("ship.maxFuel", newShipUpgrades.maxFuel);
-        shipWorld->setProperty("ship.crewSize", newShipUpgrades.crewSize);
-        shipWorld->setProperty("ship.fuelEfficiency", newShipUpgrades.fuelEfficiency);
-      });
+      auto result = shipWorld->applyShipUpgrades(p.second->shipSpecies(), newShipUpgrades, m_speciesShips);
+      locker.lock();
+      p.second->setShipSpecies(result.species);
+      newShipUpgrades = result.shipUpgrades;
+      if (result.shipChunks) {
+        p.second->setShipUpgrades(newShipUpgrades);
+        auto shipChunksSnapshot = p.second->buildShipChunksSnapshot(*result.shipChunks);
+        p.second->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+      }
     }
 
     if (auto systemWorld = p.second->systemWorld()) {

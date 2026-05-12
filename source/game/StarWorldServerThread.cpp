@@ -17,6 +17,7 @@ WorldServerThread::WorldServerThread(WorldServerPtr server, WorldId worldId)
     m_stop(false),
     m_errorOccurred(false),
     m_shouldExpire(true) {
+  m_threadTimings.resize(static_cast<size_t>(ThreadTimingPhase::Count));
   if (m_worldServer)
     m_worldServer->setWorldId(printWorldId(m_worldId));
 }
@@ -68,6 +69,66 @@ WorldServerThread::CommandStats WorldServerThread::commandStats() const {
   stats.failed = m_commandsFailed;
   stats.waitMicroseconds = m_commandWaitMicroseconds;
   return stats;
+}
+
+List<ServerTimingRecord> WorldServerThread::threadTimingRecords() const {
+  MutexLocker locker(m_threadTimingsMutex);
+  List<ServerTimingRecord> records;
+  for (size_t i = 0; i < m_threadTimings.size(); ++i)
+    records.append({threadTimingPhaseName(static_cast<ThreadTimingPhase>(i)), m_threadTimings[i]});
+  return records;
+}
+
+List<ServerTimingStatus> WorldServerThread::threadTimingStatus() const {
+  return serverTimingStatusList(threadTimingRecords());
+}
+
+List<ServerTimingRecord> WorldServerThread::worldTimingRecords() const {
+  RecursiveMutexLocker locker(m_mutex);
+  return m_worldServer->updateTimingRecords();
+}
+
+List<ServerTimingStatus> WorldServerThread::worldTimingStatus() const {
+  return serverTimingStatusList(worldTimingRecords());
+}
+
+WorldServer::PacketPreparationStats WorldServerThread::packetPreparationStats() const {
+  RecursiveMutexLocker locker(m_mutex);
+  return m_worldServer->packetPreparationStats();
+}
+
+char const* WorldServerThread::threadTimingPhaseName(ThreadTimingPhase phase) {
+  switch (phase) {
+    case ThreadTimingPhase::Loop:
+      return "loop";
+    case ThreadTimingPhase::ProcessCommands:
+      return "processCommands";
+    case ThreadTimingPhase::IncomingPackets:
+      return "incomingPackets";
+    case ThreadTimingPhase::WorldUpdate:
+      return "worldUpdate";
+    case ThreadTimingPhase::Messages:
+      return "messages";
+    case ThreadTimingPhase::OutgoingPackets:
+      return "outgoingPackets";
+    case ThreadTimingPhase::UpdateAction:
+      return "updateAction";
+    case ThreadTimingPhase::Sync:
+      return "sync";
+    case ThreadTimingPhase::Count:
+      break;
+  }
+
+  return "unknown";
+}
+
+void WorldServerThread::recordThreadTiming(ThreadTimingPhase phase, int64_t durationMicroseconds) {
+  auto index = static_cast<size_t>(phase);
+  if (index >= m_threadTimings.size())
+    return;
+
+  MutexLocker locker(m_threadTimingsMutex);
+  recordServerTiming(m_threadTimings[index], durationMicroseconds);
 }
 
 void WorldServerThread::setWorldPause(bool pause) {
@@ -386,6 +447,52 @@ void WorldServerThread::stopFlyingSkyAt(SkyParameters const& destination) {
   }
 }
 
+WorldServerThread::ShipUpgradeApplicationResult WorldServerThread::applyShipUpgrades(String fallbackSpecies, ShipUpgrades shipUpgrades, StringMap<StringList> speciesShips) {
+  ShipUpgradeApplicationResult result;
+  result.species = fallbackSpecies;
+  result.shipUpgrades = shipUpgrades;
+
+  try {
+    executeCommand("applyShipUpgrades", [fallbackSpecies = std::move(fallbackSpecies), shipUpgrades = std::move(shipUpgrades), speciesShips = std::move(speciesShips), &result](WorldServerThread*, WorldServer* shipWorld) mutable {
+        String species;
+        Json jSpecies = shipWorld->getProperty("ship.species");
+        if (jSpecies.isType(Json::Type::String))
+          species = jSpecies.toString();
+        else
+          shipWorld->setProperty("ship.species", species = fallbackSpecies);
+
+        result.species = species;
+        result.shipUpgrades = shipUpgrades;
+        auto const& speciesShipConfigs = speciesShips.get(species);
+        Json jOldShipLevel = shipWorld->getProperty("ship.level");
+        unsigned newShipLevel = min<unsigned>(speciesShipConfigs.size() - 1, result.shipUpgrades.shipLevel);
+
+        if (jOldShipLevel.isType(Json::Type::Int)) {
+          auto oldShipLevel = jOldShipLevel.toUInt();
+          if (oldShipLevel < newShipLevel) {
+            for (unsigned i = oldShipLevel + 1; i <= newShipLevel; ++i) {
+              auto shipStructure = WorldStructure(speciesShipConfigs[i]);
+              shipWorld->setCentralStructure(shipStructure);
+              result.shipUpgrades.apply(shipStructure.configValue("shipUpgrades"));
+            }
+
+            result.shipChunks = shipWorld->readChunks();
+          }
+        }
+
+        shipWorld->setProperty("ship.level", result.shipUpgrades.shipLevel);
+        shipWorld->setProperty("ship.maxFuel", result.shipUpgrades.maxFuel);
+        shipWorld->setProperty("ship.crewSize", result.shipUpgrades.crewSize);
+        shipWorld->setProperty("ship.fuelEfficiency", result.shipUpgrades.fuelEfficiency);
+      });
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+  }
+
+  return result;
+}
+
 void WorldServerThread::executeAction(WorldServerAction action) {
   RecursiveMutexLocker locker(m_mutex);
   action(this, m_worldServer.get());
@@ -446,6 +553,7 @@ void WorldServerThread::run() {
     WorldServerFidelity automaticFidelity = WorldServerFidelity::Medium;
 
     while (!m_stop && !m_errorOccurred) {
+      auto loopStart = Time::monotonicMicroseconds();
       auto fidelity = lockedFidelity.value(automaticFidelity);
       LogMap::set(strf("server_{}_fidelity", m_worldId), WorldServerFidelityNames.getRight(fidelity));
       LogMap::set(strf("server_{}_update", m_worldId), strf("{:4.2f}Hz", tickApproacher.rate()));
@@ -455,9 +563,13 @@ void WorldServerThread::run() {
       tickApproacher.tick();
 
       if (storageTimer.timeUp()) {
+        auto syncStart = Time::monotonicMicroseconds();
         sync();
+        recordThreadTiming(ThreadTimingPhase::Sync, Time::monotonicMicroseconds() - syncStart);
         storageTimer.restart(storageInterval);
       }
+
+      recordThreadTiming(ThreadTimingPhase::Loop, Time::monotonicMicroseconds() - loopStart);
 
       double spareTime = tickApproacher.spareTime();
       fidelityScore += spareTime;
@@ -488,51 +600,66 @@ void WorldServerThread::run() {
 
 void WorldServerThread::update(WorldServerFidelity fidelity) {
   RecursiveMutexLocker locker(m_mutex);
-  processCommands();
+
+  auto timePhase = [this](ThreadTimingPhase phase, auto&& action) {
+    auto start = Time::monotonicMicroseconds();
+    action();
+    recordThreadTiming(phase, Time::monotonicMicroseconds() - start);
+  };
+
+  timePhase(ThreadTimingPhase::ProcessCommands, [&]() { processCommands(); });
 
   auto unerroredClientIds = m_worldServer->clientIds();
-  for (auto clientId : unerroredClientIds) {
-    RecursiveMutexLocker queueLocker(m_queueMutex);
-    auto incomingPackets = take(m_incomingPacketQueue[clientId]);
-    queueLocker.unlock();
-    try {
-      m_worldServer->handleIncomingPackets(clientId, std::move(incomingPackets));
-    } catch (std::exception const& e) {
-      Logger::error("WorldServerThread exception caught handling incoming packets for client {}: {}",
-          clientId, outputException(e, true));
+  timePhase(ThreadTimingPhase::IncomingPackets, [&]() {
+    for (auto clientId : unerroredClientIds) {
       RecursiveMutexLocker queueLocker(m_queueMutex);
-      m_outgoingPacketQueue[clientId].appendAll(m_worldServer->removeClient(clientId));
-      unerroredClientIds.remove(clientId);
+      auto incomingPackets = take(m_incomingPacketQueue[clientId]);
+      queueLocker.unlock();
+      try {
+        m_worldServer->handleIncomingPackets(clientId, std::move(incomingPackets));
+      } catch (std::exception const& e) {
+        Logger::error("WorldServerThread exception caught handling incoming packets for client {}: {}",
+            clientId, outputException(e, true));
+        RecursiveMutexLocker queueLocker(m_queueMutex);
+        m_outgoingPacketQueue[clientId].appendAll(m_worldServer->removeClient(clientId));
+        unerroredClientIds.remove(clientId);
+      }
     }
-  }
+  });
 
-  float dt = ServerGlobalTimestep * GlobalTimescale;
-  m_worldServer->setFidelity(fidelity);
-  if (dt > 0.0f && (!m_pause || *m_pause == false))
-    m_worldServer->update(dt);
+  timePhase(ThreadTimingPhase::WorldUpdate, [&]() {
+    float dt = ServerGlobalTimestep * GlobalTimescale;
+    m_worldServer->setFidelity(fidelity);
+    if (dt > 0.0f && (!m_pause || *m_pause == false))
+      m_worldServer->update(dt);
+  });
 
   List<Message> messages;
-  {
-    RecursiveMutexLocker locker(m_messageMutex);
-    messages = std::move(m_messages);
-  }
-  for (auto& message : messages) {
-    if (auto resp = m_worldServer->receiveMessage(ServerConnectionId, message.message, message.args))
-      message.promise.fulfill(*resp);
-    else
-      message.promise.fail("Message not handled by world");
-  }
+  timePhase(ThreadTimingPhase::Messages, [&]() {
+    {
+      RecursiveMutexLocker locker(m_messageMutex);
+      messages = std::move(m_messages);
+    }
+    for (auto& message : messages) {
+      if (auto resp = m_worldServer->receiveMessage(ServerConnectionId, message.message, message.args))
+        message.promise.fulfill(*resp);
+      else
+        message.promise.fail("Message not handled by world");
+    }
+  });
 
-  for (auto& clientId : unerroredClientIds) {
-    auto outgoingPackets = m_worldServer->getOutgoingPackets(clientId);
-    RecursiveMutexLocker queueLocker(m_queueMutex);
-    m_outgoingPacketQueue[clientId].appendAll(std::move(outgoingPackets));
-  }
+  timePhase(ThreadTimingPhase::OutgoingPackets, [&]() {
+    for (auto& clientId : unerroredClientIds) {
+      auto outgoingPackets = m_worldServer->getOutgoingPackets(clientId);
+      RecursiveMutexLocker queueLocker(m_queueMutex);
+      m_outgoingPacketQueue[clientId].appendAll(std::move(outgoingPackets));
+    }
+  });
 
   m_shouldExpire = m_worldServer->shouldExpire();
 
   if (m_updateAction)
-    m_updateAction(this, m_worldServer.get());
+    timePhase(ThreadTimingPhase::UpdateAction, [&]() { m_updateAction(this, m_worldServer.get()); });
 }
 
 void WorldServerThread::sync() {

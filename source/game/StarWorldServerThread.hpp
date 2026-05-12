@@ -27,6 +27,12 @@ public:
     uint64_t waitMicroseconds;
   };
 
+  struct ShipUpgradeApplicationResult {
+    String species;
+    ShipUpgrades shipUpgrades;
+    Maybe<WorldChunks> shipChunks;
+  };
+
   typedef function<void(WorldServerThread*, WorldServer*)> WorldServerAction;
 
   WorldServerThread(WorldServerPtr server, WorldId worldId);
@@ -44,6 +50,11 @@ public:
   bool serverErrorOccurred();
   bool shouldExpire();
   CommandStats commandStats() const;
+  List<ServerTimingRecord> threadTimingRecords() const;
+  List<ServerTimingStatus> threadTimingStatus() const;
+  List<ServerTimingRecord> worldTimingRecords() const;
+  List<ServerTimingStatus> worldTimingStatus() const;
+  WorldServer::PacketPreparationStats packetPreparationStats() const;
 
   void setWorldPause(bool pause);
 
@@ -79,6 +90,7 @@ public:
   bool placeDungeon(String const& dungeonName, Vec2I const& position, Maybe<DungeonId> dungeonId = {}, bool forcePlacement = true);
   void startFlyingSky(bool enterHyperspace, bool startInWarp, Json settings = {});
   void stopFlyingSkyAt(SkyParameters const& destination);
+  ShipUpgradeApplicationResult applyShipUpgrades(String fallbackSpecies, ShipUpgrades shipUpgrades, StringMap<StringList> speciesShips);
 
   // Executes the given action on the world in a thread safe context.  This
   // does *not* catch exceptions thrown by the action or set the server error
@@ -117,9 +129,23 @@ private:
     int64_t queuedAt;
   };
 
+  enum class ThreadTimingPhase : uint8_t {
+    Loop,
+    ProcessCommands,
+    IncomingPackets,
+    WorldUpdate,
+    Messages,
+    OutgoingPackets,
+    UpdateAction,
+    Sync,
+    Count
+  };
+
   void executeCommand(String const& name, WorldServerAction action);
   void processCommands();
   void failPendingCommands(String const& error);
+  static char const* threadTimingPhaseName(ThreadTimingPhase phase);
+  void recordThreadTiming(ThreadTimingPhase phase, int64_t durationMicroseconds);
 
   void update(WorldServerFidelity fidelity);
   void sync();
@@ -145,6 +171,9 @@ private:
   atomic<uint64_t> m_commandsProcessedDirect{0};
   atomic<uint64_t> m_commandsFailed{0};
   atomic<uint64_t> m_commandWaitMicroseconds{0};
+
+  mutable Mutex m_threadTimingsMutex;
+  List<ServerTimingAccumulator> m_threadTimings;
 
   atomic<bool> m_stop;
   shared_ptr<const atomic<bool>> m_pause;

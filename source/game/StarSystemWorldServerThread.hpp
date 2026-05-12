@@ -45,6 +45,20 @@ public:
   void store();
 
 private:
+  struct CommandState {
+    Mutex mutex;
+    ConditionVariable condition;
+    bool finished = false;
+    bool failed = false;
+    String error;
+  };
+
+  struct Command {
+    String name;
+    function<void()> action;
+    shared_ptr<CommandState> state;
+  };
+
   struct SystemWorldStorageSnapshot {
     Vec3I location;
     String file;
@@ -53,6 +67,9 @@ private:
 
   SystemWorldStorageSnapshot buildStorageSnapshot();
   static void writeStorageSnapshot(SystemWorldStorageSnapshot snapshot);
+  void executeCommand(String const& name, function<void()> action);
+  void processCommands();
+  void failPendingCommands(String const& error);
 
   Vec3I m_systemLocation;
   SystemWorldServerPtr m_systemWorld;
@@ -66,7 +83,9 @@ private:
   function<void(SystemWorldServerThread*)> m_updateAction;
 
   ReadersWriterMutex m_mutex;
-  ReadersWriterMutex m_queueMutex;
+  mutable ReadersWriterMutex m_queueMutex;
+  Mutex m_commandMutex;
+  List<Command> m_commandQueue;
 
   HashSet<ConnectionId> m_clients;
   HashMap<ConnectionId, SystemLocation> m_clientShipDestinations;

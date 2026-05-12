@@ -72,6 +72,7 @@ SET (star_game_tests_SOURCES
       assets_test.cpp
       function_test.cpp
       item_test.cpp
+      multicore_phase_test.cpp
       root_test.cpp
       server_test.cpp
       spawn_test.cpp

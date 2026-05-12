@@ -86,6 +86,11 @@ int main(int argc, char** argv) {
       double totalTime = Time::monotonicTime() - start;
       coutf("Finished run of running dungeon world '{}' with seed {} for {} steps in {} seconds, average FPS: {}\n",
             dungeon, worldSeed, steps, totalTime, steps / totalTime);
+      coutf("World update timings us avg/p50/p95/p99/max:\n");
+      for (auto const& timing : worldServer.updateTimingStatus()) {
+        if (timing.samples != 0)
+          coutf("  {}={}/{}/{}/{}/{}\n", timing.name, timing.averageMicroseconds, timing.p50Microseconds, timing.p95Microseconds, timing.p99Microseconds, timing.maxMicroseconds);
+      }
       sumTime += totalTime;
     }
 

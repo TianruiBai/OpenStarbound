@@ -6,6 +6,7 @@
 #include "StarGameTypes.hpp"
 #include "StarCelestialCoordinate.hpp"
 #include "StarServerClientContext.hpp"
+#include "StarServerTiming.hpp"
 #include "StarWorldServerThread.hpp"
 #include "StarSystemWorldServerThread.hpp"
 #include "StarUniverseConnection.hpp"
@@ -33,17 +34,7 @@ STAR_EXCEPTION(UniverseServerException, StarException);
 class UniverseServer : public Thread {
 public:
   struct ServerStatus {
-    struct TimingStatus {
-      String name;
-      uint64_t samples;
-      uint64_t totalMicroseconds;
-      uint64_t averageMicroseconds;
-      uint64_t latestMicroseconds;
-      uint64_t maxMicroseconds;
-      uint64_t p50Microseconds;
-      uint64_t p95Microseconds;
-      uint64_t p99Microseconds;
-    };
+    using TimingStatus = ServerTimingStatus;
 
     double uptime;
     bool listeningTcp;
@@ -84,6 +75,16 @@ public:
     uint64_t worldCommandsDirect;
     uint64_t worldCommandsFailed;
     uint64_t worldCommandWaitMicroseconds;
+    uint64_t worldPacketPrepTicks;
+    uint64_t worldPacketPrepMonitoringRegionBuilds;
+    uint64_t worldPacketPrepMonitoringRegionRects;
+    uint64_t worldPacketPrepMonitoringRegionSplitRects;
+    uint64_t worldPacketPrepSectorCacheHits;
+    uint64_t worldPacketPrepSectorCacheMisses;
+    uint64_t worldPacketPrepEntityStoreCacheHits;
+    uint64_t worldPacketPrepEntityStoreCacheMisses;
+    uint64_t worldPacketPrepNetStateCacheHits;
+    uint64_t worldPacketPrepNetStateCacheMisses;
     size_t networkWorkers;
     size_t networkOwnedConnections;
     uint64_t networkPacketsProcessed;
@@ -103,6 +104,8 @@ public:
     uint64_t persistenceSynchronousFallbacks;
     uint64_t persistenceQueueFullFallbacks;
     List<TimingStatus> universeTimings;
+    List<TimingStatus> worldThreadTimings;
+    List<TimingStatus> worldUpdateTimings;
   };
 
   UniverseServer(String const& storageDir);
@@ -224,17 +227,6 @@ private:
     TriggeredStorage,
     Count
   };
-
-  struct TimingAccumulator {
-    uint64_t samples = 0;
-    uint64_t totalMicroseconds = 0;
-    uint64_t maxMicroseconds = 0;
-    uint64_t latestMicroseconds = 0;
-    List<uint64_t> recentSamples;
-    size_t recentSampleIndex = 0;
-  };
-
-  static size_t constexpr UniverseTimingSampleLimit = 256;
 
   enum class TcpState : uint8_t { No, Yes, Fuck };
 
@@ -399,7 +391,7 @@ private:
   void cleanupAndCommitCelestialDatabase();
 
   static char const* universeTimingPhaseName(UniverseTimingPhase phase);
-  static ServerStatus::TimingStatus timingStatus(char const* name, TimingAccumulator const& timing);
+  static ServerStatus::TimingStatus timingStatus(char const* name, ServerTimingAccumulator const& timing);
   void recordUniverseTiming(UniverseTimingPhase phase, int64_t durationMicroseconds);
 
   // Signal that a world either failed to load, or died due to an exception,
@@ -413,7 +405,7 @@ private:
 
   mutable RecursiveMutex m_mainLock;
   mutable Mutex m_universeTimingsMutex;
-  List<TimingAccumulator> m_universeTimings;
+  List<ServerTimingAccumulator> m_universeTimings;
 
   double m_startTime;
   String m_storageDirectory;

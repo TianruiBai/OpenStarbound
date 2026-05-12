@@ -320,6 +320,17 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldCommandsDirect,
       status.worldCommandsFailed,
       status.worldCommandWaitMicroseconds));
+  lines.append(strf("World packet prep: ticks={}, regions={}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}",
+      status.worldPacketPrepTicks,
+      status.worldPacketPrepMonitoringRegionBuilds,
+      status.worldPacketPrepMonitoringRegionRects,
+      status.worldPacketPrepMonitoringRegionSplitRects,
+      status.worldPacketPrepSectorCacheHits,
+      status.worldPacketPrepSectorCacheMisses,
+      status.worldPacketPrepEntityStoreCacheHits,
+      status.worldPacketPrepEntityStoreCacheMisses,
+      status.worldPacketPrepNetStateCacheHits,
+      status.worldPacketPrepNetStateCacheMisses));
   lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,
@@ -341,6 +352,18 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
   }
   if (!timingParts.empty())
     lines.append(strf("Universe timings us avg/p50/p95/p99/max: {}", timingParts.join(", ")));
+
+  auto appendTimingLine = [&lines](String const& label, List<UniverseServer::ServerStatus::TimingStatus> const& timings) {
+    StringList parts;
+    for (auto const& timing : timings) {
+      if (timing.samples != 0)
+        parts.append(strf("{}={}/{}/{}/{}/{}", timing.name, timing.averageMicroseconds, timing.p50Microseconds, timing.p95Microseconds, timing.p99Microseconds, timing.maxMicroseconds));
+    }
+    if (!parts.empty())
+      lines.append(strf("{} timings us avg/p50/p95/p99/max: {}", label, parts.join(", ")));
+  };
+  appendTimingLine("World thread", status.worldThreadTimings);
+  appendTimingLine("World update", status.worldUpdateTimings);
 
   return lines.join("\n");
 }
