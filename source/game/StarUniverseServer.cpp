@@ -16,6 +16,7 @@
 #include "StarSky.hpp"
 #include "StarTcp.hpp"
 #include "StarTeamManager.hpp"
+#include "StarTime.hpp"
 #include "StarUniverseServerLuaBindings.hpp"
 #include "StarVersioningDatabase.hpp"
 #include "StarWorldTemplate.hpp"
@@ -26,6 +27,7 @@ UniverseServer::UniverseServer(String const& storageDir)
     : Thread("UniverseServer"),
       m_workerPool("UniverseServerWorkerPool"),
       m_clients(MinClientConnectionId, MaxClientConnectionId) {
+  m_startTime = Time::monotonicTime();
   String const LockFile = "universe.lock";
 
   m_storageDirectory = storageDir;
@@ -210,6 +212,59 @@ size_t UniverseServer::numberOfClients() const {
 
 uint32_t UniverseServer::maxClients() const {
   return m_maxPlayers;
+}
+
+UniverseServer::ServerStatus UniverseServer::serverStatus() const {
+  ServerStatus status{};
+  status.uptime = Time::monotonicTime() - m_startTime;
+  status.listeningTcp = m_tcpState == TcpState::Yes;
+  status.tcpListenFailed = m_tcpState == TcpState::Fuck;
+  status.paused = *m_pause;
+  status.timescale = GlobalTimescale;
+  status.tickRate = 1.0f / ServerGlobalTimestep;
+
+  {
+    ReadLocker clientsLocker(m_clientsLock);
+    status.clients = m_clients.size();
+    status.maxClients = m_maxPlayers;
+  }
+
+  {
+    RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
+    status.pendingConnectionAccepts = m_connectionAcceptThreads.size();
+  }
+
+  {
+    RecursiveMutexLocker locker(m_mainLock);
+    status.activeWorlds = m_worlds.size();
+    status.systemWorlds = m_systemWorlds.size();
+    status.deadConnections = m_deadConnections.size();
+    status.pendingPlayerWarps = m_pendingPlayerWarps.size();
+    status.queuedFlights = m_queuedFlights.size();
+    status.pendingFlights = m_pendingFlights.size();
+    status.pendingArrivals = m_pendingArrivals.size();
+    status.pendingDisconnections = m_pendingDisconnections.size();
+    status.pendingCelestialRequestClients = m_pendingCelestialRequests.size();
+    for (auto const& pair : m_pendingCelestialRequests)
+      status.pendingCelestialRequests += pair.second.size();
+    status.pendingChatClients = m_pendingChat.size();
+    for (auto const& pair : m_pendingChat)
+      status.pendingChatMessages += pair.second.size();
+    status.pendingWorldMessageWorlds = m_pendingWorldMessages.size();
+    for (auto const& pair : m_pendingWorldMessages)
+      status.pendingWorldMessages += pair.second.size();
+  }
+
+  auto workerStats = connectionWorkerStats();
+  status.networkWorkers = workerStats.size();
+  for (auto const& worker : workerStats) {
+    status.networkOwnedConnections += worker.ownedConnections;
+    status.networkPacketsProcessed += worker.packetsProcessed;
+    status.networkWakeups += worker.wakeups;
+    status.networkIdleTimedWaits += worker.idleTimedWaits;
+  }
+
+  return status;
 }
 
 List<UniverseConnectionServer::NetworkWorkerStats> UniverseServer::connectionWorkerStats() const {

@@ -32,6 +32,7 @@ SET (star_core_tests_SOURCES
       flat_hash_test.cpp
       formatted_json_test.cpp
       line_test.cpp
+      logging_test.cpp
       lua_test.cpp
       lua_json_test.cpp
       math_test.cpp

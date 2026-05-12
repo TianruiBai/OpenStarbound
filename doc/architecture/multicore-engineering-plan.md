@@ -6,7 +6,7 @@ The goal is to increase practical multicore utilization on dedicated servers whi
 
 This is not a promise that one crowded world can immediately use every core. The current architecture makes that difficult because the authoritative world tick is mostly serial. The plan therefore improves multicore use in layers: first by reducing scheduler waste and offloading non-simulation work, then by tightening world ownership, then by adding carefully bounded parallel work around the serial simulation lane.
 
-For an execution checklist with Windows tooling notes, researched threading guidance, code touch points, acceptance criteria, and tests for each phase, see `doc/architecture/multicore-phase-roadmap.md`.
+For an execution checklist with Windows tooling notes, researched threading guidance, code touch points, acceptance criteria, and tests for each phase, see `doc/architecture/multicore-phase-roadmap.md`. For the F3-style status overlay, crash reports, structured logs, and diagnostic bundles that should support this work, see `doc/architecture/diagnostics-debugging-roadmap.md`.
 
 ## 1. Design Goals
 
@@ -158,8 +158,23 @@ Expected output from this phase:
 - a per-universe-loop profile
 - baseline TPS or tick-duration percentiles
 - baseline network idle wakeups and packet latency
+- baseline diagnostic snapshots that can be copied from the client overlay, requested from the server, and included in crash reports
 
 Performance gain estimate: none directly. This phase prevents false optimization and gives the team confidence in later numbers.
+
+## 4.6 Diagnostics and crash-report foundation
+
+The multicore work should include a first-class debugging system rather than relying on ad hoc logs. The plan is to build on existing `Logger`, `LogMap`, `SpatialLogger`, `/debug`, Lua profiling, and stack-trace support.
+
+Required capabilities:
+
+- an F3-style client overlay for FPS, update rate, player/world/server identifiers, network state, world cursor state, renderer state, and selected performance counters
+- server admin commands for status, world stats, network stats, profile windows, and diagnostic dumps
+- crash reports that include version/build metadata, exception and stack trace, recent logs, recent diagnostic events, asset/mod context, server/world/client summaries, and redacted configuration context
+- structured logging support with categories, bounded recent-log buffers, log rotation, optional JSON-lines output, and repeated-warning rate limiting
+- redaction helpers for passwords, auth tokens, private platform ids, full IP addresses, and sensitive local paths
+
+This diagnostic foundation should be treated as a Phase 0 companion. Every later phase should add the counters and crash context needed to prove correctness and performance.
 
 ## 5. Phase 1: Network Worker Sharding And Wakeups
 
@@ -634,6 +649,10 @@ This order gives useful gains early, lowers risk, and builds the ownership model
 - Add network worker scan, wakeup, and idle counters.
 - Add world mutex wait counters.
 - Extend `world_benchmark` to print subphase timings.
+- Add an F3-style client status overlay feed for player, world, server, renderer, network, and performance context.
+- Add a bounded recent-log and diagnostic-event ring buffer for crash reports and `/dumpdiag`.
+- Add crash-report JSON generation with redaction and recent diagnostic context.
+- Add `/serverstatus`, `/worldstats`, and `/dumpdiag` after the initial `/servernetstats` command.
 
 ### 13.2 Low-risk performance tickets
 

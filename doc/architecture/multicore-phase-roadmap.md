@@ -4,6 +4,8 @@ This roadmap turns `multicore-engineering-plan.md` into an execution checklist. 
 
 The first implementation work has started in Phase 1 with worker-owned network connection lists and event wakeups in `source/game/StarUniverseConnection.*`.
 
+The observability and crash-reporting work that supports these phases is tracked in `diagnostics-debugging-roadmap.md`. In short: build on the current `/debug` overlay, `LogMap`, `SpatialLogger`, `Logger`, stack traces, Lua profiles, and `/servernetstats` to provide F3-style status, server diagnostic commands, crash bundles, and structured logs.
+
 ## Research Notes
 
 Relevant guidance from C++ and Windows threading references maps cleanly onto the current server problems:
@@ -49,6 +51,35 @@ Recommended Windows profiling tools:
 - Windows Performance Counters for process/thread CPU and disk queue baselines.
 - OpenStarbound internal timing counters for phase comparisons before and after changes.
 
+## Diagnostics And Debugging Track
+
+This track runs beside every multicore phase. It should provide the information needed to debug crashes, verify behavior, and prove performance changes.
+
+Existing building blocks:
+
+- `Logger` and `FileLogSink` for text logs.
+- `LogMap` for high-frequency debug key/value values shown in the client overlay.
+- `SpatialLogger` for debug geometry and text overlays.
+- `/debug` and `/debug hud` for client overlay control.
+- `StarException`, `fatalError`, and `fatalException` for stack traces and fatal reporting.
+- Lua profile dumps.
+- `/servernetstats` for Phase 1 network worker profiling.
+
+Planned capabilities:
+
+1. F3-style client status pages for basic player/world/server state, renderer state, network state, Lua/mod state, and performance counters.
+2. Server-side `/serverstatus`, `/worldstats`, `/serverprofile`, and `/dumpdiag` commands.
+3. Crash report bundles containing build/platform data, exception and stack trace, recent logs, recent diagnostic events, asset/mod context, and redacted configuration context.
+4. Structured logging categories, bounded recent-log retention, log rotation, optional JSON-lines output, and repeated-warning rate limiting.
+5. Redaction of secrets, auth tokens, passwords, private platform ids, and full IP addresses in any copy, dump, or crash path.
+
+Acceptance criteria:
+
+- Diagnostics are opt-in or bounded by config and do not become the bottleneck.
+- Crash reports are written to a predictable directory and referenced in logs/dialogs.
+- The overlay and server commands expose the metrics required by each multicore phase.
+- Diagnostic snapshots are machine-readable JSON as well as human-readable command output.
+
 ## Phase 0: Measurement Foundation
 
 Goal: prove the hot paths before deeper scheduling changes.
@@ -69,12 +100,15 @@ Implementation tasks:
 4. Add world-update subphase timers for entity update, world scripts, damage, wiring, weather, liquid, falling blocks, storage tick, storage generation, and packet preparation.
 5. Add network counters for worker wakeups, idle wakeups, owned connections, scanned connections, packets processed, and callback duration.
 6. Extend `world_benchmark` to print subphase timing summaries and percentiles.
+7. Feed selected counters into the diagnostics registry and F3-style client/server status surfaces.
+8. Add crash-report context hooks for current phase timers, network worker stats, active worlds, and storage state.
 
 Acceptance criteria:
 
 - A dedicated server run can emit per-phase timing summaries without changing packet or save formats.
 - Measurements include p50, p95, and p99 tick durations where practical.
 - Measurement overhead is visible and bounded under a config flag.
+- Client overlay, server commands, logs, and crash reports can all consume the same diagnostic snapshots.
 
 Primary risks:
 
@@ -113,6 +147,7 @@ Started work:
 - Add, remove, and send paths wake the owning worker through `ConditionVariable`.
 - Worker scan, stale-id, callback, wakeup, timed-wait, and idle-wait counters are available through `UniverseConnectionServer::workerStats()`.
 - `/servernetstats` exposes the worker counters for live admin profiling.
+- `/serverstatus` exposes a compact server diagnostics snapshot with uptime, player counts, active worlds, pending queue sizes, TCP state, and aggregate network counters.
 - Per-connection packet callback ordering remains owned by one worker.
 
 Acceptance criteria:

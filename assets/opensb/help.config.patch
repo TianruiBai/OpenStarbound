@@ -10,10 +10,12 @@
   },
 
   "adminCommands": {
+    "serverstatus": "Usage /serverstatus. Shows uptime, player count, active worlds, pending queues, TCP state and network summary counters for server diagnostics.",
     "servernetstats": "Usage /servernetstats. Shows network worker ownership, scan, wakeup and wait counters for server profiling."
   },
 
   "openSbDebugCommands": {
+    "debug": "Usage /debug [hud]. Toggles the debug display. Use /debug hud to toggle the status text layer.",
     "run": "Usage /run <lua>. Executes a script on the player and outputs the return value to chat."
   },
 

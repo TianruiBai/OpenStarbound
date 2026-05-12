@@ -60,23 +60,25 @@ TEST(JsonTest, Merging) {
 }
 
 TEST(JsonTest, Unicode) {
-  Json v = Json::parse("{ \"first\" : \"日本語\", \"second\" : \"foobar\\u0019\" }");
-  EXPECT_EQ(v.getString("first"), String("日本語"));
+  String japanese("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E");
+  Json v = Json::parse(strf("{{ \"first\" : \"{}\", \"second\" : \"foobar\\u0019\" }}", japanese));
+  EXPECT_EQ(v.getString("first"), japanese);
   EXPECT_EQ(v.get("second").repr(), String("\"foobar\\u0019\""));
 
   String json = v.printJson();
   Json v2 = Json::parseJson(json);
-  EXPECT_EQ(v2.getString("first"), String("日本語"));
+  EXPECT_EQ(v2.getString("first"), japanese);
 
   EXPECT_EQ(v, v2);
 
-  EXPECT_EQ(Json("😀"), Json::parse("\"\\ud83d\\ude00\""));
+  EXPECT_EQ(Json(String("\xF0\x9F\x98\x80")), Json::parse("\"\\ud83d\\ude00\""));
   EXPECT_EQ(Json::parse("\"\\ud83d\\ude00\"").toString().size(), 1u);
 }
 
 TEST(JsonTest, UnicodeFile) {
-  Json v = Json::parse("{ \"first\" : \"日本語\", \"second\" : \"foobar\\u0019\" }");
-  EXPECT_EQ(v.getString("first"), String("日本語"));
+  String japanese("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E");
+  Json v = Json::parse(strf("{{ \"first\" : \"{}\", \"second\" : \"foobar\\u0019\" }}", japanese));
+  EXPECT_EQ(v.getString("first"), japanese);
   EXPECT_EQ(v.get("second").repr(), String("\"foobar\\u0019\""));
 
   String file = File::temporaryFileName();
@@ -84,7 +86,7 @@ TEST(JsonTest, UnicodeFile) {
 
   File::writeFile(v.printJson(), file);
   Json v2 = Json::parseJson(File::readFileString(file));
-  EXPECT_EQ(v2.getString("first"), "日本語");
+  EXPECT_EQ(v2.getString("first"), japanese);
 
   EXPECT_EQ(v, v2);
 }

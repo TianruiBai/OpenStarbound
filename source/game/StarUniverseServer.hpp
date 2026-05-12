@@ -31,6 +31,37 @@ STAR_EXCEPTION(UniverseServerException, StarException);
 // and routes packets between them.
 class UniverseServer : public Thread {
 public:
+  struct ServerStatus {
+    double uptime;
+    bool listeningTcp;
+    bool tcpListenFailed;
+    bool paused;
+    float timescale;
+    float tickRate;
+    size_t clients;
+    uint32_t maxClients;
+    size_t activeWorlds;
+    size_t systemWorlds;
+    size_t pendingConnectionAccepts;
+    size_t deadConnections;
+    size_t pendingPlayerWarps;
+    size_t queuedFlights;
+    size_t pendingFlights;
+    size_t pendingArrivals;
+    size_t pendingDisconnections;
+    size_t pendingCelestialRequestClients;
+    size_t pendingCelestialRequests;
+    size_t pendingChatClients;
+    size_t pendingChatMessages;
+    size_t pendingWorldMessageWorlds;
+    size_t pendingWorldMessages;
+    size_t networkWorkers;
+    size_t networkOwnedConnections;
+    uint64_t networkPacketsProcessed;
+    uint64_t networkWakeups;
+    uint64_t networkIdleTimedWaits;
+  };
+
   UniverseServer(String const& storageDir);
   ~UniverseServer();
 
@@ -58,6 +89,7 @@ public:
   List<pair<ConnectionId, int64_t>> clientIdsAndCreationTime() const;
   size_t numberOfClients() const;
   uint32_t maxClients() const;
+  ServerStatus serverStatus() const;
   List<UniverseConnectionServer::NetworkWorkerStats> connectionWorkerStats() const;
   bool isConnectedClient(ConnectionId clientId) const;
 
@@ -220,6 +252,7 @@ private:
 
   mutable RecursiveMutex m_mainLock;
 
+  double m_startTime;
   String m_storageDirectory;
   ByteArray m_assetsDigest;
   Maybe<LockFile> m_storageDirectoryLock;
@@ -246,7 +279,7 @@ private:
   Map<Vec3I, SystemWorldServerThreadPtr> m_systemWorlds;
   UniverseConnectionServerPtr m_connectionServer;
 
-  RecursiveMutex m_connectionAcceptThreadsMutex;
+  mutable RecursiveMutex m_connectionAcceptThreadsMutex;
   List<ThreadFunction<void>> m_connectionAcceptThreads;
   LinkedList<pair<UniverseConnection, int64_t>> m_deadConnections;
 

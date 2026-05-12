@@ -68,11 +68,43 @@ void Logger::removeStdoutSink() {
 void Logger::log(LogLevel level, char const* msg) {
   if (loggable(level)) {
     MutexLocker locker(s_mutex);
+    rememberLogLocked(level, String(msg));
     for (auto const& l : s_sinks) {
       if (l->level() <= level)
         l->log(msg, level);
     }
   }
+}
+
+size_t Logger::recentLogLimit() {
+  MutexLocker locker(s_mutex);
+  return s_recentLogLimit;
+}
+
+void Logger::setRecentLogLimit(size_t limit) {
+  MutexLocker locker(s_mutex);
+  s_recentLogLimit = limit;
+  while (s_recentLogMessages.size() > s_recentLogLimit)
+    s_recentLogMessages.removeFirst();
+}
+
+Deque<Logger::RecentLogMessage> Logger::recentLogMessages() {
+  MutexLocker locker(s_mutex);
+  return s_recentLogMessages;
+}
+
+void Logger::clearRecentLogMessages() {
+  MutexLocker locker(s_mutex);
+  s_recentLogMessages.clear();
+}
+
+void Logger::rememberLogLocked(LogLevel level, String const& message) {
+  if (s_recentLogLimit == 0)
+    return;
+
+  s_recentLogMessages.append({Time::millisecondsSinceEpoch(), level, message});
+  while (s_recentLogMessages.size() > s_recentLogLimit)
+    s_recentLogMessages.removeFirst();
 }
 
 bool Logger::loggable(LogLevel level) {
@@ -90,6 +122,8 @@ void Logger::refreshLoggable() {
 shared_ptr<StdoutLogSink> Logger::s_stdoutSink = make_shared<StdoutLogSink>();
 HashSet<LogSinkPtr> Logger::s_sinks{s_stdoutSink};
 Array<bool, 4> Logger::s_loggable = Array<bool, 4>{false, true, true, true};
+Deque<Logger::RecentLogMessage> Logger::s_recentLogMessages;
+size_t Logger::s_recentLogLimit = 1024;
 Mutex Logger::s_mutex;
 
 String LogMap::getValue(String const& key) {

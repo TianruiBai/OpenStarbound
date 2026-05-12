@@ -10,6 +10,7 @@
 #include "StarPlayer.hpp"
 #include "StarPlayerStorage.hpp"
 #include "StarPlayerLog.hpp"
+#include "StarClientContext.hpp"
 #include "StarAssets.hpp"
 #include "StarWorldTemplate.hpp"
 #include "StarWorldClient.hpp"
@@ -1300,9 +1301,18 @@ void ClientApplication::updateRunning(float dt) {
     float fps = app->renderFps();
     LogMap::set("client_render_rate", strf("{:4.2f} FPS ({:4.2f}ms)", fps, (1.0f / app->renderFps()) * 1000.0f));
     LogMap::set("client_update_rate", strf("{:4.2f}Hz", app->updateRate()));
+    LogMap::set("client_players", strf("{}/{}", m_universeClient->players(), m_universeClient->maxPlayers()));
+    LogMap::set("client_admin", m_universeClient->isAdmin() ? "true" : "false");
+    LogMap::set("client_flying", m_universeClient->flying() ? "true" : "false");
     LogMap::set("player_pos", strf("[ ^#f45;{:4.2f}^reset;, ^#49f;{:4.2f}^reset; ]", m_player->position()[0], m_player->position()[1]));
     LogMap::set("player_vel", strf("[ ^#f45;{:4.2f}^reset;, ^#49f;{:4.2f}^reset; ]", m_player->velocity()[0], m_player->velocity()[1]));
     LogMap::set("player_aim", strf("[ ^#f45;{:4.2f}^reset;, ^#49f;{:4.2f}^reset; ]", aimPosition[0], aimPosition[1]));
+    LogMap::set("player_uuid", m_player->uuid().hex());
+    if (auto clientContext = m_universeClient->clientContext()) {
+      LogMap::set("server_uuid", clientContext->serverUuid().hex());
+      LogMap::set("connection_id", clientContext->connectionId());
+      LogMap::set("client_world", printWorldId(clientContext->playerWorldId()));
+    }
     if (auto world = m_universeClient->worldClient()) {
       auto aim = Vec2I::floor(aimPosition);
       LogMap::set("tile_liquid_level", toString(world->liquidLevel(aim).level));

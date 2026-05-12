@@ -265,6 +265,47 @@ String CommandProcessor::tickrate(ConnectionId connectionId, String const& argum
   return strf("Set tick rate to {:4.2f}Hz", tickRate);
 }
 
+String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) {
+  if (auto errorMsg = adminCheck(connectionId, "view server status"))
+    return *errorMsg;
+
+  auto status = m_universe->serverStatus();
+  StringList lines;
+  lines.append(strf("Server status: uptime={}, players={}/{}, tickRate={:4.2f}Hz, timescale={:4.2f}x, paused={}",
+      Time::printDuration(status.uptime),
+      status.clients,
+      status.maxClients,
+      status.tickRate,
+      status.timescale,
+      status.paused ? "true" : "false"));
+  lines.append(strf("Worlds: active={}, system={}", status.activeWorlds, status.systemWorlds));
+  lines.append(strf("TCP: listening={}, failed={}, pendingAccepts={}, deadConnections={}",
+      status.listeningTcp ? "true" : "false",
+      status.tcpListenFailed ? "true" : "false",
+      status.pendingConnectionAccepts,
+      status.deadConnections));
+  lines.append(strf("Pending: warps={}, queuedFlights={}, flights={}, arrivals={}, disconnects={}, celestialRequests={} ({} clients), chatMessages={} ({} clients), worldMessages={} ({} worlds)",
+      status.pendingPlayerWarps,
+      status.queuedFlights,
+      status.pendingFlights,
+      status.pendingArrivals,
+      status.pendingDisconnections,
+      status.pendingCelestialRequests,
+      status.pendingCelestialRequestClients,
+      status.pendingChatMessages,
+      status.pendingChatClients,
+      status.pendingWorldMessages,
+      status.pendingWorldMessageWorlds));
+  lines.append(strf("Network: workers={}, ownedConnections={}, packets={}, wakeups={}, idleWaits={}",
+      status.networkWorkers,
+      status.networkOwnedConnections,
+      status.networkPacketsProcessed,
+      status.networkWakeups,
+      status.networkIdleTimedWaits));
+
+  return lines.join("\n");
+}
+
 String CommandProcessor::serverNetStats(ConnectionId connectionId, String const&) {
   if (auto errorMsg = adminCheck(connectionId, "view server network stats"))
     return *errorMsg;
@@ -1039,6 +1080,7 @@ const StringMap<std::function<String(CommandProcessor*, ConnectionId, String)>> 
   add("timewarp", &CommandProcessor::timewarp);
   add("timescale", &CommandProcessor::timescale);
   add("tickrate", &CommandProcessor::tickrate);
+  add("serverstatus", &CommandProcessor::serverStatus);
   add("servernetstats", &CommandProcessor::serverNetStats);
   add("settileprotection", &CommandProcessor::setTileProtection);
   add("setdungeonid", &CommandProcessor::setDungeonId);

@@ -58,6 +58,12 @@ private:
 // Info, Warn, and Error logging levels.  By default logs to stdout.
 class Logger {
 public:
+  struct RecentLogMessage {
+    int64_t timestamp;
+    LogLevel level;
+    String message;
+  };
+
   static void addSink(LogSinkPtr s);
   static void removeSink(LogSinkPtr s);
 
@@ -67,6 +73,11 @@ public:
   static void removeStdoutSink();
 
   static void log(LogLevel level, char const* msg);
+
+  static size_t recentLogLimit();
+  static void setRecentLogLimit(size_t limit);
+  static Deque<RecentLogMessage> recentLogMessages();
+  static void clearRecentLogMessages();
 
   template <typename... Args>
   static void logf(LogLevel level, char const* msg, Args const&... args);
@@ -83,10 +94,13 @@ public:
   static bool loggable(LogLevel level);
   static void refreshLoggable();
 private:
+  static void rememberLogLocked(LogLevel level, String const& message);
 
   static shared_ptr<StdoutLogSink> s_stdoutSink;
   static HashSet<LogSinkPtr> s_sinks;
   static Array<bool, 4> s_loggable;
+  static Deque<RecentLogMessage> s_recentLogMessages;
+  static size_t s_recentLogLimit;
   static Mutex s_mutex;
 };
 
@@ -162,6 +176,7 @@ void Logger::logf(LogLevel level, char const* msg, Args const&... args) {
   if (loggable(level)) {
     std::string output = strf(msg, args...);
     MutexLocker locker(s_mutex);
+    rememberLogLocked(level, String(output));
     for (auto const& l : s_sinks) {
       if (l->level() <= level) {
         l->log(output.c_str(), level);
