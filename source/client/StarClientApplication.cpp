@@ -58,6 +58,7 @@ Json const AdditionalDefaultConfiguration = Json::parseJson(R"JSON(
 
       "allowAssetsMismatch" : false,
       "vsync" : true,
+      "renderFrameRate" : 60,
       "limitTextureAtlasSize" : false,
       "useMultiTexturing" : true,
       "audioChannelSeparation" : [-25, 25],
@@ -223,6 +224,10 @@ void ClientApplication::applicationInit(ApplicationControllerPtr appController) 
     ServerGlobalTimestep = 1.0f / jServerUpdateRate.toFloat();
 
   appController->setTargetUpdateRate(updateRate);
+  float renderFrameRate = updateRate;
+  if (auto jRenderFrameRate = configuration->get("renderFrameRate"))
+    renderFrameRate = jRenderFrameRate.toFloat();
+  appController->setTargetRenderRate(renderFrameRate > 0.0f ? Maybe<float>(renderFrameRate) : Maybe<float>());
   appController->setVSyncEnabled(vsync);
   appController->setCursorHardware(configuration->get("hardwareCursor").optBool().value(true));
 

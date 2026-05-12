@@ -51,8 +51,8 @@ public:
   // Returns how many frames have been skipped.
   virtual unsigned framesSkipped() const;
 
-  // Will be called at updateRate hz, or more or less depending on settings and
-  // performance.  update() is always prioritized over render().
+  // Will be called at the target render rate, or more or less depending on
+  // settings and performance.  update() is always prioritized over render().
   virtual void render();
 
   // Will be called *from a different thread* to retrieve audio data (if audio

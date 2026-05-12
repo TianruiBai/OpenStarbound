@@ -64,6 +64,7 @@ Existing building blocks:
 - `StarException`, `fatalError`, and `fatalException` for stack traces and fatal reporting.
 - Lua profile dumps.
 - `/servernetstats` for Phase 1 network worker profiling.
+- Separate client render FPS and update-rate reporting for verifying render/update decoupling.
 
 Planned capabilities:
 
@@ -79,6 +80,35 @@ Acceptance criteria:
 - Crash reports are written to a predictable directory and referenced in logs/dialogs.
 - The overlay and server commands expose the metrics required by each multicore phase.
 - Diagnostic snapshots are machine-readable JSON as well as human-readable command output.
+
+## Phase 0A: Client Render FPS Unlock
+
+Goal: allow high-refresh or uncapped client rendering without changing simulation, Lua, physics, network, or server tick timing.
+
+Code areas:
+
+- `source/application/StarApplicationController.hpp`
+- `source/application/StarMainApplication_sdl.cpp`
+- `source/client/StarClientApplication.cpp`
+
+Implementation tasks:
+
+1. Add a client `renderFrameRate` setting separate from `updateRate`.
+2. Keep `updateRate` mapped to `GlobalTimestep` for compatibility-sensitive simulation behavior.
+3. Let `renderFrameRate: 0` disable the software render limiter, while VSync still caps presentation if enabled.
+4. Keep default rendering at 60 FPS unless the player opts into a higher value or uncapped rendering.
+5. Show both render FPS and update Hz in debug diagnostics.
+
+Acceptance criteria:
+
+- Default config remains near 60 FPS and 60 Hz update.
+- Raising or disabling `renderFrameRate` can exceed 60 FPS without increasing update Hz.
+- Movement, Lua timers, packet cadence, and local server tick behavior do not speed up from render-only changes.
+
+Primary risks:
+
+- Some rendering paths may assume one render follows every update.
+- Uncapped rendering can increase GPU/CPU use when VSync is disabled.
 
 ## Phase 0: Measurement Foundation
 

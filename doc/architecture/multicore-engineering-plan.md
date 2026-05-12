@@ -169,12 +169,33 @@ The multicore work should include a first-class debugging system rather than rel
 Required capabilities:
 
 - an F3-style client overlay for FPS, update rate, player/world/server identifiers, network state, world cursor state, renderer state, and selected performance counters
+- separate client render-rate and simulation update-rate reporting, so unlocked rendering can be tested without changing the 60 Hz compatibility timestep
 - server admin commands for status, world stats, network stats, profile windows, and diagnostic dumps
 - crash reports that include version/build metadata, exception and stack trace, recent logs, recent diagnostic events, asset/mod context, server/world/client summaries, and redacted configuration context
 - structured logging support with categories, bounded recent-log buffers, log rotation, optional JSON-lines output, and repeated-warning rate limiting
 - redaction helpers for passwords, auth tokens, private platform ids, full IP addresses, and sensitive local paths
 
 This diagnostic foundation should be treated as a Phase 0 companion. Every later phase should add the counters and crash context needed to prove correctness and performance.
+
+## 4.7 Client render/update decoupling
+
+Purpose: allow rendering above 60 FPS while keeping gameplay, Lua, physics, networking, and server tick behavior on the compatibility-preserving update timestep.
+
+Engineering rules:
+
+- treat `updateRate` and `serverUpdateRate` as simulation tick settings, not as a normal FPS unlock path
+- add a separate client render limiter such as `renderFrameRate`, where `0` means uncapped and VSync can still cap presentation to the display refresh rate
+- keep the default render limit at 60 FPS for conservative compatibility, while allowing players to opt into higher or uncapped rendering
+- expose both render FPS and update Hz in the debug overlay so regressions are obvious
+
+Compatibility impact: low, as long as the fixed update timestep remains unchanged and render-only frames do not run gameplay update callbacks.
+
+Test plan:
+
+- with default config, render and update rates remain near 60 Hz
+- with `renderFrameRate` above 60 or `0`, render FPS can exceed 60 while update rate remains near 60 Hz
+- player movement, Lua timer behavior, packet cadence, and local server tick rate do not speed up when only render FPS is changed
+- VSync-on behavior follows the display refresh rate; VSync-off plus `renderFrameRate: 0` is allowed to run uncapped
 
 ## 5. Phase 1: Network Worker Sharding And Wakeups
 

@@ -724,6 +724,7 @@ public:
 
       m_updateTicker.reset();
       m_renderTicker.reset();
+      setTargetRenderRate(m_targetRenderRate);
 
       bool quit = false;
       while (true) {
@@ -745,8 +746,10 @@ public:
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
 
-        int updatesBehind = max<int>(round(m_updateTicker.ticksBehind()), 1);
+        int updatesBehind = max<int>(round(m_updateTicker.ticksBehind()), 0);
         updatesBehind = min<int>(updatesBehind, m_maxFrameSkip + 1);
+        if (updatesBehind == 0)
+          ImGui::NewFrame();
         for (int i = 0; i < updatesBehind; ++i) {
           //since frame-skipping is a thing, we have to begin a new ImGui frame here to prevent duplicate elements made by updates
           if (i != 0)
@@ -764,6 +767,8 @@ public:
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(m_sdlWindow);
         m_renderRate = m_renderTicker.tick();
+        if (m_targetRenderRate)
+          m_renderRateLimiter.tick();
 
         if (m_quitRequested) {
           Logger::info("Application: quit requested");
@@ -780,9 +785,11 @@ public:
           break;
         }
 
-        int64_t spareMilliseconds = round(m_updateTicker.spareTime() * 1000);
-        if (spareMilliseconds > 0)
-          Thread::sleepPrecise(spareMilliseconds);
+        if (m_targetRenderRate) {
+          int64_t spareMilliseconds = round(min(m_updateTicker.spareTime(), m_renderRateLimiter.spareTime()) * 1000);
+          if (spareMilliseconds > 0)
+            Thread::sleepPrecise(spareMilliseconds);
+        }
       }
     } catch (std::exception const& e) {
       Logger::error("Application: exception thrown!");
@@ -848,6 +855,10 @@ private:
 
     void setTargetUpdateRate(float targetUpdateRate) override {
       parent->m_updateTicker.setTargetTickRate(targetUpdateRate);
+    }
+
+    void setTargetRenderRate(Maybe<float> targetRenderRate) override {
+      parent->setTargetRenderRate(targetRenderRate);
     }
 
     void setUpdateTrackWindow(float updateTrackWindow) override {
@@ -1198,6 +1209,16 @@ private:
     }
   }
 
+  void setTargetRenderRate(Maybe<float> targetRenderRate) {
+    if (targetRenderRate && *targetRenderRate > 0.0f) {
+      m_targetRenderRate = *targetRenderRate;
+      m_renderRateLimiter = TickRateApproacher(*targetRenderRate, 1.0f);
+      m_renderRateLimiter.tick((unsigned)round(*targetRenderRate));
+    } else {
+      m_targetRenderRate.reset();
+    }
+  }
+
   inline static const size_t MaxCursorSize = 128;
   bool setCursorImage(const String& id, const ImageConstPtr& image, unsigned scale, const Vec2I& offset) {
     auto imageSize = image->size().piecewiseMultiply(Vec2U::filled(scale));
@@ -1320,6 +1341,8 @@ private:
   float m_updateRate = 0.0f;
   TickRateMonitor m_renderTicker = TickRateMonitor(1.0f);
   float m_renderRate = 0.0f;
+  TickRateApproacher m_renderRateLimiter = TickRateApproacher(60.0f, 1.0f);
+  Maybe<float> m_targetRenderRate = 60.0f;
 
   SDL_Window* m_sdlWindow = nullptr;
   SDL_GLContext m_sdlGlContext = nullptr;

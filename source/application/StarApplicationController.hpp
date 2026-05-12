@@ -18,15 +18,17 @@ struct AudioFormat {
   unsigned channels;
 };
 
-// Window size defaults to 800x600, target update rate to 60hz, maximized and
-// fullscreen are false, vsync is on, the cursor is visible, and audio and text
-// input are disabled.
+// Window size defaults to 800x600, target update and render rate to 60hz,
+// maximized and fullscreen are false, vsync is on, the cursor is visible, and
+// audio and text input are disabled.
 class ApplicationController {
 public:
   virtual ~ApplicationController() = default;
 
   // Target hz at which update() will be called
   virtual void setTargetUpdateRate(float targetUpdateRate) = 0;
+  // Target hz at which render() will be called. Nothing or <= 0 is uncapped.
+  virtual void setTargetRenderRate(Maybe<float> targetRenderRate) = 0;
   // Window that controls how long the update rate will be increased or
   // decreased to make up for rate errors in the past.
   virtual void setUpdateTrackWindow(float updateTrackWindow) = 0;
@@ -68,7 +70,7 @@ public:
   virtual bool isFocused() const = 0;
 
   // Returns the latest actual measured update and render rate, which may be
-  // different than the target update rate.
+  // different than the target rates.
   virtual float updateRate() const = 0;
   virtual float renderFps() const = 0;
 
