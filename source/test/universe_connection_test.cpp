@@ -1,5 +1,6 @@
 #include "StarUniverseConnection.hpp"
 #include "StarTcp.hpp"
+#include "StarTime.hpp"
 
 #include "gtest/gtest.h"
 
@@ -15,6 +16,24 @@ unsigned const ASyncSleepMillis = 5;
 unsigned const NumLocalSyncConnections = 5;
 unsigned const NumRemoteSyncConnections = 5;
 unsigned const SyncWaitMillis = 10000;
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate, unsigned timeoutMillis = 2000) {
+  auto timer = Timer::withMilliseconds(timeoutMillis);
+  while (!timer.timeUp()) {
+    if (predicate())
+      return true;
+    Thread::sleep(1);
+  }
+  return predicate();
+}
+
+size_t totalOwnedConnections(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
+  size_t total = 0;
+  for (auto const& workerStats : stats)
+    total += workerStats.ownedConnections;
+  return total;
+}
 
 class ASyncClientThread : public Thread {
 public:
@@ -149,4 +168,70 @@ TEST(UniverseConnections, All) {
     c.join();
 
   server.removeAllConnections();
+}
+
+TEST(UniverseConnectionServer, WorkerOwnershipStats) {
+  UniverseConnectionServer server([](UniverseConnectionServer*, ConnectionId, List<PacketPtr>) {}, 2);
+
+  List<UniverseConnection> clients;
+  for (ConnectionId clientId = 1; clientId <= 4; ++clientId) {
+    auto pair = LocalPacketSocket::openPair();
+    server.addConnection(clientId, UniverseConnection(std::move(pair.first)));
+    clients.append(UniverseConnection(std::move(pair.second)));
+  }
+
+  auto stats = server.workerStats();
+  ASSERT_EQ(2, stats.size());
+  EXPECT_EQ(4, totalOwnedConnections(stats));
+  EXPECT_EQ(2, stats[0].ownedConnections);
+  EXPECT_EQ(2, stats[1].ownedConnections);
+
+  auto removed = server.removeConnection(2);
+  EXPECT_FALSE(server.hasConnection(2));
+
+  stats = server.workerStats();
+  EXPECT_EQ(3, totalOwnedConnections(stats));
+  EXPECT_EQ(1, stats[0].ownedConnections);
+  EXPECT_EQ(2, stats[1].ownedConnections);
+}
+
+TEST(UniverseConnectionServer, SendPacketsWakesIdleWorker) {
+  UniverseConnectionServer server([](UniverseConnectionServer*, ConnectionId, List<PacketPtr>) {}, 1);
+
+  auto pair = LocalPacketSocket::openPair();
+  server.addConnection(1, UniverseConnection(std::move(pair.first)));
+  UniverseConnection client(std::move(pair.second));
+
+  auto beforeWakeups = server.workerStats()[0].wakeups;
+  server.sendPackets(1, {make_shared<ProtocolRequestPacket>(42)});
+
+  shared_ptr<ProtocolRequestPacket> received;
+  ASSERT_TRUE(waitUntil([&]() {
+    client.receive();
+    if (auto packet = client.pullSingle())
+      received = as<ProtocolRequestPacket>(packet);
+    return (bool)received;
+  }));
+
+  EXPECT_EQ(42, received->requestProtocolVersion);
+  EXPECT_GT(server.workerStats()[0].wakeups, beforeWakeups);
+}
+
+TEST(UniverseConnectionServer, RemoveConnectionDuringCallback) {
+  atomic<bool> callbackRan(false);
+  UniverseConnectionServer server([&callbackRan](UniverseConnectionServer* server, ConnectionId clientId, List<PacketPtr>) {
+      auto removed = server->removeConnection(clientId);
+      callbackRan = true;
+    }, 1);
+
+  auto pair = LocalPacketSocket::openPair();
+  server.addConnection(1, UniverseConnection(std::move(pair.first)));
+  UniverseConnection client(std::move(pair.second));
+
+  client.pushSingle(make_shared<ProtocolRequestPacket>(7));
+  client.send();
+
+  ASSERT_TRUE(waitUntil([&callbackRan]() { return callbackRan.load(); }));
+  EXPECT_FALSE(server.hasConnection(1));
+  EXPECT_EQ(0, totalOwnedConnections(server.workerStats()));
 }

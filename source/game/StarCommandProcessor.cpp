@@ -284,6 +284,18 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.tcpListenFailed ? "true" : "false",
       status.pendingConnectionAccepts,
       status.deadConnections));
+    lines.append(strf("Handshakes: pending={} (protocol={}, send={}, client={}, password={}, finalize={}, reject={}), accepted={}, finalized={}, rejected={}, timedOut={}",
+      status.pendingHandshakes,
+      status.pendingHandshakeAwaitProtocolRequest,
+      status.pendingHandshakeSendProtocolResponse,
+      status.pendingHandshakeAwaitClientConnect,
+      status.pendingHandshakeAwaitHandshakeResponse,
+      status.pendingHandshakeFinalizeClient,
+      status.pendingHandshakeRejectAndFlush,
+      status.pendingHandshakeAccepted,
+      status.pendingHandshakeFinalized,
+      status.pendingHandshakeRejected,
+      status.pendingHandshakeTimedOut));
   lines.append(strf("Pending: warps={}, queuedFlights={}, flights={}, arrivals={}, disconnects={}, celestialRequests={} ({} clients), chatMessages={} ({} clients), worldMessages={} ({} worlds)",
       status.pendingPlayerWarps,
       status.queuedFlights,
@@ -302,6 +314,11 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.networkPacketsProcessed,
       status.networkWakeups,
       status.networkIdleTimedWaits));
+  lines.append(strf("Persistence: snapshots={}, snapshotBuildUs={}, writeUs={}, failures={}",
+      status.persistenceSnapshotsWritten,
+      status.persistenceSnapshotBuildTimeMicroseconds,
+      status.persistenceWriteTimeMicroseconds,
+      status.persistenceFailures));
 
   return lines.join("\n");
 }

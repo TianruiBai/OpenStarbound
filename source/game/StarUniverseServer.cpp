@@ -77,10 +77,20 @@ UniverseServer::UniverseServer(String const& storageDir)
   m_tcpState = TcpState::No;
   m_storageTriggerDeadline = 0;
   m_clearBrokenWorldsDeadline = 0;
+  m_nextPendingConnectionId = 1;
+  m_pendingHandshakeAccepted = 0;
+  m_pendingHandshakeFinalized = 0;
+  m_pendingHandshakeRejected = 0;
+  m_pendingHandshakeTimedOut = 0;
+  m_persistenceSnapshotsWritten = 0;
+  m_persistenceSnapshotBuildTimeMicroseconds = 0;
+  m_persistenceWriteTimeMicroseconds = 0;
+  m_persistenceFailures = 0;
 
   m_maxPlayers = configuration->get("maxPlayers").toUInt();
 
   auto universeConfig = assets->json("/universe_server.config");
+  m_usePendingConnectionStateMachine = universeConfig.getBool("usePendingConnectionStateMachine", true);
 
   for (auto const& pair : universeConfig.get("speciesShips").iterateObject())
     m_speciesShips[pair.first] = jsonToStringList(pair.second);
@@ -122,12 +132,16 @@ void UniverseServer::setListeningTcp(bool listenTcp) {
 }
 
 void UniverseServer::addClient(UniverseConnection remoteConnection) {
-  RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
-  // Binding requires us to make the given lambda copy constructible, so the
-  // make_shared is requried here.
-  m_connectionAcceptThreads.append(Thread::invoke("UniverseServer::acceptConnection", [this, conn = make_shared<UniverseConnection>(std::move(remoteConnection))]() {
-    acceptConnection(std::move(*conn), {});
-  }));
+  if (m_usePendingConnectionStateMachine) {
+    enqueuePendingConnection(std::move(remoteConnection), {});
+  } else {
+    RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
+    // Binding requires us to make the given lambda copy constructible, so the
+    // make_shared is requried here.
+    m_connectionAcceptThreads.append(Thread::invoke("UniverseServer::acceptConnection", [this, conn = make_shared<UniverseConnection>(std::move(remoteConnection))]() {
+      acceptConnection(std::move(*conn), {});
+    }));
+  }
 }
 
 UniverseConnection UniverseServer::addLocalClient() {
@@ -236,6 +250,35 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
 
   {
     RecursiveMutexLocker locker(m_mainLock);
+    status.pendingHandshakes = m_pendingConnections.size();
+    status.pendingHandshakeAccepted = m_pendingHandshakeAccepted;
+    status.pendingHandshakeFinalized = m_pendingHandshakeFinalized;
+    status.pendingHandshakeRejected = m_pendingHandshakeRejected;
+    status.pendingHandshakeTimedOut = m_pendingHandshakeTimedOut;
+    for (auto const& pending : m_pendingConnections) {
+      switch (pending->state) {
+        case PendingConnectionState::AwaitProtocolRequest:
+          status.pendingHandshakeAwaitProtocolRequest++;
+          break;
+        case PendingConnectionState::SendProtocolResponse:
+          status.pendingHandshakeSendProtocolResponse++;
+          break;
+        case PendingConnectionState::AwaitClientConnect:
+          status.pendingHandshakeAwaitClientConnect++;
+          break;
+        case PendingConnectionState::AwaitHandshakeResponse:
+          status.pendingHandshakeAwaitHandshakeResponse++;
+          break;
+        case PendingConnectionState::FinalizeClient:
+          status.pendingHandshakeFinalizeClient++;
+          break;
+        case PendingConnectionState::RejectAndFlush:
+          status.pendingHandshakeRejectAndFlush++;
+          break;
+        case PendingConnectionState::Dead:
+          break;
+      }
+    }
     status.activeWorlds = m_worlds.size();
     status.systemWorlds = m_systemWorlds.size();
     status.deadConnections = m_deadConnections.size();
@@ -253,6 +296,10 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
     status.pendingWorldMessageWorlds = m_pendingWorldMessages.size();
     for (auto const& pair : m_pendingWorldMessages)
       status.pendingWorldMessages += pair.second.size();
+    status.persistenceSnapshotsWritten = m_persistenceSnapshotsWritten;
+    status.persistenceSnapshotBuildTimeMicroseconds = m_persistenceSnapshotBuildTimeMicroseconds;
+    status.persistenceWriteTimeMicroseconds = m_persistenceWriteTimeMicroseconds;
+    status.persistenceFailures = m_persistenceFailures;
   }
 
   auto workerStats = connectionWorkerStats();
@@ -623,12 +670,26 @@ void UniverseServer::run() {
       try {
         tcpServer = make_shared<TcpServer>(bindAddress);
         tcpServer->setAcceptCallback([this, maxPendingConnections](TcpSocketPtr socket) {
-          RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
-          if (m_connectionAcceptThreads.size() < maxPendingConnections) {
+          size_t pendingAccepts = 0;
+          if (m_usePendingConnectionStateMachine) {
+            RecursiveMutexLocker locker(m_mainLock);
+            pendingAccepts = m_pendingConnections.size();
+          } else {
+            RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
+            pendingAccepts = m_connectionAcceptThreads.size();
+          }
+
+          if (pendingAccepts < maxPendingConnections) {
             Logger::info("UniverseServer: Connection received from: {}", socket->remoteAddress());
-            m_connectionAcceptThreads.append(Thread::invoke("UniverseServer::acceptConnection", [this, socket]() {
-              acceptConnection(UniverseConnection(TcpPacketSocket::open(socket)), socket->remoteAddress().address());
-            }));
+            if (m_usePendingConnectionStateMachine) {
+              auto remoteAddress = socket->remoteAddress().address();
+              enqueuePendingConnection(UniverseConnection(TcpPacketSocket::open(socket)), remoteAddress);
+            } else {
+              RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
+              m_connectionAcceptThreads.append(Thread::invoke("UniverseServer::acceptConnection", [this, socket]() {
+                acceptConnection(UniverseConnection(TcpPacketSocket::open(socket)), socket->remoteAddress().address());
+              }));
+            }
           } else {
             Logger::warn("UniverseServer: maximum pending connections, dropping connection from: {}", socket->remoteAddress().address());
           }
@@ -655,6 +716,7 @@ void UniverseServer::run() {
       sendClockUpdates();
       kickErroredPlayers();
       reapConnections();
+      processPendingConnections();
       processPlanetTypeChanges();
       warpPlayers();
       flyShips();
@@ -1383,14 +1445,7 @@ void UniverseServer::doTriggeredStorage() {
 
     clientsLocker.unlock();
     locker.unlock();
-    for (auto const& p : m_clients) {
-      if (auto shipWorld = getWorld(ClientShipWorldId(p.second->playerUuid())))
-        p.second->updateShipChunks(shipWorld->readChunks());
-
-      auto versioningDatabase = Root::singleton().versioningDatabase();
-      String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", p.second->playerUuid().hex()));
-      VersionedJson::writeFile(versioningDatabase->makeCurrentVersionedJson("ClientContext", p.second->storeServerData()), clientContextFile);
-    }
+    writeClientContextStorageSnapshots(buildClientContextStorageSnapshots());
 
     locker.lock();
     clientsLocker.lock();
@@ -1399,6 +1454,53 @@ void UniverseServer::doTriggeredStorage() {
 
     m_celestialDatabase->cleanupAndCommit();
   }
+}
+
+List<UniverseServer::ClientContextStorageSnapshot> UniverseServer::buildClientContextStorageSnapshots() {
+  auto snapshotStart = Time::monotonicMicroseconds();
+  auto versioningDatabase = Root::singleton().versioningDatabase();
+  List<ClientContextStorageSnapshot> snapshots;
+
+  ReadLocker clientsLocker(m_clientsLock);
+  auto clients = m_clients.values();
+  clientsLocker.unlock();
+
+  for (auto const& clientContext : clients) {
+    RecursiveMutexLocker locker(m_mainLock);
+    auto shipWorld = getWorld(ClientShipWorldId(clientContext->playerUuid()));
+    locker.unlock();
+
+    if (shipWorld)
+      clientContext->updateShipChunks(shipWorld->readChunks());
+
+    String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientContext->playerUuid().hex()));
+    snapshots.append({clientContextFile, versioningDatabase->makeCurrentVersionedJson("ClientContext", clientContext->storeServerData())});
+  }
+
+  RecursiveMutexLocker locker(m_mainLock);
+  m_persistenceSnapshotBuildTimeMicroseconds += Time::monotonicMicroseconds() - snapshotStart;
+  return snapshots;
+}
+
+void UniverseServer::writeClientContextStorageSnapshots(List<ClientContextStorageSnapshot> snapshots) {
+  auto writeStart = Time::monotonicMicroseconds();
+  uint64_t written = 0;
+  uint64_t failures = 0;
+
+  for (auto& snapshot : snapshots) {
+    try {
+      VersionedJson::writeFile(snapshot.store, snapshot.file);
+      written++;
+    } catch (std::exception const& e) {
+      failures++;
+      Logger::error("UniverseServer: Failed writing client context snapshot '{}': {}", snapshot.file, outputException(e, false));
+    }
+  }
+
+  RecursiveMutexLocker locker(m_mainLock);
+  m_persistenceSnapshotsWritten += written;
+  m_persistenceFailures += failures;
+  m_persistenceWriteTimeMicroseconds += Time::monotonicMicroseconds() - writeStart;
 }
 
 void UniverseServer::saveSettings() {
@@ -1791,6 +1893,420 @@ void UniverseServer::packetsReceived(UniverseConnectionServer*, ConnectionId cli
       }
     }
   }
+}
+
+void UniverseServer::enqueuePendingConnection(UniverseConnection connection, Maybe<HostAddress> remoteAddress) {
+  RecursiveMutexLocker locker(m_mainLock);
+  auto pendingConnection = make_shared<PendingConnection>(m_nextPendingConnectionId++, std::move(connection), std::move(remoteAddress));
+  setPendingConnectionState(*pendingConnection, PendingConnectionState::AwaitProtocolRequest);
+  m_pendingConnections.append(pendingConnection);
+  m_pendingHandshakeAccepted++;
+}
+
+void UniverseServer::processPendingConnections() {
+  RecursiveMutexLocker locker(m_mainLock);
+  eraseWhere(m_pendingConnections, [this](shared_ptr<PendingConnection> const& pendingConnection) {
+    advancePendingConnection(*pendingConnection);
+    return pendingConnection->state == PendingConnectionState::Dead;
+  });
+}
+
+String UniverseServer::pendingConnectionStateName(PendingConnectionState state) const {
+  switch (state) {
+    case PendingConnectionState::AwaitProtocolRequest:
+      return "awaitProtocol";
+    case PendingConnectionState::SendProtocolResponse:
+      return "sendProtocol";
+    case PendingConnectionState::AwaitClientConnect:
+      return "awaitClient";
+    case PendingConnectionState::AwaitHandshakeResponse:
+      return "awaitPassword";
+    case PendingConnectionState::FinalizeClient:
+      return "finalize";
+    case PendingConnectionState::RejectAndFlush:
+      return "rejectFlush";
+    case PendingConnectionState::Dead:
+      return "dead";
+  }
+  return "unknown";
+}
+
+void UniverseServer::setPendingConnectionState(PendingConnection& pendingConnection, PendingConnectionState state) {
+  int clientWaitLimit = Root::singleton().assets()->json("/universe_server.config:clientWaitLimit").toInt();
+  pendingConnection.state = state;
+  pendingConnection.stateDeadline = Time::monotonicMilliseconds() + clientWaitLimit;
+}
+
+void UniverseServer::failPendingConnection(PendingConnection& pendingConnection, String message, bool timedOut) {
+  if (timedOut)
+    m_pendingHandshakeTimedOut++;
+  m_pendingHandshakeRejected++;
+
+  String playerName = pendingConnection.clientConnect ? pendingConnection.clientConnect->playerName : "<unknown>";
+  Logger::warn("UniverseServer: Login attempt failed with account '{}' as player '{}' from address {}, error: {}",
+      pendingConnection.accountString.empty() ? String("<unknown>") : pendingConnection.accountString,
+      playerName,
+      pendingConnection.remoteAddressString.empty() ? String("unknown") : pendingConnection.remoteAddressString,
+      message);
+  pendingConnection.failureReason = message;
+  pendingConnection.connection.pushSingle(make_shared<ConnectFailurePacket>(std::move(message)));
+  setPendingConnectionState(pendingConnection, PendingConnectionState::RejectAndFlush);
+}
+
+void UniverseServer::advancePendingConnection(PendingConnection& pendingConnection) {
+  auto& root = Root::singleton();
+  auto assets = root.assets();
+  auto configuration = root.configuration();
+  auto connectionSettings = configuration->get("connectionSettings");
+
+  int64_t now = Time::monotonicMilliseconds();
+  bool stateTimedOut = now >= pendingConnection.stateDeadline || !pendingConnection.connection.isOpen();
+
+  switch (pendingConnection.state) {
+    case PendingConnectionState::AwaitProtocolRequest: {
+      pendingConnection.connection.receive();
+      auto packet = pendingConnection.connection.pullSingle();
+      if (!packet) {
+        if (stateTimedOut) {
+          Logger::warn("UniverseServer: client connection aborted, expected ProtocolRequestPacket");
+          m_pendingHandshakeTimedOut++;
+          pendingConnection.state = PendingConnectionState::Dead;
+        }
+        return;
+      }
+
+      auto protocolRequest = as<ProtocolRequestPacket>(packet);
+      if (!protocolRequest) {
+        Logger::warn("UniverseServer: client connection aborted, expected ProtocolRequestPacket");
+        m_pendingHandshakeRejected++;
+        pendingConnection.state = PendingConnectionState::Dead;
+        return;
+      }
+
+      pendingConnection.legacyClient = protocolRequest->compressionMode() != PacketCompressionMode::Enabled;
+      if (pendingConnection.legacyClient)
+        pendingConnection.connection.packetSocket().setNetRules(LegacyVersion);
+
+      auto protocolResponse = make_shared<ProtocolResponsePacket>();
+      protocolResponse->setCompressionMode(PacketCompressionMode::Enabled);
+      if (protocolRequest->requestProtocolVersion != StarProtocolVersion) {
+        Logger::warn("UniverseServer: client connection aborted, unsupported protocol version {}, supported version {}",
+            protocolRequest->requestProtocolVersion, StarProtocolVersion);
+        protocolResponse->allowed = false;
+        pendingConnection.protocolAllowed = false;
+        pendingConnection.connection.pushSingle(protocolResponse);
+        m_pendingHandshakeRejected++;
+        setPendingConnectionState(pendingConnection, PendingConnectionState::RejectAndFlush);
+        return;
+      }
+
+      pendingConnection.protocolAllowed = true;
+      protocolResponse->allowed = true;
+      if (!pendingConnection.legacyClient) {
+        auto compressionName = connectionSettings.getString("compression", "None");
+        auto compressionMode = NetCompressionModeNames.maybeLeft(compressionName).value(NetCompressionMode::None);
+        pendingConnection.useCompressionStream = compressionMode == NetCompressionMode::Zstd;
+        protocolResponse->info = JsonObject{
+          {"compression", NetCompressionModeNames.getRight(compressionMode)},
+          {"openProtocolVersion", OpenProtocolVersion}};
+      }
+      pendingConnection.connection.pushSingle(protocolResponse);
+      setPendingConnectionState(pendingConnection, PendingConnectionState::SendProtocolResponse);
+      return;
+    }
+
+    case PendingConnectionState::SendProtocolResponse: {
+      pendingConnection.connection.send();
+      if (pendingConnection.connection.packetSocket().sentPacketsPending()) {
+        if (stateTimedOut)
+          setPendingConnectionState(pendingConnection, PendingConnectionState::RejectAndFlush);
+        return;
+      }
+
+      if (auto compressedSocket = as<CompressedPacketSocket>(&pendingConnection.connection.packetSocket()))
+        compressedSocket->setCompressionStreamEnabled(pendingConnection.useCompressionStream);
+
+      pendingConnection.remoteAddressString = pendingConnection.remoteAddress ? toString(*pendingConnection.remoteAddress) : "local";
+      Logger::info("UniverseServer: Awaiting connection info from {} ({} client)",
+          pendingConnection.remoteAddressString, pendingConnection.legacyClient ? "vanilla" : "custom");
+      setPendingConnectionState(pendingConnection, PendingConnectionState::AwaitClientConnect);
+      return;
+    }
+
+    case PendingConnectionState::AwaitClientConnect: {
+      pendingConnection.connection.receive();
+      auto packet = pendingConnection.connection.pullSingle();
+      if (!packet) {
+        if (stateTimedOut)
+          failPendingConnection(pendingConnection, "connect timeout", true);
+        return;
+      }
+
+      pendingConnection.clientConnect = as<ClientConnectPacket>(packet);
+      if (!pendingConnection.clientConnect) {
+        failPendingConnection(pendingConnection, "Expected ClientConnectPacket.");
+        return;
+      }
+
+      pendingConnection.accountString = !pendingConnection.clientConnect->account.empty()
+          ? strf("'{}'", pendingConnection.clientConnect->account)
+          : "<anonymous>";
+      setPendingConnectionState(pendingConnection, PendingConnectionState::FinalizeClient);
+
+      String serverAssetsMismatchMessage = assets->json("/universe_server.config:serverAssetsMismatchMessage").toString();
+      String clientAssetsMismatchMessage = assets->json("/universe_server.config:clientAssetsMismatchMessage").toString();
+
+      if (connectionSettings.getBool("requireLatestVersion", false)
+          && (pendingConnection.legacyClient || pendingConnection.clientConnect->info.getUInt("openProtocolVersion", 0) < OpenProtocolVersion)) {
+        failPendingConnection(pendingConnection, strf("OpenStarbound v{} or later is required.\nSource ID: {}...", OpenStarVersionString, String(StarSourceIdentifierString, 8)));
+        return;
+      }
+
+      if (!pendingConnection.remoteAddress) {
+        pendingConnection.administrator = true;
+        Logger::info("UniverseServer: Logged in player '{}' locally", pendingConnection.clientConnect->playerName);
+      } else {
+        if (pendingConnection.clientConnect->assetsDigest != m_assetsDigest) {
+          if (!configuration->get("allowAssetsMismatch").toBool()) {
+            failPendingConnection(pendingConnection, serverAssetsMismatchMessage);
+            return;
+          } else if (!pendingConnection.clientConnect->allowAssetsMismatch) {
+            failPendingConnection(pendingConnection, clientAssetsMismatchMessage);
+            return;
+          }
+        }
+
+        if (!m_speciesShips.contains(pendingConnection.clientConnect->shipSpecies)) {
+          failPendingConnection(pendingConnection, "Unknown ship species");
+          return;
+        }
+
+        if (!pendingConnection.clientConnect->account.empty()) {
+          pendingConnection.passwordSalt = secureRandomBytes(assets->json("/universe_server.config:passwordSaltLength").toUInt());
+          Logger::info("UniverseServer: Sending Handshake Challenge");
+          pendingConnection.connection.pushSingle(make_shared<HandshakeChallengePacket>(pendingConnection.passwordSalt));
+          pendingConnection.challengeQueued = true;
+          setPendingConnectionState(pendingConnection, PendingConnectionState::AwaitHandshakeResponse);
+          return;
+        } else {
+          if (!configuration->get("allowAnonymousConnections").toBool()) {
+            failPendingConnection(pendingConnection, "Anonymous connections disallowed");
+            return;
+          }
+          pendingConnection.administrator = configuration->get("anonymousConnectionsAreAdmin").toBool();
+        }
+
+        if (auto reason = isBannedUser(pendingConnection.remoteAddress, pendingConnection.clientConnect->playerUuid)) {
+          failPendingConnection(pendingConnection, "You are banned: " + *reason);
+          return;
+        }
+      }
+
+      finalizePendingConnection(pendingConnection);
+      return;
+    }
+
+    case PendingConnectionState::AwaitHandshakeResponse: {
+      pendingConnection.connection.send();
+      if (pendingConnection.connection.packetSocket().sentPacketsPending()) {
+        if (stateTimedOut)
+          failPendingConnection(pendingConnection, "Expected HandshakeResponsePacket.", true);
+        return;
+      }
+
+      pendingConnection.connection.receive();
+      auto packet = pendingConnection.connection.pullSingle();
+      if (!packet) {
+        if (stateTimedOut)
+          failPendingConnection(pendingConnection, "Expected HandshakeResponsePacket.", true);
+        return;
+      }
+
+      auto handshakeResponsePacket = as<HandshakeResponsePacket>(packet);
+      if (!handshakeResponsePacket) {
+        failPendingConnection(pendingConnection, "Expected HandshakeResponsePacket.");
+        return;
+      }
+
+      bool success = false;
+      if (Json account = configuration->get("serverUsers").get(pendingConnection.clientConnect->account, {})) {
+        pendingConnection.administrator = account.getBool("admin", false);
+        ByteArray passAccountSalt = (account.getString("password") + pendingConnection.clientConnect->account).utf8Bytes();
+        passAccountSalt.append(pendingConnection.passwordSalt);
+        ByteArray passHash = sha256(passAccountSalt);
+        if (passHash == handshakeResponsePacket->passHash)
+          success = true;
+      }
+
+      if (!success) {
+        failPendingConnection(pendingConnection, strf("No such account '{}' or incorrect password", pendingConnection.clientConnect->account));
+        return;
+      }
+
+      if (auto reason = isBannedUser(pendingConnection.remoteAddress, pendingConnection.clientConnect->playerUuid)) {
+        failPendingConnection(pendingConnection, "You are banned: " + *reason);
+        return;
+      }
+
+      finalizePendingConnection(pendingConnection);
+      return;
+    }
+
+    case PendingConnectionState::FinalizeClient:
+      finalizePendingConnection(pendingConnection);
+      return;
+
+    case PendingConnectionState::RejectAndFlush:
+      pendingConnection.connection.send();
+      m_deadConnections.append({std::move(pendingConnection.connection), Time::monotonicMilliseconds()});
+      pendingConnection.state = PendingConnectionState::Dead;
+      return;
+
+    case PendingConnectionState::Dead:
+      return;
+  }
+}
+
+bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnection) {
+  auto& root = Root::singleton();
+  auto assets = root.assets();
+  auto versioningDatabase = root.versioningDatabase();
+  auto clientConnect = pendingConnection.clientConnect;
+  if (!clientConnect) {
+    pendingConnection.state = PendingConnectionState::Dead;
+    return false;
+  }
+
+  String connectionLog = strf("UniverseServer: Logged in account '{}' as player '{}' from address {}",
+      pendingConnection.accountString, clientConnect->playerName, pendingConnection.remoteAddressString);
+
+  NetCompatibilityRules netRules(pendingConnection.legacyClient ? LegacyVersion : 1);
+  netRules.setIsAdmin(pendingConnection.administrator);
+  if (Json& info = clientConnect->info) {
+    if (auto openProtocolVersion = info.optUInt("openProtocolVersion"))
+      netRules.setVersion(*openProtocolVersion);
+    if (Json brand = info.get("brand", "custom"))
+      connectionLog += strf(" ({} client)", brand.toString());
+    if (info.getBool("legacy", false))
+      netRules.setVersion(LegacyVersion);
+  }
+  pendingConnection.connection.packetSocket().setNetRules(netRules);
+  Logger::log(LogLevel::Info, connectionLog.utf8Ptr());
+
+  WriteLocker clientsLocker(m_clientsLock);
+  if (auto clashId = getClientForUuid(clientConnect->playerUuid)) {
+    if (pendingConnection.administrator) {
+      clientsLocker.unlock();
+      doDisconnection(*clashId, "Duplicate UUID joined and is Administrator so has priority.");
+      clientsLocker.lock();
+    } else {
+      failPendingConnection(pendingConnection, "Duplicate player UUID");
+      return false;
+    }
+  }
+
+  if (m_clients.size() + 1 > m_maxPlayers && !pendingConnection.administrator) {
+    failPendingConnection(pendingConnection, "Max player connections");
+    return false;
+  }
+
+  ConnectionId clientId = m_clients.nextId();
+  auto clientContext = make_shared<ServerClientContext>(clientId, pendingConnection.remoteAddress, netRules, clientConnect->playerUuid,
+      clientConnect->playerName, clientConnect->shipSpecies, pendingConnection.administrator, clientConnect->shipChunks);
+  clientContext->registerRpcHandlers(m_teamManager->authenticatedRpcHandlers(clientContext->playerUuid()));
+
+  String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientConnect->playerUuid.hex()));
+  if (File::isFile(clientContextFile)) {
+    try {
+      auto contextStore = versioningDatabase->loadVersionedJson(VersionedJson::readFile(clientContextFile), "ClientContext");
+      clientContext->loadServerData(contextStore);
+    } catch (std::exception const& e) {
+      Logger::error("UniverseServer: Could not load client context file for <User: {}>, ignoring! {}",
+          clientConnect->playerName, outputException(e, false));
+      File::rename(clientContextFile, strf("{}.{}.fail", clientContextFile, Time::millisecondsSinceEpoch()));
+    }
+  }
+
+  if (!pendingConnection.administrator)
+    clientContext->setAdmin(false);
+
+  clientContext->setShipUpgrades(clientConnect->shipUpgrades);
+
+  m_connectionServer->addConnection(clientId, std::move(pendingConnection.connection));
+  m_connectionServer->sendPackets(clientId, {make_shared<ConnectSuccessPacket>(clientId, m_universeSettings->uuid(), m_celestialDatabase->baseInformation()), make_shared<UniverseTimeUpdatePacket>(m_universeClock->time()), make_shared<PausePacket>(*m_pause, GlobalTimescale)});
+
+  m_clients.add(clientId, clientContext);
+  m_chatProcessor->connectClient(clientId, clientConnect->playerName);
+  clientsLocker.unlock();
+
+  setPvp(clientId, false);
+
+  Vec3I location = clientContext->shipCoordinate().location();
+  if (location != Vec3I()) {
+    try {
+      auto clientSystem = createSystemWorld(location);
+      clientSystem->addClient(clientId, clientContext->playerUuid(), clientContext->shipUpgrades().shipSpeed, clientContext->shipLocation());
+      addCelestialRequests(clientId, {makeLeft(location.vec2()), makeRight(location)});
+      clientContext->setSystemWorld(clientSystem);
+    } catch (StarException const& e) {
+      Logger::error("Failed to place client ship at {}, resetting coordinate: {}", clientContext->shipCoordinate(), outputException(e, true));
+      clientContext->setShipCoordinate({});
+    }
+  }
+
+  Json introInstance = assets->json("/universe_server.config:introInstance");
+  String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
+  if (!speciesIntroInstance.empty() && !clientConnect->introComplete) {
+    Logger::info("UniverseServer: Spawning player in intro instance {}", speciesIntroInstance);
+    WarpAction introWarp = WarpToWorld{InstanceWorldId(speciesIntroInstance, clientContext->playerUuid()), {}};
+    clientWarpPlayer(clientId, introWarp);
+  } else if (auto reviveWarp = clientContext->playerReviveWarp()) {
+    bool useReviveWarp = true;
+    if (reviveWarp.world.is<InstanceWorldId>()) {
+      String instance = reviveWarp.world.get<InstanceWorldId>().instance;
+      auto worldConfig = Root::singleton().assets()->json("/instance_worlds.config").opt(instance);
+      if (!worldConfig || !worldConfig->getBool("persistent", false))
+        useReviveWarp = false;
+    }
+
+    if (reviveWarp.world.is<ClientShipWorldId>() && reviveWarp.world.get<ClientShipWorldId>() != clientConnect->playerUuid)
+      useReviveWarp = false;
+
+    if (useReviveWarp) {
+      Logger::info("UniverseServer: Reviving player at {}", reviveWarp.world);
+      clientWarpPlayer(clientId, reviveWarp);
+    } else {
+      Logger::info("UniverseServer: Player revive position is expired, spawning back at own ship");
+      clientWarpPlayer(clientId, WarpAlias::OwnShip);
+    }
+  } else {
+    Maybe<String> defaultReviveWarp = assets->json("/universe_server.config").optString("defaultReviveWarp");
+    if (defaultReviveWarp) {
+      Logger::info("UniverseServer: Spawning player at default warp");
+      clientWarpPlayer(clientId, parseWarpAction(*defaultReviveWarp));
+    } else {
+      Logger::info("UniverseServer: Spawning player at ship");
+      clientWarpPlayer(clientId, WarpAlias::OwnShip);
+    }
+  }
+
+  clientFlyShip(clientId, clientContext->shipCoordinate().location(), clientContext->shipLocation());
+  Logger::info("UniverseServer: Client {} connected", clientContext->descriptiveName());
+
+  ReadLocker clientsReadLocker(m_clientsLock);
+  auto players = static_cast<uint16_t>(m_clients.size());
+  auto clients = m_clients.keys();
+  clientsReadLocker.unlock();
+
+  for (auto clientId : clients)
+    m_connectionServer->sendPackets(clientId, {make_shared<ServerInfoPacket>(players, static_cast<uint16_t>(m_maxPlayers))});
+
+  for (auto& p : m_scriptContexts)
+    p.second->invoke("acceptConnection", clientId);
+
+  m_pendingHandshakeFinalized++;
+  pendingConnection.state = PendingConnectionState::Dead;
+  return true;
 }
 
 void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostAddress> remoteAddress) {

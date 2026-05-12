@@ -10,6 +10,7 @@
 #include "StarSystemWorldServerThread.hpp"
 #include "StarUniverseConnection.hpp"
 #include "StarUniverseSettings.hpp"
+#include "StarVersioningDatabase.hpp"
 
 namespace Star {
 
@@ -43,6 +44,17 @@ public:
     size_t activeWorlds;
     size_t systemWorlds;
     size_t pendingConnectionAccepts;
+    size_t pendingHandshakes;
+    size_t pendingHandshakeAwaitProtocolRequest;
+    size_t pendingHandshakeSendProtocolResponse;
+    size_t pendingHandshakeAwaitClientConnect;
+    size_t pendingHandshakeAwaitHandshakeResponse;
+    size_t pendingHandshakeFinalizeClient;
+    size_t pendingHandshakeRejectAndFlush;
+    uint64_t pendingHandshakeAccepted;
+    uint64_t pendingHandshakeFinalized;
+    uint64_t pendingHandshakeRejected;
+    uint64_t pendingHandshakeTimedOut;
     size_t deadConnections;
     size_t pendingPlayerWarps;
     size_t queuedFlights;
@@ -60,6 +72,10 @@ public:
     uint64_t networkPacketsProcessed;
     uint64_t networkWakeups;
     uint64_t networkIdleTimedWaits;
+    uint64_t persistenceSnapshotsWritten;
+    uint64_t persistenceSnapshotBuildTimeMicroseconds;
+    uint64_t persistenceWriteTimeMicroseconds;
+    uint64_t persistenceFailures;
   };
 
   UniverseServer(String const& storageDir);
@@ -157,6 +173,42 @@ private:
 
   enum class TcpState : uint8_t { No, Yes, Fuck };
 
+  enum class PendingConnectionState : uint8_t {
+    AwaitProtocolRequest,
+    SendProtocolResponse,
+    AwaitClientConnect,
+    AwaitHandshakeResponse,
+    FinalizeClient,
+    RejectAndFlush,
+    Dead
+  };
+
+  struct PendingConnection {
+    PendingConnection(uint64_t pendingId, UniverseConnection connection, Maybe<HostAddress> remoteAddress)
+      : pendingId(pendingId), connection(std::move(connection)), remoteAddress(std::move(remoteAddress)) {}
+
+    uint64_t pendingId;
+    UniverseConnection connection;
+    Maybe<HostAddress> remoteAddress;
+    PendingConnectionState state = PendingConnectionState::AwaitProtocolRequest;
+    int64_t stateDeadline = 0;
+    bool protocolAllowed = false;
+    bool legacyClient = false;
+    bool useCompressionStream = false;
+    bool administrator = false;
+    bool challengeQueued = false;
+    ByteArray passwordSalt;
+    shared_ptr<ClientConnectPacket> clientConnect;
+    String accountString;
+    String remoteAddressString;
+    String failureReason;
+  };
+
+  struct ClientContextStorageSnapshot {
+    String file;
+    VersionedJson store;
+  };
+
   void processUniverseFlags();
   void sendPendingChat();
   void updateTeams();
@@ -204,6 +256,14 @@ private:
   void systemWorldUpdated(SystemWorldServerThread* systemWorldServer);
   void packetsReceived(UniverseConnectionServer* connectionServer, ConnectionId clientId, List<PacketPtr> packets);
 
+  void enqueuePendingConnection(UniverseConnection connection, Maybe<HostAddress> remoteAddress);
+  void processPendingConnections();
+  void advancePendingConnection(PendingConnection& pendingConnection);
+  void setPendingConnectionState(PendingConnection& pendingConnection, PendingConnectionState state);
+  String pendingConnectionStateName(PendingConnectionState state) const;
+  void failPendingConnection(PendingConnection& pendingConnection, String message, bool timedOut = false);
+  bool finalizePendingConnection(PendingConnection& pendingConnection);
+
   void acceptConnection(UniverseConnection connection, Maybe<HostAddress> remoteAddress);
 
   // Main lock and clients read lock must be held when calling
@@ -240,6 +300,9 @@ private:
   SystemWorldServerThreadPtr createSystemWorld(Vec3I const& location);
 
   bool instanceWorldStoredOrActive(InstanceWorldId const& worldId) const;
+
+  List<ClientContextStorageSnapshot> buildClientContextStorageSnapshots();
+  void writeClientContextStorageSnapshots(List<ClientContextStorageSnapshot> snapshots);
 
   // Signal that a world either failed to load, or died due to an exception,
   // kicks clients if that world is a ship world.  Main lock and clients read
@@ -278,6 +341,18 @@ private:
   Map<InstanceWorldId, pair<int64_t, int64_t>> m_tempWorldIndex;
   Map<Vec3I, SystemWorldServerThreadPtr> m_systemWorlds;
   UniverseConnectionServerPtr m_connectionServer;
+  bool m_usePendingConnectionStateMachine;
+  uint64_t m_nextPendingConnectionId;
+  uint64_t m_pendingHandshakeAccepted;
+  uint64_t m_pendingHandshakeFinalized;
+  uint64_t m_pendingHandshakeRejected;
+  uint64_t m_pendingHandshakeTimedOut;
+  LinkedList<shared_ptr<PendingConnection>> m_pendingConnections;
+
+  uint64_t m_persistenceSnapshotsWritten;
+  uint64_t m_persistenceSnapshotBuildTimeMicroseconds;
+  uint64_t m_persistenceWriteTimeMicroseconds;
+  uint64_t m_persistenceFailures;
 
   mutable RecursiveMutex m_connectionAcceptThreadsMutex;
   List<ThreadFunction<void>> m_connectionAcceptThreads;

@@ -23,5 +23,10 @@
     "op" : "add",
     "path" : "/networkWorkerThreads",
     "value": 0
+  },
+  {
+    "op" : "add",
+    "path" : "/usePendingConnectionStateMachine",
+    "value" : true
   }
 ]

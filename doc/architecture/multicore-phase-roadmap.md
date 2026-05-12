@@ -2,7 +2,7 @@
 
 This roadmap turns `multicore-engineering-plan.md` into an execution checklist. It keeps the same compatibility-first strategy: improve multicore use around the serial world simulation lane before attempting world-internal parallel simulation.
 
-The first implementation work has started in Phase 1 with worker-owned network connection lists and event wakeups in `source/game/StarUniverseConnection.*`.
+Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is now implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback. Phase 3 has started with client-context persistence snapshots and write timing diagnostics while keeping writes synchronous through a shared helper.
 
 The observability and crash-reporting work that supports these phases is tracked in `diagnostics-debugging-roadmap.md`. In short: build on the current `/debug` overlay, `LogMap`, `SpatialLogger`, `Logger`, stack traces, Lua profiles, and `/servernetstats` to provide F3-style status, server diagnostic commands, crash bundles, and structured logs.
 
@@ -180,6 +180,38 @@ Started work:
 - `/serverstatus` exposes a compact server diagnostics snapshot with uptime, player counts, active worlds, pending queue sizes, TCP state, and aggregate network counters.
 - Per-connection packet callback ordering remains owned by one worker.
 
+Remaining Phase 1 work:
+
+1. Add a many-idle-connections stress case that records `ownedConnections`, `connectionScans`, `wakeups`, `timedWaits`, and `idleTimedWaits` before and after a small active packet burst.
+2. Add packet-ordering tests with at least two clients on different workers and repeated small packet bursts beyond the existing local/TCP echo coverage.
+3. Expose byte counters if the packet socket layer can provide them without allocation-heavy sampling.
+4. Measure whether `sendPackets` should remain an eager nonblocking write path or become queue-only plus wakeup under high fan-out broadcast load.
+5. Keep the timed fallback at 1 ms until socket readiness has cross-platform coverage and failure-mode tests.
+6. Document the expected worker-stat interpretation so operators can tell a healthy idle server from lost-wakeup latency.
+
+Recommended Phase 1 implementation sequence:
+
+1. Add test scaffolding around `LocalPacketSocket::openPair()` and `UniverseConnectionServer` packet callbacks.
+2. Cover add, send, receive, remove, and shutdown with one worker, then with multiple workers.
+3. Add a many-idle-connections stress case that records `ownedConnections`, `connectionScans`, `wakeups`, `timedWaits`, and `idleTimedWaits` before and after a small active packet burst.
+4. Add a disconnect-during-callback case where the callback removes the active connection and then another packet is queued or attempted.
+5. Only after those pass, prototype `SocketPoller` behind a config flag or compile-time path while keeping the condition-variable fallback as the default.
+
+Phase 1 diagnostics to keep or add:
+
+- `/servernetstats` should show per-worker owned connections, last handled connections, scans, stale scans, packets, callbacks, average callback time, wakeups, timed waits, and idle waits.
+- `/serverstatus` should keep aggregate network worker counts and pending accept counts visible while Phase 2 is being developed.
+- A healthy worker-owned loop should have `connectionScans` scale with owned connections per worker, not worker count times total connections.
+- After a quiet period, a queued send should increase the owning worker's wakeup count and should not require waiting for a long polling timeout.
+
+Phase 1 go/no-go for Phase 2:
+
+- No known packet ordering regression with multiple clients.
+- No stale-worker-list growth after repeated add/remove/disconnect stress.
+- No deadlock in shutdown or `removeAllConnections` while workers are active.
+- Idle CPU and idle wait behavior are measured on at least one Windows run and one Linux or Wine/proton-equivalent server run if available.
+- Existing local single-player hosting and remote TCP multiplayer still connect, exchange packets, and disconnect cleanly.
+
 Acceptance criteria:
 
 - Packet ordering is unchanged per client.
@@ -221,17 +253,77 @@ Implementation tasks:
 5. Keep final client-context registration under the universe ownership path.
 6. Move slow failure flushes to a bounded path that cannot create unbounded detached work.
 
+Current blocking flow to preserve:
+
+1. `addClient` or the TCP accept callback creates one `Thread::invoke("UniverseServer::acceptConnection", ...)` task.
+2. The server blocks for `ProtocolRequestPacket`, replies with `ProtocolResponsePacket`, and enables the compression stream only after that response is sent.
+3. The server blocks for `ClientConnectPacket`, validates protocol, asset digest, ship species, account settings, password requirements, anonymous login settings, and bans.
+4. If the account is named, the server sends `HandshakeChallengePacket`, waits for `HandshakeResponsePacket`, and compares the salted hash.
+5. The server computes `NetCompatibilityRules`, handles duplicate UUID priority, enforces max players, loads client context, adds the connection to `UniverseConnectionServer`, sends `ConnectSuccessPacket`, and schedules the initial warp/fly state.
+6. Failure paths send `ConnectFailurePacket` where possible and retain the connection in `m_deadConnections` long enough to flush pending data.
+
+Proposed `PendingConnection` data:
+
+- stable pending id for diagnostics, separate from final `ConnectionId`
+- `UniverseConnection` and optional remote address
+- current state and state deadline in monotonic milliseconds
+- pending `ClientConnectPacket`, account string, administrator flag, password salt, legacy-client flag, compression-stream flag, and accumulated failure reason
+- cached remote address string for logging without recomputing it in every state
+
+State machine sketch:
+
+| State | Nonblocking work | Next state |
+| --- | --- | --- |
+| `AwaitProtocolRequest` | call `receive()`, read `ProtocolRequestPacket`, reject missing or bad packets at deadline | `SendProtocolResponse` or `RejectAndFlush` |
+| `SendProtocolResponse` | queue/write `ProtocolResponsePacket`; unsupported protocol sets `allowed=false` | `EnableCompression` or `RejectAndFlush` |
+| `EnableCompression` | enable zstd stream on `CompressedPacketSocket` after the protocol response has been flushed or at the same point as current behavior | `AwaitClientConnect` |
+| `AwaitClientConnect` | call `receive()`, read `ClientConnectPacket`, reject timeout or unexpected packet | `ValidateClientConnect` |
+| `ValidateClientConnect` | perform asset, species, account, anonymous, ban, max-version, and compatibility checks | `AwaitHandshakeResponse`, `FinalizeClient`, or `RejectAndFlush` |
+| `AwaitHandshakeResponse` | send challenge once, then call `receive()` until `HandshakeResponsePacket` or deadline | `FinalizeClient` or `RejectAndFlush` |
+| `FinalizeClient` | under universe/client ownership, allocate `ConnectionId`, load context, register RPC handlers, add to `UniverseConnectionServer`, send success packets, schedule initial world/system placement | `Dead` |
+| `RejectAndFlush` | queue `ConnectFailurePacket` or final protocol response, call nonblocking `send()`, keep the connection until sent or deadline | `Dead` |
+
+Recommended Phase 2 implementation sequence:
+
+1. Add `PendingConnection` and `PendingConnectionState` to `UniverseServer` while keeping the old `acceptConnection` path compiled and callable.
+2. Add `m_pendingConnections`, pending counters, and `processPendingConnections()` called from the universe loop near `reapConnections()`.
+3. Change TCP accept and `addClient` to enqueue pending connections behind a temporary config flag, leaving the thread-per-handshake path available as a fallback.
+4. Port protocol response handling first, including unsupported protocol failure and compression-mode negotiation.
+5. Port `ClientConnectPacket` validation without changing messages or packet order.
+6. Port password challenge and failure handling, preserving the same missing-account versus bad-password message.
+7. Port finalization as a narrow helper that runs on the universe thread and reuses existing duplicate UUID, max player, client context loading, system-world placement, revive warp, and script callback logic.
+8. Remove or disable the old accept-thread list only after local, TCP, legacy, OpenStarbound, password, timeout, and duplicate UUID tests pass.
+
+Phase 2 diagnostics to add:
+
+- pending handshake count by state in `/serverstatus`
+- accepted, finalized, rejected, and timed-out counters in `/serverstatus`
+- dropped-pending counters
+- oldest pending handshake age and maximum pending deadline overrun
+- failure reason buckets for protocol mismatch, timeout, asset mismatch, anonymous disabled, auth failed, ban, duplicate UUID, max players, and unexpected packet
+
+Phase 2 compatibility checkpoints:
+
+- Packet order stays byte-for-byte equivalent at the packet type level for success, password challenge, and common failure paths.
+- `CompressedPacketSocket::setCompressionStreamEnabled` happens at the same protocol boundary as today.
+- `m_connectionServer->addConnection` is still called only after successful authentication and final client context creation.
+- `m_clients`, `m_chatProcessor`, team RPC registration, system-world placement, intro/revive warp scheduling, `clientFlyShip`, `ServerInfoPacket`, and Lua `acceptConnection` callback remain on the universe ownership path.
+- Failure connections remain alive long enough for `ConnectFailurePacket` or disallowed `ProtocolResponsePacket` to flush without a detached thread.
+
 Acceptance criteria:
 
 - Login success, failure, timeout, password challenge, asset mismatch, and protocol mismatch behavior match current behavior.
 - Slow clients no longer reserve a full thread until timeout.
 - `maxPendingConnections` remains an upper bound for memory and work.
+- `/serverstatus` reports pending handshakes by state so connection bursts are visible.
 
 Primary risks:
 
 - Timing changes can expose assumptions in client connection code.
 - Compression stream enablement must occur at the same protocol point.
 - Duplicate UUID resolution still needs safe interaction with the clients map.
+- Universe-loop driven polling can add one main-loop interval of handshake latency unless the accept path wakes the server loop.
+- Moving finalization into smaller helpers can accidentally change login failure messages or script callback timing.
 
 Tests:
 
@@ -240,6 +332,10 @@ Tests:
 - Password success and failure.
 - Duplicate UUID as admin and non-admin.
 - Login burst with deliberately slow clients.
+- Protocol mismatch flushes a disallowed `ProtocolResponsePacket` before closing.
+- Asset mismatch tests cover both server refusal and client-side `allowAssetsMismatch` refusal.
+- Max-player refusal still allows administrator priority.
+- Local single-player connection still succeeds without requiring TCP-only code paths.
 
 ## Phase 3: Async Persistence And Snapshot Writes
 
@@ -250,8 +346,12 @@ Code areas:
 - `source/game/StarUniverseServer.cpp`
 - `source/game/StarServerClientContext.*`
 - `source/game/StarWorldServerThread.*`
+- `source/game/StarSystemWorldServerThread.*`
 - `source/game/StarWorldStorage.*`
+- `source/game/StarPlayerStorage.*`
+- `source/game/StarCelestialDatabase.*`
 - `source/core/StarBTreeDatabase.*`
+- `source/core/StarWorkerPool.*`
 
 Implementation tasks:
 
@@ -264,18 +364,66 @@ Implementation tasks:
 7. Preserve required shutdown and disconnect flush semantics.
 8. Add retry or fatal-failure policy before moving critical writes fully async.
 
+Current synchronous flow to preserve:
+
+1. `UniverseServer::doTriggeredStorage()` saves `universe.dat`, saves `tempworlds`, reads each active ship world through `WorldServerThread::readChunks()`, serializes `ServerClientContext::storeServerData()`, writes each `.clientcontext`, and then calls `CelestialMasterDatabase::cleanupAndCommit()`.
+2. `WorldServerThread::run()` periodically calls `sync()`, which locks the world and calls `WorldServer::sync()` / `WorldStorage::sync()`.
+3. `SystemWorldServerThread::run()` periodically calls `store()`, builds `SystemWorldServer::diskStore()`, and writes a versioned `System` JSON file.
+4. Ship-world chunk storage currently uses full chunk snapshots and `WorldStorage::applyWorldChunksUpdateToFile()` for incremental file updates.
+5. Shutdown and disconnect paths assume required client, ship, and world state is durable before ownership disappears.
+
+Proposed persistence job types:
+
+- `WriteUniverseSettingsJob`: versioned `UniverseSettings` JSON and target path
+- `WriteTempWorldIndexJob`: serialized temporary-world index and target path
+- `WriteClientContextJob`: player UUID, serialized `ClientContext`, target path, and optional ship-chunk update metadata
+- `WriteShipChunksJob`: shipworld path plus `WorldChunks` update or full snapshot
+- `WriteSystemWorldJob`: system location, versioned `System` JSON, and target path
+- `CommitCelestialDatabaseJob`: bounded request or completion marker for celestial commit work if it can be separated safely
+- `WorldStorageSyncJob`: pre-serialized sector/database updates only; never a live `WorldStorage*`
+
+Recommended Phase 3 implementation sequence:
+
+1. Add a small persistence result queue owned by `UniverseServer` with success, failure, path, job type, duration, and retry count.
+2. Add immutable snapshot structs for ship chunk updates, universe settings, temp worlds, and system-world JSON without changing any write path yet.
+3. Extend the current `ClientContextStorageSnapshot` path to cover universe settings and temp-world index snapshots through shared synchronous helpers.
+4. Add a bounded `PersistenceExecutor` using `WorkerPool` or a dedicated worker set with explicit queue-depth limits and shutdown `finish()` behavior.
+5. Move client context and universe settings writes to the executor first, because their snapshots are already plain versioned JSON.
+6. Move ship chunk update writes after proving that `readChunks()` or a future `readChunkUpdate()` happens only on the world owner boundary.
+7. Move system-world storage after adding result reporting and making `SystemWorldServerThread::store()` produce immutable JSON before enqueueing work.
+8. Keep world database `sync()` on the world thread until sector-level serialized updates can be produced without exposing live `WorldStorage` or `BTreeDatabase` to background workers.
+9. Add shutdown draining that waits for required jobs, reports failed optional jobs, and preserves the current durable-exit behavior.
+
+Phase 3 diagnostics to add:
+
+- persistence queue depth, oldest queued age, completed jobs, failed jobs, retry count, and bytes written by job type
+- time spent snapshotting on owner threads versus time spent writing on persistence workers
+- per-world sync duration and per-system store duration
+- celestial cleanup/commit duration and whether it ran on the universe path
+- crash-report context for pending required persistence jobs
+
+Phase 3 compatibility checkpoints:
+
+- Background workers receive only immutable data, never `ServerClientContextPtr`, `WorldServerThreadPtr`, `WorldStorage*`, or live entity/world pointers.
+- File formats and versioning labels stay unchanged: `UniverseSettings`, `ClientContext`, `System`, and world chunk database records must load through the existing versioning paths.
+- Write ordering that matters for shutdown and disconnect is either preserved or explicitly flushed before returning.
+- Failure handling is visible in logs and diagnostics; required state is not silently dropped when a worker throws.
+- Bounded queues apply backpressure instead of unbounded memory growth during save storms.
+
 Acceptance criteria:
 
 - Save files remain byte-compatible or semantically compatible with current versioned data.
 - Shutdown waits for required writes.
 - Simulated write failures are visible and do not silently drop required state.
 - Autosave and disconnect p95/p99 spikes improve or stay stable.
+- `/serverstatus` or a nearby diagnostics command reports persistence queue health.
 
 Primary risks:
 
 - Writing live mutable objects from background threads would introduce races.
 - Reordering critical writes can change crash-recovery behavior.
 - Unbounded persistence queues can trade tick spikes for memory growth.
+- Moving `BTreeDatabase::commit()` off-thread before serialized sector updates exist can corrupt ownership assumptions.
 
 Tests:
 
@@ -285,6 +433,8 @@ Tests:
 - Shutdown while writes are queued.
 - Simulated write failure.
 - Old save load after async-written state.
+- System-world flight and arrival state survives restart after async store.
+- Persistence queue saturation uses backpressure and does not drop required client context writes.
 
 ## Phase 4: Strict World Mailbox Ownership
 
@@ -307,17 +457,63 @@ Implementation tasks:
 6. Convert system-world mutation paths to equivalent commands.
 7. Add queue-depth and command-latency metrics.
 
+Current direct world-entry points to retire or wrap:
+
+- `WorldServerThread::spawnTargetValid()`
+- `WorldServerThread::addClient()`
+- `WorldServerThread::removeClient()`
+- `WorldServerThread::playerRevivePosition()`
+- `WorldServerThread::pullNewPlanetType()`
+- `WorldServerThread::executeAction()`
+- `WorldServerThread::unloadAll()`
+- `WorldServerThread::readChunks()`
+- `WorldServerThread::sync()`
+- RPC handlers in `ServerClientContext` that call `m_worldThread->executeAction(...)`
+
+Current system-world entry points to normalize:
+
+- `SystemWorldServerThread::addClient()` and `removeClient()` mutate live system-world state under a write lock.
+- `setClientDestination()`, `executeClientShipAction()`, and `pushIncomingPacket()` already queue work and should become the model for the remaining methods.
+- `clientShipLocation()`, `clientWarpAction()`, `clientSkyParameters()`, and `activeInstanceWorlds()` should read published snapshots instead of locking live state where possible.
+
+Recommended Phase 4 implementation sequence:
+
+1. Add a command queue and result queue to `WorldServerThread`, but initially keep the old public methods as synchronous wrappers around commands.
+2. Add published world snapshots for client ids, expiration state, new planet type, player revive position, and ship chunks where synchronous callers need read results.
+3. Convert `spawnTargetValid`, `playerRevivePosition`, and `readChunks` first because they are easy to compare against existing behavior.
+4. Convert `addClient` and `removeClient`, preserving the current outgoing packet return path and chat channel join/leave ordering in `UniverseServer::warpPlayers()` and `doDisconnection()`.
+5. Replace `executeAction()` call sites with named commands for weather, flying sky start/stop, container item RPC, universe flag RPC, ship properties, admin actions, and scripted world actions.
+6. Move `sync()` and `unloadAll()` to owner-thread commands with completion results so shutdown and storage phases can wait deliberately.
+7. Bring `SystemWorldServerThread` into the same model by moving add/remove client ship into queued commands and publishing read snapshots after each update.
+8. Remove the old direct-entry wrappers only after command latency, queue depth, and error propagation are visible in diagnostics.
+
+Phase 4 diagnostics to add:
+
+- per-world command queue depth, oldest command age, processed command count, and failed command count
+- time waiting for command replies from the universe thread
+- number of remaining direct `executeAction()` calls by category during rollout
+- world-thread update time split into command drain, packet handling, simulation, messages, outgoing packet collection, and update callbacks
+
+Phase 4 compatibility checkpoints:
+
+- Commands that return packets must preserve packet order relative to client context updates and warp result packets.
+- Reply-waiting from `UniverseServer` must not happen while holding locks that the world command needs to complete.
+- Client world and system-world references in `ServerClientContext` remain consistent while add/remove commands are in flight.
+- Lua/admin behavior currently routed through `executeAction()` must receive purpose-built commands before the generic path is removed.
+
 Acceptance criteria:
 
 - World state mutation from outside the owner thread is removed or explicitly isolated.
 - Common warps, beam up/down, ship travel, disconnect, and idle unload behave the same.
 - Command queueing does not introduce unbounded one-tick delays in user-visible flows.
+- Remaining direct world-lock entry points are documented and temporary.
 
 Primary risks:
 
 - Moving work to tick boundaries can shift behavior by a tick.
 - Generic `executeAction()` may hide script/admin behaviors that need purpose-built commands.
 - Blocking promises can recreate lock coupling if used from the wrong thread.
+- Synchronous compatibility wrappers can hide deadlocks unless lock ordering is tested aggressively.
 
 Tests:
 
@@ -326,6 +522,8 @@ Tests:
 - Idle world shutdown.
 - Admin commands that touch world/player state.
 - Entity messages with replies.
+- Container item RPC and universe flag RPC still affect the intended world state.
+- Command queue saturation and world-thread exception propagation.
 
 ## Phase 5: Snapshot-Based Post-Tick Parallel Work
 
@@ -347,17 +545,51 @@ Implementation tasks:
 5. Compare packet streams before and after for deterministic scenarios.
 6. Keep entity, Lua, liquid, wiring, and direct tile mutation serial by default.
 
+Current serial work to split carefully:
+
+- `WorldServer::handleIncomingPackets()` applies `EntityUpdateSetPacket` by scanning all entities instead of iterating packet delta keys.
+- `WorldServer::update()` rebuilds per-client monitoring regions for weather/liquid, sector signaling, and packet generation.
+- `WorldServer::queueUpdatePackets()` serializes tile updates, liquid updates, entity creates, entity deltas, and destroy packets for each client.
+- `m_netStateCache` already caches repeated entity delta serialization within one tick, but first-observation entity create payloads are not cached the same way.
+- `WorldStorage::generateQueue()` can sort queued sectors using a comparator that recomputes nearest-player distance repeatedly.
+
+Recommended Phase 5 implementation sequence:
+
+1. First do non-parallel algorithmic cleanups that preserve behavior: iterate inbound entity deltas by packet keys, compute monitoring regions once per client per tick, and precompute generation queue priorities before sorting.
+2. Add a `WorldTickSnapshot` containing current step/time, per-client monitoring regions, monitored entity ids, client net rules, pending tile/liquid/damage update lists, and immutable entity serialization inputs.
+3. Add create-packet and first-update serialization caches keyed by entity id and `NetCompatibilityRules`, cleared with `m_netStateCache`.
+4. Move packet preparation into a post-tick job for read-only snapshot data, then merge produced packet lists back on the world thread in the same per-client order.
+5. Move metrics and persistence snapshot serialization next, because they can consume immutable summaries and do not affect gameplay state.
+6. Consider a world-local job scheduler only after the shared `WorkerPool` queue behavior is measured under server load; overloaded post-tick jobs must not stall the next authoritative update indefinitely.
+7. Keep liquid, falling blocks, wiring, entity update, and Lua update serial until Phase 6 experiments prove deterministic boundaries.
+
+Phase 5 diagnostics to add:
+
+- per-world post-tick job queue depth, job duration, merge duration, and missed-deadline count
+- packet preparation time split by tile updates, entity creates, entity deltas, monitored entity collection, and compression/serialization where measurable
+- cache hit/miss counts for entity delta, entity create, and net-store payload caches
+- monitoring-region build count per tick to prove repeated recomputation has been removed
+
+Phase 5 compatibility checkpoints:
+
+- Per-client packet ordering and packet type sequence remain equivalent for deterministic scenarios.
+- Jobs read only frozen snapshot data; they do not touch `EntityMap`, `WorldStorage`, Lua contexts, live entities, or mutable client info.
+- Generated packet bytes are compared against the serial path for fixed seeds and controlled worlds before enabling by default.
+- If a job misses its merge deadline, the fallback is a serial packet preparation path or a bounded one-tick defer that is explicitly measured.
+
 Acceptance criteria:
 
 - Packet output remains ordered and equivalent.
 - Snapshot jobs never read live mutable world state.
 - World tick p95/p99 improves in packet-heavy or save-heavy scenarios.
+- The serial packet preparation path remains available behind a config flag during rollout.
 
 Primary risks:
 
 - Snapshot creation can cost more than the parallel work saves.
 - Job completion waits can stall the next tick if queues are overloaded.
 - Packet stream equivalence can be difficult when timing-dependent state exists.
+- Capturing too much world state can trade CPU wins for memory pressure.
 
 Tests:
 
@@ -365,6 +597,8 @@ Tests:
 - Multiple clients entering and leaving monitored regions.
 - Save-heavy world benchmark.
 - Deterministic packet comparison for fixed scenarios.
+- Entity create burst where many clients observe the same entities in the same tick.
+- World generation queue with many sectors and multiple players.
 
 ## Phase 6: Experimental World-Internal Parallelism
 
@@ -387,18 +621,43 @@ Implementation tasks:
 5. Add per-world metrics comparing serial and parallel duration.
 6. Never parallelize entity or Lua updates by default until mod-visible ordering rules are formally defined.
 
+Experiment order and guardrails:
+
+1. Storage generation planning: precompute sector priorities and generation candidates outside the mutation step, then apply generation serially.
+2. Packet preparation: keep using the Phase 5 snapshot path and only broaden worker count or batching strategy.
+3. Liquid processing: partition active cells by non-overlapping regions, keep the current active-cell ordering inside each region, and compare serial/parallel output before enabling.
+4. Falling blocks: process independent regions only when no pending positions can influence neighboring regions during the same update.
+5. Wiring: build disconnected network components, mark dirty components on topology/output changes, and evaluate unchanged components through the existing serial fallback until dirty tracking is proven.
+6. Entity/Lua grouping: research only; do not enable by default unless a formal dependency and mod-visibility model exists.
+
+Phase 6 diagnostics to add:
+
+- per-experiment enabled flag, serial duration, parallel duration, merge duration, and fallback count
+- divergence detector counters for serial-versus-parallel comparison runs
+- per-subsystem work item counts: liquid active cells, falling-block pending positions, wiring networks, generation sectors, packet entities
+- config surface that can disable each experiment independently without changing save or packet formats
+
+Phase 6 compatibility checkpoints:
+
+- Experimental flags are off by default in release configs.
+- Serial fallback can be selected at runtime or startup for every experiment.
+- Parallel liquid, falling, and wiring experiments must prove no boundary artifacts in fixed-seed differential tests before broader testing.
+- Mods must continue to observe the same Lua/entity order in default mode.
+
 Acceptance criteria:
 
 - Experimental flags are off by default.
 - Serial fallback remains available and tested.
 - Lua-visible order does not change in default mode.
 - Any save, packet, or simulation divergence is intentional and documented.
+- Each experiment has enough diagnostics to decide whether it should graduate, stay hidden, or be removed.
 
 Primary risks:
 
 - Liquid, wiring, entity, and Lua systems may have hidden order dependencies.
 - Region boundaries can create edge artifacts.
 - Mods can depend on behavior that looks accidental from engine code.
+- Comparing serial and parallel worlds can be noisy unless seeds, client inputs, and timing are controlled.
 
 Tests:
 
@@ -407,6 +666,28 @@ Tests:
 - Wiring-heavy worlds.
 - Liquid-heavy worlds.
 - Modded smoke tests.
+
+## Remaining Codebase Work Order
+
+This section is the practical backlog for the rest of the codebase after Phase 1/2 planning. It keeps low-risk, compatibility-preserving changes ahead of deeper concurrency work.
+
+1. Finish Phase 0 diagnostics so every later phase has universe, world, network, persistence, and packet-preparation timing.
+2. Complete Phase 1 worker tests and run idle/high-connection profiling before changing socket readiness behavior.
+3. Implement Phase 2 behind a fallback flag and keep packet-order compatibility tests close to the handshake code.
+4. Land low-risk world hot-path cleanups before broad parallelism: iterate `EntityUpdateSetPacket` deltas by packet keys, cache per-client monitoring regions once per tick, precompute world-generation sector priorities, add entity-create serialization caches parallel to `m_netStateCache`, batch tile/liquid fan-out by subscribed sector where practical, and add shared delta caching for `SystemWorldServer` ship/object replication.
+5. Build Phase 3 persistence snapshots and executor with strict immutable-data rules.
+6. Convert Phase 4 world and system-world entry points to typed commands while keeping synchronous compatibility wrappers during rollout.
+7. Use Phase 5 snapshots for packet preparation, metrics, and persistence serialization before trying subsystem parallelism.
+8. Keep Phase 6 experiments isolated, off by default, and backed by differential tests.
+9. Revisit lower-level primitive cleanup after ownership boundaries are flatter: recursive mutex reduction, spinlock replacement, and `WorkerPool` backpressure improvements.
+10. Update `diagnostics-debugging-roadmap.md` whenever a phase adds counters that should appear in overlays, `/serverstatus`, crash bundles, or structured logs.
+
+Codebase-wide acceptance gates:
+
+- Existing save files, world files, player files, packet formats, and mod-visible Lua/entity ordering remain compatible by default.
+- Every phase has a fallback path until tests and profiling prove the new path is stable.
+- Performance claims are tied to measurements: p50/p95/p99 tick times, idle CPU, context switches, queue depths, and packet latency.
+- Crash and diagnostics output includes enough context to debug the new queues, workers, and ownership boundaries.
 
 ## First Optimization Verification Plan
 
