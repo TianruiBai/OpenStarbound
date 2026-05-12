@@ -314,7 +314,7 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.networkPacketsProcessed,
       status.networkWakeups,
       status.networkIdleTimedWaits));
-    lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
+  lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,
       status.persistenceOldestPendingAgeMilliseconds,
@@ -328,6 +328,13 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.persistenceWriteRetries,
       status.persistenceSynchronousFallbacks,
       status.persistenceQueueFullFallbacks));
+  StringList timingParts;
+  for (auto const& timing : status.universeTimings) {
+    if (timing.samples != 0)
+      timingParts.append(strf("{}={}/{}/{}/{}/{}", timing.name, timing.averageMicroseconds, timing.p50Microseconds, timing.p95Microseconds, timing.p99Microseconds, timing.maxMicroseconds));
+  }
+  if (!timingParts.empty())
+    lines.append(strf("Universe timings us avg/p50/p95/p99/max: {}", timingParts.join(", ")));
 
   return lines.join("\n");
 }

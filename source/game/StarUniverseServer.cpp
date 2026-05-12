@@ -23,6 +23,23 @@
 
 namespace Star {
 
+namespace {
+
+Json readUniverseServerConfig() {
+  auto& root = Root::singleton();
+  auto universeConfig = root.assets()->json("/universe_server.config");
+
+  auto configOverrides = root.configuration()->get("universeServerConfigOverrides", {});
+  if (configOverrides.isType(Json::Type::Object)) {
+    for (auto const& pair : configOverrides.iterateObject())
+      universeConfig = universeConfig.set(pair.first, pair.second);
+  }
+
+  return universeConfig;
+}
+
+}
+
 UniverseServer::UniverseServer(String const& storageDir)
     : Thread("UniverseServer"),
       m_workerPool("UniverseServerWorkerPool"),
@@ -83,6 +100,7 @@ UniverseServer::UniverseServer(String const& storageDir)
   m_pendingHandshakeFinalized = 0;
   m_pendingHandshakeRejected = 0;
   m_pendingHandshakeTimedOut = 0;
+  m_universeTimings.resize(static_cast<size_t>(UniverseTimingPhase::Count));
   m_useAsyncPersistence = false;
   m_persistenceMaxQueuedSnapshots = 0;
   m_persistenceMaxWriteRetries = 0;
@@ -100,7 +118,7 @@ UniverseServer::UniverseServer(String const& storageDir)
 
   m_maxPlayers = configuration->get("maxPlayers").toUInt();
 
-  auto universeConfig = assets->json("/universe_server.config");
+  auto universeConfig = readUniverseServerConfig();
   m_usePendingConnectionStateMachine = universeConfig.getBool("usePendingConnectionStateMachine", true);
   auto persistenceWorkerThreads = universeConfig.optUInt("persistenceWorkerThreads").value(1);
   m_useAsyncPersistence = universeConfig.getBool("useAsyncPersistence", false) && persistenceWorkerThreads > 0;
@@ -335,6 +353,14 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
     status.persistenceQueueFullFallbacks = m_persistenceQueueFullFallbacks;
   }
 
+  {
+    MutexLocker timingLocker(m_universeTimingsMutex);
+    for (size_t i = 0; i < m_universeTimings.size(); ++i) {
+      auto phase = static_cast<UniverseTimingPhase>(i);
+      status.universeTimings.append(timingStatus(universeTimingPhaseName(phase), m_universeTimings[i]));
+    }
+  }
+
   auto workerStats = connectionWorkerStats();
   status.networkWorkers = workerStats.size();
   for (auto const& worker : workerStats) {
@@ -349,6 +375,106 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
 
 List<UniverseConnectionServer::NetworkWorkerStats> UniverseServer::connectionWorkerStats() const {
   return m_connectionServer->workerStats();
+}
+
+char const* UniverseServer::universeTimingPhaseName(UniverseTimingPhase phase) {
+  switch (phase) {
+    case UniverseTimingPhase::Loop:
+      return "loop";
+    case UniverseTimingPhase::UpdateLua:
+      return "lua";
+    case UniverseTimingPhase::UniverseFlags:
+      return "flags";
+    case UniverseTimingPhase::TimedBans:
+      return "bans";
+    case UniverseTimingPhase::SendPendingChat:
+      return "sendChat";
+    case UniverseTimingPhase::Teams:
+      return "teams";
+    case UniverseTimingPhase::Ships:
+      return "ships";
+    case UniverseTimingPhase::ClockUpdates:
+      return "clocks";
+    case UniverseTimingPhase::KickErroredPlayers:
+      return "kicks";
+    case UniverseTimingPhase::ReapConnections:
+      return "connections";
+    case UniverseTimingPhase::PendingHandshakes:
+      return "handshakes";
+    case UniverseTimingPhase::PlanetTypeChanges:
+      return "planetTypes";
+    case UniverseTimingPhase::Warps:
+      return "warps";
+    case UniverseTimingPhase::ShipFlights:
+      return "flights";
+    case UniverseTimingPhase::ShipArrivals:
+      return "arrivals";
+    case UniverseTimingPhase::Chat:
+      return "chat";
+    case UniverseTimingPhase::ClientContextUpdates:
+      return "clientContexts";
+    case UniverseTimingPhase::CelestialRequests:
+      return "celestial";
+    case UniverseTimingPhase::BrokenWorlds:
+      return "brokenWorlds";
+    case UniverseTimingPhase::WorldMessages:
+      return "worldMessages";
+    case UniverseTimingPhase::InactiveWorlds:
+      return "inactiveWorlds";
+    case UniverseTimingPhase::PersistenceCompletions:
+      return "persistence";
+    case UniverseTimingPhase::TriggeredStorage:
+      return "storage";
+    case UniverseTimingPhase::Count:
+      return "count";
+  }
+
+  return "unknown";
+}
+
+UniverseServer::ServerStatus::TimingStatus UniverseServer::timingStatus(char const* name, TimingAccumulator const& timing) {
+  ServerStatus::TimingStatus status{};
+  status.name = name;
+  status.samples = timing.samples;
+  status.totalMicroseconds = timing.totalMicroseconds;
+  status.averageMicroseconds = timing.samples ? timing.totalMicroseconds / timing.samples : 0;
+  status.latestMicroseconds = timing.latestMicroseconds;
+  status.maxMicroseconds = timing.maxMicroseconds;
+
+  auto samples = timing.recentSamples;
+  if (!samples.empty()) {
+    samples.sort();
+    auto percentile = [&samples](size_t percent) {
+      return samples[(samples.size() - 1) * percent / 100];
+    };
+    status.p50Microseconds = percentile(50);
+    status.p95Microseconds = percentile(95);
+    status.p99Microseconds = percentile(99);
+  }
+
+  return status;
+}
+
+void UniverseServer::recordUniverseTiming(UniverseTimingPhase phase, int64_t durationMicroseconds) {
+  auto index = static_cast<size_t>(phase);
+  if (durationMicroseconds < 0 || index >= m_universeTimings.size())
+    return;
+
+  auto duration = static_cast<uint64_t>(durationMicroseconds);
+  MutexLocker timingLocker(m_universeTimingsMutex);
+  auto& timing = m_universeTimings[index];
+  timing.samples++;
+  timing.totalMicroseconds += duration;
+  timing.latestMicroseconds = duration;
+  if (duration > timing.maxMicroseconds)
+    timing.maxMicroseconds = duration;
+
+  if (timing.recentSamples.size() < UniverseTimingSampleLimit)
+    timing.recentSamples.append(duration);
+  else {
+    timing.recentSamples[timing.recentSampleIndex] = duration;
+    timing.recentSampleIndex = (timing.recentSampleIndex + 1) % UniverseTimingSampleLimit;
+  }
 }
 
 bool UniverseServer::isConnectedClient(ConnectionId clientId) const {
@@ -739,32 +865,40 @@ void UniverseServer::run() {
 
     LogMap::set("universe_time", m_universeClock->time());
 
+    auto loopStart = Time::monotonicMicroseconds();
+    auto timePhase = [this](UniverseTimingPhase phase, auto&& action) {
+      auto phaseStart = Time::monotonicMicroseconds();
+      action();
+      recordUniverseTiming(phase, Time::monotonicMicroseconds() - phaseStart);
+    };
+
     try {
-      updateLua();
-      processUniverseFlags();
-      removeTimedBan();
-      sendPendingChat();
-      updateTeams();
-      updateShips();
-      sendClockUpdates();
-      kickErroredPlayers();
-      reapConnections();
-      processPendingConnections();
-      processPlanetTypeChanges();
-      warpPlayers();
-      flyShips();
-      arriveShips();
-      processChat();
-      sendClientContextUpdates();
-      respondToCelestialRequests();
-      clearBrokenWorlds();
-      handleWorldMessages();
-      shutdownInactiveWorlds();
-      processPendingPersistenceWrites();
-      doTriggeredStorage();
+      timePhase(UniverseTimingPhase::UpdateLua, [&]() { updateLua(); });
+      timePhase(UniverseTimingPhase::UniverseFlags, [&]() { processUniverseFlags(); });
+      timePhase(UniverseTimingPhase::TimedBans, [&]() { removeTimedBan(); });
+      timePhase(UniverseTimingPhase::SendPendingChat, [&]() { sendPendingChat(); });
+      timePhase(UniverseTimingPhase::Teams, [&]() { updateTeams(); });
+      timePhase(UniverseTimingPhase::Ships, [&]() { updateShips(); });
+      timePhase(UniverseTimingPhase::ClockUpdates, [&]() { sendClockUpdates(); });
+      timePhase(UniverseTimingPhase::KickErroredPlayers, [&]() { kickErroredPlayers(); });
+      timePhase(UniverseTimingPhase::ReapConnections, [&]() { reapConnections(); });
+      timePhase(UniverseTimingPhase::PendingHandshakes, [&]() { processPendingConnections(); });
+      timePhase(UniverseTimingPhase::PlanetTypeChanges, [&]() { processPlanetTypeChanges(); });
+      timePhase(UniverseTimingPhase::Warps, [&]() { warpPlayers(); });
+      timePhase(UniverseTimingPhase::ShipFlights, [&]() { flyShips(); });
+      timePhase(UniverseTimingPhase::ShipArrivals, [&]() { arriveShips(); });
+      timePhase(UniverseTimingPhase::Chat, [&]() { processChat(); });
+      timePhase(UniverseTimingPhase::ClientContextUpdates, [&]() { sendClientContextUpdates(); });
+      timePhase(UniverseTimingPhase::CelestialRequests, [&]() { respondToCelestialRequests(); });
+      timePhase(UniverseTimingPhase::BrokenWorlds, [&]() { clearBrokenWorlds(); });
+      timePhase(UniverseTimingPhase::WorldMessages, [&]() { handleWorldMessages(); });
+      timePhase(UniverseTimingPhase::InactiveWorlds, [&]() { shutdownInactiveWorlds(); });
+      timePhase(UniverseTimingPhase::PersistenceCompletions, [&]() { processPendingPersistenceWrites(); });
+      timePhase(UniverseTimingPhase::TriggeredStorage, [&]() { doTriggeredStorage(); });
     } catch (std::exception const& e) {
       Logger::error("UniverseServer: exception caught: {}", outputException(e, true));
     }
+    recordUniverseTiming(UniverseTimingPhase::Loop, Time::monotonicMicroseconds() - loopStart);
 
     Thread::sleep(mainWakeupInterval);
   }

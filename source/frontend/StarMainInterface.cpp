@@ -20,6 +20,7 @@
 #include "StarPaneManager.hpp"
 #include "StarClientCommandProcessor.hpp"
 #include "StarChat.hpp"
+#include "StarVersion.hpp"
 #include "StarOptionsMenu.hpp"
 #include "StarActionBar.hpp"
 #include "StarWireInterface.hpp"
@@ -1056,7 +1057,7 @@ PanePtr MainInterface::createEscapeDialog() {
     });
 
   escapeDialogReader.construct(assets->json("/interface.config:escapeDialog"), escapeDialogPtr);
-  escapeDialog->fetchChild<LabelWidget>("lblversion")->setText(strf("OpenStarbound - {} ({})", StarVersionString, StarArchitectureString));
+  escapeDialog->fetchChild<LabelWidget>("lblversion")->setText(strf("OpenStarbound {} for Starbound {} ({})", OpenStarVersionString, StarVersionString, StarArchitectureString));
   return escapeDialog;
 }
 

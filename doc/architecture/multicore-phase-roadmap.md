@@ -2,9 +2,17 @@
 
 This roadmap turns `multicore-engineering-plan.md` into an execution checklist. It keeps the same compatibility-first strategy: improve multicore use around the serial world simulation lane before attempting world-internal parallel simulation.
 
-Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is now implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback. Phase 3 has started with immutable versioned persistence snapshots, synchronous shared write helpers, and an opt-in bounded async persistence worker path behind `useAsyncPersistence`.
+Phase 0A is implemented. Phase 0 has started with bounded universe-loop phase timing in `/serverstatus`, while world-thread and benchmark timing remain pending. Phase 1 worker-owned network connection lists and event wakeups are implemented in `source/game/StarUniverseConnection.*` and covered by focused `UniverseConnectionServer` tests. Phase 2 is implemented behind `usePendingConnectionStateMachine`, preserving the old thread-per-handshake path as a fallback, and now has focused state-machine success/protocol-rejection coverage. Phase 3 is partially implemented with immutable versioned persistence snapshots, synchronous shared write helpers, bounded opt-in async JSON persistence behind `useAsyncPersistence`, explicit system-world and ship-chunk snapshot boundaries, and focused async completion / queue-pressure fallback tests.
 
 The observability and crash-reporting work that supports these phases is tracked in `diagnostics-debugging-roadmap.md`. In short: build on the current `/debug` overlay, `LogMap`, `SpatialLogger`, `Logger`, stack traces, Lua profiles, and `/servernetstats` to provide F3-style status, server diagnostic commands, crash bundles, and structured logs.
+
+## Current Status After Review
+
+- Phase 0A render-rate decoupling and the user-facing VSync / max-FPS controls are implemented and wired through the client configuration, graphics menu, and debug HUD.
+- Phase 0 remains incomplete, but bounded universe-loop phase timing now reports average, p50, p95, p99, and max microseconds through `/serverstatus`; world-thread timing, world subphase timing, and the `world_benchmark` measurement path described below are still roadmap work.
+- Phase 1 is implemented and validated by focused worker-ownership, many-idle-connection, wakeup, remove-during-callback, and cross-worker packet-ordering tests, but broader TCP stress and readiness-abstraction follow-up items are still open.
+- Phase 2 is implemented and live behind its fallback flag. Focused tests cover local state-machine success and protocol mismatch rejection; timeout, password, duplicate UUID, asset mismatch, max-player, and login-burst matrix cases remain open.
+- Phase 3 has its current compatibility-first slice in place: immutable universe/client/system snapshots, bounded async JSON persistence, synchronous fallback on queue pressure, retry accounting, shutdown draining, and server diagnostics. Focused tests now cover async triggered-storage completion and queue-full synchronous fallback; save/load depth, failure injection, and broader latency validation remain open before default enablement.
 
 ## Research Notes
 
@@ -327,6 +335,7 @@ Primary risks:
 
 Tests:
 
+- Covered by focused tests: local state-machine success and protocol mismatch rejection.
 - Legacy and OpenStarbound handshakes.
 - Timeout in every pending state.
 - Password success and failure.
@@ -429,6 +438,8 @@ Acceptance criteria:
 - Simulated write failures are visible and do not silently drop required state.
 - Autosave and disconnect p95/p99 spikes improve or stay stable.
 - `/serverstatus` or a nearby diagnostics command reports persistence queue health.
+
+Focused tests now cover opt-in async triggered-storage completion, creation of `universe.dat` and `tempworlds.index`, and bounded-queue synchronous fallback when the async queue is full.
 
 Primary risks:
 

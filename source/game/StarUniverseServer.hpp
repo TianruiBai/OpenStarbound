@@ -33,6 +33,18 @@ STAR_EXCEPTION(UniverseServerException, StarException);
 class UniverseServer : public Thread {
 public:
   struct ServerStatus {
+    struct TimingStatus {
+      String name;
+      uint64_t samples;
+      uint64_t totalMicroseconds;
+      uint64_t averageMicroseconds;
+      uint64_t latestMicroseconds;
+      uint64_t maxMicroseconds;
+      uint64_t p50Microseconds;
+      uint64_t p95Microseconds;
+      uint64_t p99Microseconds;
+    };
+
     double uptime;
     bool listeningTcp;
     bool tcpListenFailed;
@@ -85,6 +97,7 @@ public:
     uint64_t persistenceWriteRetries;
     uint64_t persistenceSynchronousFallbacks;
     uint64_t persistenceQueueFullFallbacks;
+    List<TimingStatus> universeTimings;
   };
 
   UniverseServer(String const& storageDir);
@@ -179,6 +192,44 @@ private:
     Maybe<HostAddress> ip;
     Maybe<Uuid> uuid;
   };
+
+  enum class UniverseTimingPhase : uint8_t {
+    Loop,
+    UpdateLua,
+    UniverseFlags,
+    TimedBans,
+    SendPendingChat,
+    Teams,
+    Ships,
+    ClockUpdates,
+    KickErroredPlayers,
+    ReapConnections,
+    PendingHandshakes,
+    PlanetTypeChanges,
+    Warps,
+    ShipFlights,
+    ShipArrivals,
+    Chat,
+    ClientContextUpdates,
+    CelestialRequests,
+    BrokenWorlds,
+    WorldMessages,
+    InactiveWorlds,
+    PersistenceCompletions,
+    TriggeredStorage,
+    Count
+  };
+
+  struct TimingAccumulator {
+    uint64_t samples = 0;
+    uint64_t totalMicroseconds = 0;
+    uint64_t maxMicroseconds = 0;
+    uint64_t latestMicroseconds = 0;
+    List<uint64_t> recentSamples;
+    size_t recentSampleIndex = 0;
+  };
+
+  static size_t constexpr UniverseTimingSampleLimit = 256;
 
   enum class TcpState : uint8_t { No, Yes, Fuck };
 
@@ -342,6 +393,10 @@ private:
   void finishPendingPersistenceWrites();
   void cleanupAndCommitCelestialDatabase();
 
+  static char const* universeTimingPhaseName(UniverseTimingPhase phase);
+  static ServerStatus::TimingStatus timingStatus(char const* name, TimingAccumulator const& timing);
+  void recordUniverseTiming(UniverseTimingPhase phase, int64_t durationMicroseconds);
+
   // Signal that a world either failed to load, or died due to an exception,
   // kicks clients if that world is a ship world.  Main lock and clients read
   // lock must be held when calling.
@@ -352,6 +407,8 @@ private:
   SkyParameters celestialSkyParameters(CelestialCoordinate const& coordinate) const;
 
   mutable RecursiveMutex m_mainLock;
+  mutable Mutex m_universeTimingsMutex;
+  List<TimingAccumulator> m_universeTimings;
 
   double m_startTime;
   String m_storageDirectory;
