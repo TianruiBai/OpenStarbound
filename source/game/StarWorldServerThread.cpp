@@ -447,13 +447,13 @@ void WorldServerThread::stopFlyingSkyAt(SkyParameters const& destination) {
   }
 }
 
-WorldServerThread::ShipUpgradeApplicationResult WorldServerThread::applyShipUpgrades(String fallbackSpecies, ShipUpgrades shipUpgrades, StringMap<StringList> speciesShips) {
+WorldServerThread::ShipUpgradeApplicationResult WorldServerThread::applyShipUpgrades(String fallbackSpecies, ShipUpgrades shipUpgrades, StringMap<StringList> const& speciesShips) {
   ShipUpgradeApplicationResult result;
   result.species = fallbackSpecies;
   result.shipUpgrades = shipUpgrades;
 
   try {
-    executeCommand("applyShipUpgrades", [fallbackSpecies = std::move(fallbackSpecies), shipUpgrades = std::move(shipUpgrades), speciesShips = std::move(speciesShips), &result](WorldServerThread*, WorldServer* shipWorld) mutable {
+    executeCommand("applyShipUpgrades", [fallbackSpecies = std::move(fallbackSpecies), shipUpgrades = std::move(shipUpgrades), &speciesShips, &result](WorldServerThread*, WorldServer* shipWorld) mutable {
         String species;
         Json jSpecies = shipWorld->getProperty("ship.species");
         if (jSpecies.isType(Json::Type::String))
