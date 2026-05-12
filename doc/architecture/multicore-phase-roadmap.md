@@ -388,15 +388,19 @@ Started work:
 - `UniverseServer::doTriggeredStorage()` builds immutable snapshots first, then persists them through a shared helper before celestial cleanup/commit.
 - `useAsyncPersistence` enables a dedicated `UniverseServerPersistencePool`; it is disabled by default while the path is validated.
 - `maxQueuedPersistenceSnapshots` bounds queued snapshot count. When the queue is full, the server falls back to synchronous writes instead of dropping required state.
+- `maxPersistenceWriteRetries` adds opt-in bounded write retries; it defaults to `0` to preserve current write behavior while reporting retry counts when enabled.
+- `ServerClientContext::ShipChunksSnapshot` now captures immutable full-chunk and delta data at the `readChunks()` boundary before the context is mutated, while keeping the existing ship-update path unchanged.
+- `SystemWorldServerThread::store()` now has a system-world `System` JSON snapshot boundary: it serializes immutable versioned data first, then writes that snapshot synchronously.
+- `UniverseServer::doTriggeredStorage()` now runs celestial cleanup/commit outside the universe locks, and `/serverstatus` reports accumulated celestial commit time and count so the remaining synchronous hot path stays visible.
 - Shutdown drains pending async persistence writes before final synchronous universe and temp-world index saves, preventing older queued autosaves from overwriting shutdown state.
-- `/serverstatus` reports pending persistence batches, pending snapshots, completed batches, written snapshots, build/write time, failures, synchronous fallbacks, and queue-full fallbacks.
+- `/serverstatus` reports pending persistence batches, pending snapshots, oldest pending age, completed batches, written snapshots, build/write time, failures, retry attempts, synchronous fallbacks, and queue-full fallbacks.
 
 Recommended Phase 3 implementation sequence:
 
-1. Add retry count and oldest-pending-age tracking to the current persistence result handling.
-2. Add immutable snapshot structs for ship chunk updates and system-world JSON without changing those write paths yet.
-3. Extend the current versioned snapshot path to include any remaining universe-owned metadata writes that can be serialized before dispatch.
-4. Validate `useAsyncPersistence` under save/load and shutdown tests before enabling it by default.
+1. Extend the current versioned snapshot path to include any remaining universe-owned metadata writes that can be serialized before dispatch.
+2. Validate `useAsyncPersistence` under save/load and shutdown tests before enabling it by default.
+3. Add failure-injection or filesystem-denial tests that prove retries, failures, and queue-full fallbacks are reported.
+4. Decide whether ship chunk snapshots should remain a transport-only boundary or gain a server-side write path for local-host durability work.
 5. Move client context and universe settings writes to the executor first, because their snapshots are already plain versioned JSON.
 6. Move ship chunk update writes after proving that `readChunks()` or a future `readChunkUpdate()` happens only on the world owner boundary.
 7. Move system-world storage after adding result reporting and making `SystemWorldServerThread::store()` produce immutable JSON before enqueueing work.
@@ -408,7 +412,6 @@ Phase 3 diagnostics to add:
 - persistence queue depth, oldest queued age, completed jobs, failed jobs, retry count, and bytes written by job type
 - time spent snapshotting on owner threads versus time spent writing on persistence workers
 - per-world sync duration and per-system store duration
-- celestial cleanup/commit duration and whether it ran on the universe path
 - crash-report context for pending required persistence jobs
 
 Phase 3 compatibility checkpoints:

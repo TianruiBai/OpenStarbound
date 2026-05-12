@@ -180,10 +180,23 @@ WorldChunks ServerClientContext::shipChunks() const {
   return m_shipChunks;
 }
 
-void ServerClientContext::updateShipChunks(WorldChunks newShipChunks) {
+ServerClientContext::ShipChunksSnapshot ServerClientContext::buildShipChunksSnapshot(WorldChunks newShipChunks) const {
   RecursiveMutexLocker locker(m_mutex);
-  m_shipChunksUpdate.merge(WorldStorage::getWorldChunksUpdate(m_shipChunks, newShipChunks), true);
-  m_shipChunks = std::move(newShipChunks);
+
+  ShipChunksSnapshot shipChunksSnapshot;
+  shipChunksSnapshot.updateChunks = WorldStorage::getWorldChunksUpdate(m_shipChunks, newShipChunks);
+  shipChunksSnapshot.chunks = std::move(newShipChunks);
+  return shipChunksSnapshot;
+}
+
+void ServerClientContext::applyShipChunksSnapshot(ShipChunksSnapshot shipChunksSnapshot) {
+  RecursiveMutexLocker locker(m_mutex);
+  m_shipChunksUpdate.merge(shipChunksSnapshot.updateChunks, true);
+  m_shipChunks = std::move(shipChunksSnapshot.chunks);
+}
+
+void ServerClientContext::updateShipChunks(WorldChunks newShipChunks) {
+  applyShipChunksSnapshot(buildShipChunksSnapshot(std::move(newShipChunks)));
 }
 
 void ServerClientContext::readUpdate(ByteArray data) {

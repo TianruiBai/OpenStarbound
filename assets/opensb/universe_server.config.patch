@@ -43,5 +43,10 @@
     "op" : "add",
     "path" : "/maxQueuedPersistenceSnapshots",
     "value" : 128
+  },
+  {
+    "op" : "add",
+    "path" : "/maxPersistenceWriteRetries",
+    "value" : 0
   }
 ]

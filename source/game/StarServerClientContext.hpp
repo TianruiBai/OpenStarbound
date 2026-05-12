@@ -19,6 +19,11 @@ STAR_CLASS(ServerClientContext);
 
 class ServerClientContext {
 public:
+  struct ShipChunksSnapshot {
+    WorldChunks chunks;
+    WorldChunks updateChunks;
+  };
+
   ServerClientContext(ConnectionId clientId, Maybe<HostAddress> remoteAddress, NetCompatibilityRules netRules, Uuid playerUuid,
       String playerName, String shipSpecies, bool canBecomeAdmin, WorldChunks initialShipChunks);
 
@@ -58,6 +63,8 @@ public:
   void setShipSpecies(String shipSpecies);
 
   WorldChunks shipChunks() const;
+  ShipChunksSnapshot buildShipChunksSnapshot(WorldChunks newShipChunks) const;
+  void applyShipChunksSnapshot(ShipChunksSnapshot shipChunksSnapshot);
   void updateShipChunks(WorldChunks newShipChunks);
 
   ByteArray writeInitialState() const;

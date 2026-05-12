@@ -1,4 +1,5 @@
 #include "StarSystemWorldServerThread.hpp"
+#include "StarRoot.hpp"
 #include "StarTickRateMonitor.hpp"
 #include "StarNetPackets.hpp"
 
@@ -168,15 +169,22 @@ List<PacketPtr> SystemWorldServerThread::pullOutgoingPackets(ConnectionId client
   return take(m_outgoingPacketQueue[clientId]);
 }
 
-void SystemWorldServerThread::store() {
+SystemWorldServerThread::SystemWorldStorageSnapshot SystemWorldServerThread::buildStorageSnapshot() {
   ReadLocker locker(m_mutex);
   Json store = m_systemWorld->diskStore();
   locker.unlock();
 
-  Logger::debug("Trigger disk storage for system world {}:{}:{}", m_systemLocation.x(), m_systemLocation.y(), m_systemLocation.z());
   auto versioningDatabase = Root::singleton().versioningDatabase();
-  auto versionedStore = versioningDatabase->makeCurrentVersionedJson("System", store);
-  VersionedJson::writeFile(versionedStore, m_storageFile);
+  return {m_systemLocation, m_storageFile, versioningDatabase->makeCurrentVersionedJson("System", std::move(store))};
+}
+
+void SystemWorldServerThread::writeStorageSnapshot(SystemWorldStorageSnapshot snapshot) {
+  Logger::debug("Trigger disk storage for system world {}:{}:{}", snapshot.location.x(), snapshot.location.y(), snapshot.location.z());
+  VersionedJson::writeFile(snapshot.store, snapshot.file);
+}
+
+void SystemWorldServerThread::store() {
+  writeStorageSnapshot(buildStorageSnapshot());
 }
 
 }

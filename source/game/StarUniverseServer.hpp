@@ -74,11 +74,15 @@ public:
     uint64_t networkIdleTimedWaits;
     size_t persistenceBatchesPending;
     size_t persistenceSnapshotsPending;
+    int64_t persistenceOldestPendingAgeMilliseconds;
     uint64_t persistenceBatchesCompleted;
     uint64_t persistenceSnapshotsWritten;
     uint64_t persistenceSnapshotBuildTimeMicroseconds;
     uint64_t persistenceWriteTimeMicroseconds;
+    uint64_t persistenceCelestialCommitTimeMicroseconds;
+    uint64_t persistenceCelestialCommits;
     uint64_t persistenceFailures;
+    uint64_t persistenceWriteRetries;
     uint64_t persistenceSynchronousFallbacks;
     uint64_t persistenceQueueFullFallbacks;
   };
@@ -221,14 +225,16 @@ private:
     bool success;
     String error;
     int64_t durationMicroseconds;
+    uint64_t retryCount;
   };
 
   struct PendingPersistenceWrite {
-    PendingPersistenceWrite(WorkerPoolPromise<List<PersistenceWriteResult>> promise, size_t snapshotCount)
-      : promise(std::move(promise)), snapshotCount(snapshotCount) {}
+    PendingPersistenceWrite(WorkerPoolPromise<List<PersistenceWriteResult>> promise, size_t snapshotCount, int64_t queuedTime)
+      : promise(std::move(promise)), snapshotCount(snapshotCount), queuedTime(queuedTime) {}
 
     WorkerPoolPromise<List<PersistenceWriteResult>> promise;
     size_t snapshotCount;
+    int64_t queuedTime;
   };
 
   void processUniverseFlags();
@@ -325,14 +331,16 @@ private:
 
   VersionedJsonStorageSnapshot buildUniverseSettingsStorageSnapshot();
   VersionedJsonStorageSnapshot buildTempWorldIndexStorageSnapshot();
+  VersionedJsonStorageSnapshot buildClientContextStorageSnapshot(ServerClientContextPtr const& clientContext);
   List<VersionedJsonStorageSnapshot> buildClientContextStorageSnapshots();
   List<VersionedJsonStorageSnapshot> buildTriggeredStorageSnapshots();
-  static List<PersistenceWriteResult> writeVersionedJsonStorageSnapshotsNow(List<VersionedJsonStorageSnapshot> snapshots);
+  static List<PersistenceWriteResult> writeVersionedJsonStorageSnapshotsNow(List<VersionedJsonStorageSnapshot> snapshots, unsigned maxRetries = 0);
   void recordPersistenceWriteResults(List<PersistenceWriteResult> results);
   void writeVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots);
   void persistVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots);
   void processPendingPersistenceWrites();
   void finishPendingPersistenceWrites();
+  void cleanupAndCommitCelestialDatabase();
 
   // Signal that a world either failed to load, or died due to an exception,
   // kicks clients if that world is a ship world.  Main lock and clients read
@@ -382,12 +390,16 @@ private:
 
   bool m_useAsyncPersistence;
   size_t m_persistenceMaxQueuedSnapshots;
+  unsigned m_persistenceMaxWriteRetries;
   size_t m_persistenceSnapshotsPending;
   uint64_t m_persistenceBatchesCompleted;
   uint64_t m_persistenceSnapshotsWritten;
   uint64_t m_persistenceSnapshotBuildTimeMicroseconds;
   uint64_t m_persistenceWriteTimeMicroseconds;
+  uint64_t m_persistenceCelestialCommitTimeMicroseconds;
+  uint64_t m_persistenceCelestialCommits;
   uint64_t m_persistenceFailures;
+  uint64_t m_persistenceWriteRetries;
   uint64_t m_persistenceSynchronousFallbacks;
   uint64_t m_persistenceQueueFullFallbacks;
   List<PendingPersistenceWrite> m_pendingPersistenceWrites;

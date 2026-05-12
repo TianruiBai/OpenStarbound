@@ -26,7 +26,7 @@ namespace Star {
 UniverseServer::UniverseServer(String const& storageDir)
     : Thread("UniverseServer"),
       m_workerPool("UniverseServerWorkerPool"),
-  m_persistenceWorkerPool("UniverseServerPersistencePool"),
+      m_persistenceWorkerPool("UniverseServerPersistencePool"),
       m_clients(MinClientConnectionId, MaxClientConnectionId) {
   m_startTime = Time::monotonicTime();
   String const LockFile = "universe.lock";
@@ -85,12 +85,16 @@ UniverseServer::UniverseServer(String const& storageDir)
   m_pendingHandshakeTimedOut = 0;
   m_useAsyncPersistence = false;
   m_persistenceMaxQueuedSnapshots = 0;
+  m_persistenceMaxWriteRetries = 0;
   m_persistenceSnapshotsPending = 0;
   m_persistenceBatchesCompleted = 0;
   m_persistenceSnapshotsWritten = 0;
   m_persistenceSnapshotBuildTimeMicroseconds = 0;
   m_persistenceWriteTimeMicroseconds = 0;
+  m_persistenceCelestialCommitTimeMicroseconds = 0;
+  m_persistenceCelestialCommits = 0;
   m_persistenceFailures = 0;
+  m_persistenceWriteRetries = 0;
   m_persistenceSynchronousFallbacks = 0;
   m_persistenceQueueFullFallbacks = 0;
 
@@ -101,6 +105,7 @@ UniverseServer::UniverseServer(String const& storageDir)
   auto persistenceWorkerThreads = universeConfig.optUInt("persistenceWorkerThreads").value(1);
   m_useAsyncPersistence = universeConfig.getBool("useAsyncPersistence", false) && persistenceWorkerThreads > 0;
   m_persistenceMaxQueuedSnapshots = universeConfig.optUInt("maxQueuedPersistenceSnapshots").value(128);
+  m_persistenceMaxWriteRetries = universeConfig.optUInt("maxPersistenceWriteRetries").value(0);
 
   for (auto const& pair : universeConfig.get("speciesShips").iterateObject())
     m_speciesShips[pair.first] = jsonToStringList(pair.second);
@@ -312,11 +317,20 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
       status.pendingWorldMessages += pair.second.size();
     status.persistenceBatchesPending = m_pendingPersistenceWrites.size();
     status.persistenceSnapshotsPending = m_persistenceSnapshotsPending;
+    auto now = Time::monotonicMilliseconds();
+    for (auto const& pendingWrite : m_pendingPersistenceWrites) {
+      auto age = now - pendingWrite.queuedTime;
+      if (age > status.persistenceOldestPendingAgeMilliseconds)
+        status.persistenceOldestPendingAgeMilliseconds = age;
+    }
     status.persistenceBatchesCompleted = m_persistenceBatchesCompleted;
     status.persistenceSnapshotsWritten = m_persistenceSnapshotsWritten;
     status.persistenceSnapshotBuildTimeMicroseconds = m_persistenceSnapshotBuildTimeMicroseconds;
     status.persistenceWriteTimeMicroseconds = m_persistenceWriteTimeMicroseconds;
+    status.persistenceCelestialCommitTimeMicroseconds = m_persistenceCelestialCommitTimeMicroseconds;
+    status.persistenceCelestialCommits = m_persistenceCelestialCommits;
     status.persistenceFailures = m_persistenceFailures;
+    status.persistenceWriteRetries = m_persistenceWriteRetries;
     status.persistenceSynchronousFallbacks = m_persistenceSynchronousFallbacks;
     status.persistenceQueueFullFallbacks = m_persistenceQueueFullFallbacks;
   }
@@ -897,7 +911,8 @@ void UniverseServer::updateShips() {
             }
 
             p.second->setShipUpgrades(newShipUpgrades);
-            p.second->updateShipChunks(shipWorld->readChunks());
+            auto shipChunksSnapshot = p.second->buildShipChunksSnapshot(shipWorld->readChunks());
+            p.second->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
           }
         }
         shipWorld->setProperty("ship.level", newShipUpgrades.shipLevel);
@@ -1415,8 +1430,11 @@ void UniverseServer::shutdownInactiveWorlds() {
 
         if (worldId.is<ClientShipWorldId>()) {
           world->unloadAll(true);
-          if (auto clientId = getClientForUuid(worldId.get<ClientShipWorldId>()))
-            m_clients.get(*clientId)->updateShipChunks(world->readChunks());
+          if (auto clientId = getClientForUuid(worldId.get<ClientShipWorldId>())) {
+            auto clientContext = m_clients.get(*clientId);
+            auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(world->readChunks());
+            clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+          }
         }
 
         m_worlds.remove(worldId);
@@ -1466,13 +1484,11 @@ void UniverseServer::doTriggeredStorage() {
     clientsLocker.unlock();
     locker.unlock();
     persistVersionedJsonStorageSnapshots(buildTriggeredStorageSnapshots());
+    cleanupAndCommitCelestialDatabase();
 
     locker.lock();
-    clientsLocker.lock();
     int storageTriggerInterval = Root::singleton().assets()->json("/universe_server.config:universeStorageInterval").toInt();
     m_storageTriggerDeadline = Time::monotonicMilliseconds() + storageTriggerInterval;
-
-    m_celestialDatabase->cleanupAndCommit();
   }
 }
 
@@ -1498,8 +1514,13 @@ UniverseServer::VersionedJsonStorageSnapshot UniverseServer::buildTempWorldIndex
       versioningDatabase->makeCurrentVersionedJson("TempWorldIndex", worldIndex)};
 }
 
-List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildClientContextStorageSnapshots() {
+UniverseServer::VersionedJsonStorageSnapshot UniverseServer::buildClientContextStorageSnapshot(ServerClientContextPtr const& clientContext) {
   auto versioningDatabase = Root::singleton().versioningDatabase();
+  String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientContext->playerUuid().hex()));
+  return {"ClientContext", clientContextFile, versioningDatabase->makeCurrentVersionedJson("ClientContext", clientContext->storeServerData())};
+}
+
+List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildClientContextStorageSnapshots() {
   List<VersionedJsonStorageSnapshot> snapshots;
 
   ReadLocker clientsLocker(m_clientsLock);
@@ -1511,11 +1532,12 @@ List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildClientCo
     auto shipWorld = getWorld(ClientShipWorldId(clientContext->playerUuid()));
     locker.unlock();
 
-    if (shipWorld)
-      clientContext->updateShipChunks(shipWorld->readChunks());
+    if (shipWorld) {
+      auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(shipWorld->readChunks());
+      clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+    }
 
-    String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientContext->playerUuid().hex()));
-    snapshots.append({"ClientContext", clientContextFile, versioningDatabase->makeCurrentVersionedJson("ClientContext", clientContext->storeServerData())});
+    snapshots.append(buildClientContextStorageSnapshot(clientContext));
   }
 
   return snapshots;
@@ -1534,15 +1556,26 @@ List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildTriggere
   return snapshots;
 }
 
-List<UniverseServer::PersistenceWriteResult> UniverseServer::writeVersionedJsonStorageSnapshotsNow(List<VersionedJsonStorageSnapshot> snapshots) {
+List<UniverseServer::PersistenceWriteResult> UniverseServer::writeVersionedJsonStorageSnapshotsNow(List<VersionedJsonStorageSnapshot> snapshots, unsigned maxRetries) {
   List<PersistenceWriteResult> results;
   for (auto& snapshot : snapshots) {
     auto writeStart = Time::monotonicMicroseconds();
+    uint64_t retryCount = 0;
     try {
-      VersionedJson::writeFile(snapshot.store, snapshot.file);
-      results.append({snapshot.jobType, snapshot.file, true, {}, Time::monotonicMicroseconds() - writeStart});
+      while (true) {
+        try {
+          VersionedJson::writeFile(snapshot.store, snapshot.file);
+          results.append({snapshot.jobType, snapshot.file, true, {}, Time::monotonicMicroseconds() - writeStart, retryCount});
+          break;
+        } catch (std::exception const&) {
+          if (retryCount >= maxRetries)
+            throw;
+
+          retryCount++;
+        }
+      }
     } catch (std::exception const& e) {
-      results.append({snapshot.jobType, snapshot.file, false, strf("{}", outputException(e, false)), Time::monotonicMicroseconds() - writeStart});
+      results.append({snapshot.jobType, snapshot.file, false, strf("{}", outputException(e, false)), Time::monotonicMicroseconds() - writeStart, retryCount});
     }
   }
 
@@ -1553,14 +1586,16 @@ void UniverseServer::recordPersistenceWriteResults(List<PersistenceWriteResult> 
   uint64_t written = 0;
   uint64_t failures = 0;
   uint64_t writeTime = 0;
+  uint64_t retries = 0;
 
   for (auto const& result : results) {
     writeTime += result.durationMicroseconds;
+    retries += result.retryCount;
     if (result.success) {
       written++;
     } else {
       failures++;
-      Logger::error("UniverseServer: Failed writing {} snapshot '{}': {}", result.jobType, result.file, result.error);
+      Logger::error("UniverseServer: Failed writing {} snapshot '{}' after {} retries: {}", result.jobType, result.file, result.retryCount, result.error);
     }
   }
 
@@ -1568,10 +1603,11 @@ void UniverseServer::recordPersistenceWriteResults(List<PersistenceWriteResult> 
   m_persistenceSnapshotsWritten += written;
   m_persistenceFailures += failures;
   m_persistenceWriteTimeMicroseconds += writeTime;
+  m_persistenceWriteRetries += retries;
 }
 
 void UniverseServer::writeVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots) {
-  recordPersistenceWriteResults(writeVersionedJsonStorageSnapshotsNow(std::move(snapshots)));
+  recordPersistenceWriteResults(writeVersionedJsonStorageSnapshotsNow(std::move(snapshots), m_persistenceMaxWriteRetries));
 }
 
 void UniverseServer::persistVersionedJsonStorageSnapshots(List<VersionedJsonStorageSnapshot> snapshots) {
@@ -1603,12 +1639,13 @@ void UniverseServer::persistVersionedJsonStorageSnapshots(List<VersionedJsonStor
     return;
   }
 
-  auto promise = m_persistenceWorkerPool.addProducer<List<PersistenceWriteResult>>([snapshots = std::move(snapshots)]() mutable {
-      return UniverseServer::writeVersionedJsonStorageSnapshotsNow(std::move(snapshots));
+  auto maxRetries = m_persistenceMaxWriteRetries;
+  auto promise = m_persistenceWorkerPool.addProducer<List<PersistenceWriteResult>>([snapshots = std::move(snapshots), maxRetries]() mutable {
+      return UniverseServer::writeVersionedJsonStorageSnapshotsNow(std::move(snapshots), maxRetries);
     });
 
   RecursiveMutexLocker locker(m_mainLock);
-  m_pendingPersistenceWrites.append({std::move(promise), snapshotCount});
+  m_pendingPersistenceWrites.append({std::move(promise), snapshotCount, Time::monotonicMilliseconds()});
 }
 
 void UniverseServer::processPendingPersistenceWrites() {
@@ -1643,6 +1680,15 @@ void UniverseServer::finishPendingPersistenceWrites() {
 
     recordPersistenceWriteResults(pendingWrite.promise.get());
   }
+}
+
+void UniverseServer::cleanupAndCommitCelestialDatabase() {
+  auto commitStart = Time::monotonicMicroseconds();
+  m_celestialDatabase->cleanupAndCommit();
+
+  RecursiveMutexLocker locker(m_mainLock);
+  m_persistenceCelestialCommitTimeMicroseconds += Time::monotonicMicroseconds() - commitStart;
+  m_persistenceCelestialCommits++;
 }
 
 void UniverseServer::saveSettings() {
@@ -2861,20 +2907,22 @@ void UniverseServer::doDisconnection(ConnectionId clientId, String const& reason
       if (auto shipWorld = getWorld(ClientShipWorldId(clientContext->playerUuid()))) {
         locker.unlock();
         shipWorld->unloadAll(true);
-        clientContext->updateShipChunks(shipWorld->readChunks());
+        auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(shipWorld->readChunks());
+        clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
         shipWorld->stop();
         locker.lock();
       }
+
+      auto clientContextSnapshot = buildClientContextStorageSnapshot(clientContext);
       sendClientContextUpdate(clientContext);
 
       // Then send the disconnect packet.
       m_connectionServer->sendPackets(clientId, {make_shared<ServerDisconnectPacket>(reason)});
-    }
 
-    // Write the final client context.
-    auto versioningDatabase = Root::singleton().versioningDatabase();
-    String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientContext->playerUuid().hex()));
-    VersionedJson::writeFile(versioningDatabase->makeCurrentVersionedJson("ClientContext", clientContext->storeServerData()), clientContextFile);
+      writeVersionedJsonStorageSnapshots({std::move(clientContextSnapshot)});
+    } else {
+      writeVersionedJsonStorageSnapshots({buildClientContextStorageSnapshot(clientContext)});
+    }
 
     clientsLocker.lock();
     m_clients.remove(clientId);
@@ -3053,7 +3101,8 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
 
     auto shipWorldThread = make_shared<WorldServerThread>(shipWorld, ClientShipWorldId(clientShipWorldId));
     shipWorldThread->setPause(m_pause);
-    clientContext->updateShipChunks(shipWorldThread->readChunks());
+  auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(shipWorldThread->readChunks());
+  clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
     shipWorldThread->start();
     shipWorldThread->setUpdateAction(bind(&UniverseServer::worldUpdated, this, _1));
 

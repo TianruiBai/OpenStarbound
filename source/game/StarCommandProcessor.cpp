@@ -314,14 +314,18 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.networkPacketsProcessed,
       status.networkWakeups,
       status.networkIdleTimedWaits));
-  lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, failures={}, syncFallbacks={}, queueFullFallbacks={}",
+    lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,
+      status.persistenceOldestPendingAgeMilliseconds,
       status.persistenceBatchesCompleted,
       status.persistenceSnapshotsWritten,
       status.persistenceSnapshotBuildTimeMicroseconds,
       status.persistenceWriteTimeMicroseconds,
+      status.persistenceCelestialCommitTimeMicroseconds,
+      status.persistenceCelestialCommits,
       status.persistenceFailures,
+      status.persistenceWriteRetries,
       status.persistenceSynchronousFallbacks,
       status.persistenceQueueFullFallbacks));
 

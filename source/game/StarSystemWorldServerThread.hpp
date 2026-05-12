@@ -3,6 +3,7 @@
 #include "StarSystemWorldServer.hpp"
 #include "StarThread.hpp"
 #include "StarNetPackets.hpp"
+#include "StarVersioningDatabase.hpp"
 
 namespace Star {
 
@@ -44,6 +45,15 @@ public:
   void store();
 
 private:
+  struct SystemWorldStorageSnapshot {
+    Vec3I location;
+    String file;
+    VersionedJson store;
+  };
+
+  SystemWorldStorageSnapshot buildStorageSnapshot();
+  static void writeStorageSnapshot(SystemWorldStorageSnapshot snapshot);
+
   Vec3I m_systemLocation;
   SystemWorldServerPtr m_systemWorld;
 
