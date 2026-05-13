@@ -341,6 +341,16 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6StorageGenerationPlanningParallelMicroseconds,
       status.phase6StorageGenerationPlanningMergeMicroseconds,
       status.phase6StorageGenerationPlanningFallbacks));
+  lines.append(strf("Phase 6 packet sector prefill: enabledWorlds={}, ticks={}, serialTicks={}, parallelTicks={}, sectors={}, serialUs={}, parallelUs={}, mergeUs={}, fallbacks={}",
+      status.phase6PacketPreparationSectorPrefillEnabledWorlds,
+      status.phase6PacketPreparationSectorPrefillTicks,
+      status.phase6PacketPreparationSectorPrefillSerialTicks,
+      status.phase6PacketPreparationSectorPrefillParallelTicks,
+      status.phase6PacketPreparationSectorPrefillSectors,
+      status.phase6PacketPreparationSectorPrefillSerialMicroseconds,
+      status.phase6PacketPreparationSectorPrefillParallelMicroseconds,
+      status.phase6PacketPreparationSectorPrefillMergeMicroseconds,
+      status.phase6PacketPreparationSectorPrefillFallbacks));
   lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,

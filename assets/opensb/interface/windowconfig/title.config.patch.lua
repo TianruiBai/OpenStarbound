@@ -18,6 +18,10 @@ function patch(data)
       { terry = terry }
     }
   }
+  data.openStarboundRelease = {
+    version = "26.5.1a",
+    name = "Ethereal Drake"
+  }
   data.scripts = jarray{"/interface/title/title.lua"}
   return data
 end

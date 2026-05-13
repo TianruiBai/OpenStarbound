@@ -689,15 +689,19 @@ Implemented Phase 6 slice:
 
 - `phase6WorldParallelism.storageGenerationPlanning` is available in `worldserver.config` and is off by default.
 - When enabled, `WorldServer` snapshots the storage generation queue and player positions, optionally computes sector distance priorities on `WorldServerPhase6WorkerPool`, then calls the existing `WorldStorage::generateQueue()` mutation path serially.
+- `phase6WorldParallelism.packetPreparationSectorPrefill` is available in `worldserver.config` and is off by default.
+- When enabled, `WorldServer` snapshots pending sector tile-array updates during packet preparation, optionally assembles shared sector update packets on `WorldServerPhase6WorkerPool`, then merges the packet cache before the existing per-client packet queueing path runs.
 - Diagnostics report enabled worlds, planning ticks, serial ticks, parallel ticks, planned sectors, serial/parallel/merge microseconds, and fallback count through `WorldServer`, `WorldServerThread`, `UniverseServer::ServerStatus`, and `/serverstatus`.
-- Focused regression coverage verifies the flag is off by default and that the opt-in path records planning work without changing the default update path.
+- Packet-sector prefill diagnostics report enabled worlds, ticks, serial ticks, parallel ticks, prefilled sectors, serial/parallel/merge microseconds, and fallback count through the same status path.
+- Focused regression coverage verifies the flags are off by default and that the opt-in paths record planning/prefill work without changing the default update path.
+- The Phase 6 release target is `26.5.1a`, `Ethereal Drake`, following the `yy.m.<sub version><a/b/d/y/NA>` release label rule.
 
 Phase 6 diagnostics to add:
 
-- per-experiment enabled flag, serial duration, parallel duration, merge duration, and fallback count; storage generation planning now has this baseline instrumentation
+- per-experiment enabled flag, serial duration, parallel duration, merge duration, and fallback count; storage generation planning and packet-sector prefill now have this baseline instrumentation
 - divergence detector counters for serial-versus-parallel comparison runs
-- per-subsystem work item counts: liquid active cells, falling-block pending positions, wiring networks, generation sectors, packet entities; storage generation planning now reports generation sectors
-- config surface that can disable each experiment independently without changing save or packet formats; storage generation planning now has the first defaults-off flag
+- per-subsystem work item counts: liquid active cells, falling-block pending positions, wiring networks, generation sectors, packet entities; storage generation planning now reports generation sectors and packet-sector prefill reports sectors
+- config surface that can disable each experiment independently without changing save or packet formats; storage generation planning and packet-sector prefill now have defaults-off flags
 
 Phase 6 compatibility checkpoints:
 

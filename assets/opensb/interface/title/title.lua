@@ -2,9 +2,12 @@ require "/scripts/vec2.lua"
 
 local canvas
 local backdropImages
+local releaseLabel
 function init()
   canvas = background.bindCanvas("canvas")
   backdropImages = root.assetJson("/interface/windowconfig/title.config:backdropImages")
+  local release = root.assetJson("/interface/windowconfig/title.config:openStarboundRelease")
+  releaseLabel = string.format("OpenStarbound %s - %s", release.version, release.name)
 end
 
 local logoRotation = 0
@@ -57,4 +60,5 @@ function render(data)
       canvas:drawImageDrawable(image, position, scale)
     end 
   end
+  canvas:drawText(releaseLabel, {position = {window[1] - 7, 7}, horizontalAnchor = "right", verticalAnchor = "bottom"}, 8, {204, 218, 238, 190})
 end

@@ -50,6 +50,7 @@ Json crashReportJson(CrashReport const& report) {
       {"createdAtMilliseconds", Time::millisecondsSinceEpoch()},
       {"version", JsonObject{
           {"openstarbound", OpenStarVersionString},
+          {"releaseName", OpenStarReleaseNameString},
           {"starbound", StarVersionString},
           {"source", StarSourceIdentifierString},
           {"architecture", StarArchitectureString}}},

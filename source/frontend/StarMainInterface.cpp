@@ -1057,7 +1057,7 @@ PanePtr MainInterface::createEscapeDialog() {
     });
 
   escapeDialogReader.construct(assets->json("/interface.config:escapeDialog"), escapeDialogPtr);
-  escapeDialog->fetchChild<LabelWidget>("lblversion")->setText(strf("OpenStarbound {} for Starbound {} ({})", OpenStarVersionString, StarVersionString, StarArchitectureString));
+  escapeDialog->fetchChild<LabelWidget>("lblversion")->setText(strf("OpenStarbound {} ({}) for Starbound {} ({})", OpenStarVersionString, OpenStarReleaseNameString, StarVersionString, StarArchitectureString));
   return escapeDialog;
 }
 

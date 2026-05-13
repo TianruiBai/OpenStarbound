@@ -78,6 +78,15 @@ public:
     uint64_t storageGenerationPlanningParallelMicroseconds = 0;
     uint64_t storageGenerationPlanningMergeMicroseconds = 0;
     uint64_t storageGenerationPlanningFallbacks = 0;
+    bool packetPreparationSectorPrefillEnabled = false;
+    uint64_t packetPreparationSectorPrefillTicks = 0;
+    uint64_t packetPreparationSectorPrefillSerialTicks = 0;
+    uint64_t packetPreparationSectorPrefillParallelTicks = 0;
+    uint64_t packetPreparationSectorPrefillSectors = 0;
+    uint64_t packetPreparationSectorPrefillSerialMicroseconds = 0;
+    uint64_t packetPreparationSectorPrefillParallelMicroseconds = 0;
+    uint64_t packetPreparationSectorPrefillMergeMicroseconds = 0;
+    uint64_t packetPreparationSectorPrefillFallbacks = 0;
   };
 
   // Create a new world with the given template, writing new storage file.
@@ -367,6 +376,12 @@ private:
     PacketPreparationStats packetPreparationStats;
   };
 
+  struct SectorUpdateSnapshot {
+    ServerTileSectorArray::Sector sector;
+    Vec2I min;
+    TileArrayUpdatePacket::TileArray array;
+  };
+
   typedef function<ServerTile const& (Vec2I)> ServerTileGetter;
 
   enum class UpdateTimingPhase : uint8_t {
@@ -398,6 +413,13 @@ private:
   Maybe<unsigned> shouldRunThisStep(String const& timingConfiguration);
 
   WorldTickSnapshot buildWorldTickSnapshot();
+  List<ServerTileSectorArray::Sector> collectPendingSectorUpdates() const;
+  SectorUpdateSnapshot buildSectorUpdateSnapshot(ServerTileSectorArray::Sector sector) const;
+  static PacketPtr buildSectorUpdatePacket(SectorUpdateSnapshot sectorUpdateSnapshot);
+  List<SectorUpdateSnapshot> buildSectorUpdateSnapshots(List<ServerTileSectorArray::Sector> const& sectors) const;
+  HashMap<ServerTileSectorArray::Sector, PacketPtr> buildSectorUpdatePackets(List<SectorUpdateSnapshot> sectorUpdateSnapshots) const;
+  HashMap<ServerTileSectorArray::Sector, PacketPtr> buildSectorUpdatePacketsParallel(List<SectorUpdateSnapshot> sectorUpdateSnapshots);
+  void prefillSectorUpdateCache(WorldTickSnapshot& snapshot);
   HashMap<WorldStorage::Sector, float> buildStorageGenerationSectorDistances(
       List<pair<WorldStorage::Sector, Vec2F>> const& sectorCenters,
       List<Vec2F> const& playerPositions) const;
@@ -486,6 +508,9 @@ private:
   bool m_phase6StorageGenerationPlanningEnabled;
   size_t m_phase6StorageGenerationPlanningWorkerThreads;
   size_t m_phase6StorageGenerationPlanningMinimumSectors;
+  bool m_phase6PacketPreparationSectorPrefillEnabled;
+  size_t m_phase6PacketPreparationSectorPrefillWorkerThreads;
+  size_t m_phase6PacketPreparationSectorPrefillMinimumSectors;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
 
   GameTimer m_entityUpdateTimer;

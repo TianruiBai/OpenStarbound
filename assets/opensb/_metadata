@@ -4,7 +4,7 @@
   "priority" : -9999,
   "friendlyName" : "OpenStarbound Assets",
   "requires" : ["base"],
-  "version" : "0.1.15.0",
+  "version" : "26.5.1a",
   "icon" : "/opensb/modicon.png",
   "link" : "https://github.com/OpenStarbound/OpenStarbound",
   "scripts" : {

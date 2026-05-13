@@ -94,6 +94,15 @@ public:
     uint64_t phase6StorageGenerationPlanningParallelMicroseconds;
     uint64_t phase6StorageGenerationPlanningMergeMicroseconds;
     uint64_t phase6StorageGenerationPlanningFallbacks;
+    size_t phase6PacketPreparationSectorPrefillEnabledWorlds;
+    uint64_t phase6PacketPreparationSectorPrefillTicks;
+    uint64_t phase6PacketPreparationSectorPrefillSerialTicks;
+    uint64_t phase6PacketPreparationSectorPrefillParallelTicks;
+    uint64_t phase6PacketPreparationSectorPrefillSectors;
+    uint64_t phase6PacketPreparationSectorPrefillSerialMicroseconds;
+    uint64_t phase6PacketPreparationSectorPrefillParallelMicroseconds;
+    uint64_t phase6PacketPreparationSectorPrefillMergeMicroseconds;
+    uint64_t phase6PacketPreparationSectorPrefillFallbacks;
     size_t networkWorkers;
     size_t networkOwnedConnections;
     uint64_t networkPacketsProcessed;

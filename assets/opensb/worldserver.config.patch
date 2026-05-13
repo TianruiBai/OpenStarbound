@@ -3,6 +3,9 @@
   "phase6WorldParallelism" : {
     "storageGenerationPlanning" : false,
     "storageGenerationPlanningWorkerThreads" : 2,
-    "storageGenerationPlanningMinimumSectors" : 8
+    "storageGenerationPlanningMinimumSectors" : 8,
+    "packetPreparationSectorPrefill" : false,
+    "packetPreparationSectorPrefillWorkerThreads" : 2,
+    "packetPreparationSectorPrefillMinimumSectors" : 8
   }
 }

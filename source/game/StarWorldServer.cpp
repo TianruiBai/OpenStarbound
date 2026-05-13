@@ -670,6 +670,130 @@ WorldServer::WorldTickSnapshot WorldServer::buildWorldTickSnapshot() {
   return snapshot;
 }
 
+List<ServerTileSectorArray::Sector> WorldServer::collectPendingSectorUpdates() const {
+  HashSet<ServerTileSectorArray::Sector> seenSectors;
+  List<ServerTileSectorArray::Sector> sectors;
+
+  for (auto const& pair : m_clientInfo) {
+    for (auto const& sector : pair.second->pendingSectors.values()) {
+      if (!seenSectors.contains(sector) && m_worldStorage->sectorActive(sector)) {
+        seenSectors.add(sector);
+        sectors.append(sector);
+      }
+    }
+  }
+
+  return sectors;
+}
+
+WorldServer::SectorUpdateSnapshot WorldServer::buildSectorUpdateSnapshot(ServerTileSectorArray::Sector sector) const {
+  SectorUpdateSnapshot sectorUpdateSnapshot;
+  sectorUpdateSnapshot.sector = sector;
+  auto sectorTiles = m_tileArray->sectorRegion(sector);
+  sectorUpdateSnapshot.min = sectorTiles.min();
+  sectorUpdateSnapshot.array.resize(Vec2S(sectorTiles.width(), sectorTiles.height()));
+  for (int x = sectorTiles.xMin(); x < sectorTiles.xMax(); ++x) {
+    for (int y = sectorTiles.yMin(); y < sectorTiles.yMax(); ++y)
+      writeNetTile({x, y}, sectorUpdateSnapshot.array(x - sectorTiles.xMin(), y - sectorTiles.yMin()));
+  }
+  return sectorUpdateSnapshot;
+}
+
+PacketPtr WorldServer::buildSectorUpdatePacket(SectorUpdateSnapshot sectorUpdateSnapshot) {
+  auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
+  tileArrayUpdate->min = sectorUpdateSnapshot.min;
+  tileArrayUpdate->array = std::move(sectorUpdateSnapshot.array);
+  return tileArrayUpdate;
+}
+
+List<WorldServer::SectorUpdateSnapshot> WorldServer::buildSectorUpdateSnapshots(List<ServerTileSectorArray::Sector> const& sectors) const {
+  List<SectorUpdateSnapshot> sectorUpdateSnapshots;
+  sectorUpdateSnapshots.reserve(sectors.size());
+  for (auto const& sector : sectors)
+    sectorUpdateSnapshots.append(buildSectorUpdateSnapshot(sector));
+  return sectorUpdateSnapshots;
+}
+
+HashMap<ServerTileSectorArray::Sector, PacketPtr> WorldServer::buildSectorUpdatePackets(List<SectorUpdateSnapshot> sectorUpdateSnapshots) const {
+  HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdatePackets;
+  for (auto& sectorUpdateSnapshot : sectorUpdateSnapshots)
+    sectorUpdatePackets.set(sectorUpdateSnapshot.sector, buildSectorUpdatePacket(std::move(sectorUpdateSnapshot)));
+  return sectorUpdatePackets;
+}
+
+HashMap<ServerTileSectorArray::Sector, PacketPtr> WorldServer::buildSectorUpdatePacketsParallel(List<SectorUpdateSnapshot> sectorUpdateSnapshots) {
+  HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdatePackets;
+  if (sectorUpdateSnapshots.empty())
+    return sectorUpdatePackets;
+
+  size_t workerCount = min<size_t>(m_phase6WorkerPool.getWorkerCount(), sectorUpdateSnapshots.size());
+  size_t chunkSize = (sectorUpdateSnapshots.size() + workerCount - 1) / workerCount;
+  List<WorkerPoolPromise<List<pair<ServerTileSectorArray::Sector, PacketPtr>>>> promises;
+
+  for (size_t chunkStart = 0; chunkStart < sectorUpdateSnapshots.size(); chunkStart += chunkSize) {
+    size_t chunkEnd = min(sectorUpdateSnapshots.size(), chunkStart + chunkSize);
+    List<SectorUpdateSnapshot> chunk;
+    chunk.reserve(chunkEnd - chunkStart);
+    for (size_t i = chunkStart; i < chunkEnd; ++i)
+      chunk.append(std::move(sectorUpdateSnapshots[i]));
+
+    promises.append(m_phase6WorkerPool.addProducer<List<pair<ServerTileSectorArray::Sector, PacketPtr>>>([chunk = std::move(chunk)]() mutable {
+        List<pair<ServerTileSectorArray::Sector, PacketPtr>> packets;
+        packets.reserve(chunk.size());
+        for (auto& sectorUpdateSnapshot : chunk)
+          packets.append({sectorUpdateSnapshot.sector, WorldServer::buildSectorUpdatePacket(std::move(sectorUpdateSnapshot))});
+        return packets;
+      }));
+  }
+
+  for (auto& promise : promises)
+    promise.get();
+
+  auto mergeStart = Time::monotonicMicroseconds();
+  for (auto& promise : promises) {
+    for (auto const& sectorUpdatePacket : promise.get())
+      sectorUpdatePackets.set(sectorUpdatePacket.first, sectorUpdatePacket.second);
+  }
+  m_phase6WorldParallelismStats.packetPreparationSectorPrefillMergeMicroseconds += Time::monotonicMicroseconds() - mergeStart;
+
+  return sectorUpdatePackets;
+}
+
+void WorldServer::prefillSectorUpdateCache(WorldTickSnapshot& snapshot) {
+  if (!m_phase6PacketPreparationSectorPrefillEnabled)
+    return;
+
+  auto sectors = collectPendingSectorUpdates();
+  m_phase6WorldParallelismStats.packetPreparationSectorPrefillTicks += 1;
+  m_phase6WorldParallelismStats.packetPreparationSectorPrefillSectors += sectors.size();
+  if (sectors.empty())
+    return;
+
+  HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdatePackets;
+  if (sectors.size() >= m_phase6PacketPreparationSectorPrefillMinimumSectors && m_phase6WorkerPool.getWorkerCount() > 1) {
+    try {
+      auto parallelStart = Time::monotonicMicroseconds();
+      sectorUpdatePackets = buildSectorUpdatePacketsParallel(buildSectorUpdateSnapshots(sectors));
+      m_phase6WorldParallelismStats.packetPreparationSectorPrefillParallelMicroseconds += Time::monotonicMicroseconds() - parallelStart;
+      m_phase6WorldParallelismStats.packetPreparationSectorPrefillParallelTicks += 1;
+    } catch (std::exception const&) {
+      m_phase6WorldParallelismStats.packetPreparationSectorPrefillFallbacks += 1;
+    }
+  }
+
+  if (sectorUpdatePackets.size() != sectors.size()) {
+    auto serialStart = Time::monotonicMicroseconds();
+    sectorUpdatePackets = buildSectorUpdatePackets(buildSectorUpdateSnapshots(sectors));
+    m_phase6WorldParallelismStats.packetPreparationSectorPrefillSerialMicroseconds += Time::monotonicMicroseconds() - serialStart;
+    m_phase6WorldParallelismStats.packetPreparationSectorPrefillSerialTicks += 1;
+  }
+
+  auto mergeStart = Time::monotonicMicroseconds();
+  for (auto const& sectorUpdatePacket : sectorUpdatePackets)
+    snapshot.sectorUpdateCache.set(sectorUpdatePacket.first, sectorUpdatePacket.second);
+  m_phase6WorldParallelismStats.packetPreparationSectorPrefillMergeMicroseconds += Time::monotonicMicroseconds() - mergeStart;
+}
+
 void WorldServer::recordPacketPreparationStats(WorldTickSnapshot const& snapshot) {
   m_packetPreparationStats.ticks += snapshot.packetPreparationStats.ticks;
   m_packetPreparationStats.monitoringRegionBuilds += snapshot.packetPreparationStats.monitoringRegionBuilds;
@@ -964,6 +1088,7 @@ void WorldServer::update(float dt) {
 
   timePhase(UpdateTimingPhase::PacketPreparation, [&]() {
     tickSnapshot.sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
+    prefillSectorUpdateCache(tickSnapshot);
     for (auto const& pair : m_clientInfo) {
       auto const& monitoringRegions = tickSnapshot.monitoringRegionsByConnection.get(pair.first);
       for (auto const& monitoredRegion : monitoringRegions)
@@ -1693,9 +1818,18 @@ void WorldServer::init(bool firstTime) {
   m_phase6StorageGenerationPlanningEnabled = phase6Config.getBool("storageGenerationPlanning", false);
   m_phase6StorageGenerationPlanningWorkerThreads = phase6Config.getUInt("storageGenerationPlanningWorkerThreads", 2);
   m_phase6StorageGenerationPlanningMinimumSectors = phase6Config.getUInt("storageGenerationPlanningMinimumSectors", 8);
+  m_phase6PacketPreparationSectorPrefillEnabled = phase6Config.getBool("packetPreparationSectorPrefill", false);
+  m_phase6PacketPreparationSectorPrefillWorkerThreads = phase6Config.getUInt("packetPreparationSectorPrefillWorkerThreads", 2);
+  m_phase6PacketPreparationSectorPrefillMinimumSectors = phase6Config.getUInt("packetPreparationSectorPrefillMinimumSectors", 8);
   m_phase6WorldParallelismStats.storageGenerationPlanningEnabled = m_phase6StorageGenerationPlanningEnabled;
-  if (m_phase6StorageGenerationPlanningEnabled && m_phase6StorageGenerationPlanningWorkerThreads > 1)
-    m_phase6WorkerPool.start(m_phase6StorageGenerationPlanningWorkerThreads);
+  m_phase6WorldParallelismStats.packetPreparationSectorPrefillEnabled = m_phase6PacketPreparationSectorPrefillEnabled;
+  size_t phase6WorkerThreads = 0;
+  if (m_phase6StorageGenerationPlanningEnabled)
+    phase6WorkerThreads = max(phase6WorkerThreads, m_phase6StorageGenerationPlanningWorkerThreads);
+  if (m_phase6PacketPreparationSectorPrefillEnabled)
+    phase6WorkerThreads = max(phase6WorkerThreads, m_phase6PacketPreparationSectorPrefillWorkerThreads);
+  if (phase6WorkerThreads > 1)
+    m_phase6WorkerPool.start(phase6WorkerThreads);
   else
     m_phase6WorkerPool.stop();
   setFidelity(WorldServerFidelity::Medium);
@@ -2252,15 +2386,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
     auto i = snapshot.sectorUpdateCache.find(sector);
     if (i == snapshot.sectorUpdateCache.end()) {
       snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
-      auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
-      auto sectorTiles = m_tileArray->sectorRegion(sector);
-      tileArrayUpdate->min = sectorTiles.min();
-      tileArrayUpdate->array.resize(Vec2S(sectorTiles.width(), sectorTiles.height()));
-      for (int x = sectorTiles.xMin(); x < sectorTiles.xMax(); ++x) {
-        for (int y = sectorTiles.yMin(); y < sectorTiles.yMax(); ++y)
-          writeNetTile({x, y}, tileArrayUpdate->array(x - sectorTiles.xMin(), y - sectorTiles.yMin()));
-      }
-      i = snapshot.sectorUpdateCache.insert(sector, tileArrayUpdate).first;
+      i = snapshot.sectorUpdateCache.insert(sector, buildSectorUpdatePacket(buildSectorUpdateSnapshot(sector))).first;
     } else {
       snapshot.packetPreparationStats.sectorPacketCacheHits += 1;
     }

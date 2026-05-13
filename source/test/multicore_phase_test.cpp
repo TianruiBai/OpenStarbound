@@ -248,6 +248,7 @@ TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
     WorldServer worldServer(Vec2U(256, 128), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
     EXPECT_FALSE(stats.storageGenerationPlanningEnabled);
+    EXPECT_FALSE(stats.packetPreparationSectorPrefillEnabled);
   }
 
   ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
@@ -272,4 +273,27 @@ TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
   EXPECT_GT(stats.storageGenerationPlanningTicks, 0u);
   EXPECT_GT(stats.storageGenerationPlanningSectors, 0u);
   EXPECT_GT(stats.storageGenerationPlanningSerialTicks + stats.storageGenerationPlanningParallelTicks, 0u);
+}
+
+TEST(MulticorePhaseTest, Phase6PacketSectorPrefillIsGuarded) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"packetPreparationSectorPrefill", true},
+      {"packetPreparationSectorPrefillWorkerThreads", 2},
+      {"packetPreparationSectorPrefillMinimumSectors", 0}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+
+  ASSERT_TRUE(worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true));
+  ASSERT_TRUE(worldServer.addClient(2, SpawnTargetPosition(Vec2F(32, 32)), true));
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+  acknowledgeClientWindow(worldServer, 2, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  worldServer.update(1.0f / 60.0f);
+  auto stats = worldServer.phase6WorldParallelismStats();
+  EXPECT_TRUE(stats.packetPreparationSectorPrefillEnabled);
+  EXPECT_GT(stats.packetPreparationSectorPrefillTicks, 0u);
+  EXPECT_GT(stats.packetPreparationSectorPrefillSectors, 0u);
+  EXPECT_GT(stats.packetPreparationSectorPrefillSerialTicks + stats.packetPreparationSectorPrefillParallelTicks, 0u);
 }

@@ -372,6 +372,16 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6StorageGenerationPlanningParallelMicroseconds += phase6Stats.storageGenerationPlanningParallelMicroseconds;
           status.phase6StorageGenerationPlanningMergeMicroseconds += phase6Stats.storageGenerationPlanningMergeMicroseconds;
           status.phase6StorageGenerationPlanningFallbacks += phase6Stats.storageGenerationPlanningFallbacks;
+          if (phase6Stats.packetPreparationSectorPrefillEnabled)
+            status.phase6PacketPreparationSectorPrefillEnabledWorlds += 1;
+          status.phase6PacketPreparationSectorPrefillTicks += phase6Stats.packetPreparationSectorPrefillTicks;
+          status.phase6PacketPreparationSectorPrefillSerialTicks += phase6Stats.packetPreparationSectorPrefillSerialTicks;
+          status.phase6PacketPreparationSectorPrefillParallelTicks += phase6Stats.packetPreparationSectorPrefillParallelTicks;
+          status.phase6PacketPreparationSectorPrefillSectors += phase6Stats.packetPreparationSectorPrefillSectors;
+          status.phase6PacketPreparationSectorPrefillSerialMicroseconds += phase6Stats.packetPreparationSectorPrefillSerialMicroseconds;
+          status.phase6PacketPreparationSectorPrefillParallelMicroseconds += phase6Stats.packetPreparationSectorPrefillParallelMicroseconds;
+          status.phase6PacketPreparationSectorPrefillMergeMicroseconds += phase6Stats.packetPreparationSectorPrefillMergeMicroseconds;
+          status.phase6PacketPreparationSectorPrefillFallbacks += phase6Stats.packetPreparationSectorPrefillFallbacks;
 
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);
