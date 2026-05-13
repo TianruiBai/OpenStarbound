@@ -453,6 +453,7 @@ private:
   Map<Vec3I, SystemWorldServerThreadPtr> m_systemWorlds;
   UniverseConnectionServerPtr m_connectionServer;
   bool m_usePendingConnectionStateMachine;
+  int64_t m_pendingConnectionStateWaitLimit;
   uint64_t m_nextPendingConnectionId;
   uint64_t m_pendingHandshakeAccepted;
   uint64_t m_pendingHandshakeFinalized;

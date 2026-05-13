@@ -1,4 +1,5 @@
 #include "StarConfiguration.hpp"
+#include "StarDataStreamDevices.hpp"
 #include "StarFile.hpp"
 #include "StarNetPackets.hpp"
 #include "StarRoot.hpp"
@@ -89,6 +90,45 @@ void acknowledgeClientWindow(WorldServer& worldServer, ConnectionId clientId, Re
   worldServer.handleIncomingPackets(clientId, {
       make_shared<WorldStartAcknowledgePacket>(),
       make_shared<WorldClientStateUpdatePacket>(clientState.writeDelta())});
+}
+
+ByteArray packetPayload(PacketPtr const& packet) {
+  DataStreamBuffer buffer;
+  packet->write(buffer, {});
+  return buffer.takeData();
+}
+
+List<ByteArray> tileArrayUpdatePayloads(List<PacketPtr> const& packets) {
+  List<ByteArray> payloads;
+  for (auto const& packet : packets) {
+    if (packet->type() == PacketType::TileArrayUpdate)
+      payloads.append(packetPayload(packet));
+  }
+  sort(payloads);
+  return payloads;
+}
+
+List<ByteArray> preparedTileArrayUpdatePayloads(bool packetSectorPrefill) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"packetPreparationSectorPrefill", packetSectorPrefill},
+      {"packetPreparationSectorPrefillWorkerThreads", 2},
+      {"packetPreparationSectorPrefillMinimumSectors", 0}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+
+  if (!worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true))
+    return {};
+  if (!worldServer.addClient(2, SpawnTargetPosition(Vec2F(32, 32)), true))
+    return {};
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+  acknowledgeClientWindow(worldServer, 2, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  worldServer.update(1.0f / 60.0f);
+  auto payloads = tileArrayUpdatePayloads(worldServer.getOutgoingPackets(1));
+  EXPECT_FALSE(payloads.empty());
+  return payloads;
 }
 
 }
@@ -222,6 +262,34 @@ TEST(MulticorePhaseTest, Phase4WorldCommandMailboxProcessesQueuedCommands) {
   worldThread.stop();
 }
 
+TEST(MulticorePhaseTest, Phase4WorldCommandMailboxPropagatesQueuedCommandResults) {
+  auto worldServer = make_shared<WorldServer>(Vec2U(64, 64), File::ephemeralFile());
+  worldServer->setSpawningEnabled(false);
+
+  WorldServerThread worldThread(worldServer, InstanceWorldId("multicorephasecommandresulttest"));
+  worldThread.start();
+  ASSERT_TRUE(waitUntil([&worldThread]() { return worldThread.packetPreparationStats().ticks > 0; }, 5000));
+
+  auto beforeCommands = worldThread.commandStats();
+  ShipUpgrades shipUpgrades(JsonObject{
+      {"shipLevel", 0},
+      {"maxFuel", 123},
+      {"crewSize", 4},
+      {"fuelEfficiency", 0.75},
+      {"shipSpeed", 7}});
+  StringMap<StringList> speciesShips{{"human", StringList{"/ships/human/humant0.structure"}}};
+  auto result = worldThread.applyShipUpgrades("human", shipUpgrades, speciesShips);
+  auto commandStats = worldThread.commandStats();
+
+  EXPECT_GT(commandStats.processed, beforeCommands.processed);
+  EXPECT_EQ(commandStats.failed, beforeCommands.failed);
+  EXPECT_FALSE(worldThread.serverErrorOccurred());
+  EXPECT_EQ(result.species, "human");
+  EXPECT_EQ(result.shipUpgrades, shipUpgrades);
+
+  worldThread.stop();
+}
+
 TEST(MulticorePhaseTest, Phase5WorldTickSnapshotReusesSectorPacketPrep) {
   WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
   worldServer.setFidelity(WorldServerFidelity::Minimum);
@@ -241,6 +309,14 @@ TEST(MulticorePhaseTest, Phase5WorldTickSnapshotReusesSectorPacketPrep) {
   EXPECT_GT(stats.sectorPacketCacheMisses, 0u);
   EXPECT_GT(stats.sectorPacketCacheHits, 0u);
   EXPECT_TRUE(hasTimingSample(worldServer.updateTimingStatus(), "packetPreparation"));
+}
+
+TEST(MulticorePhaseTest, Phase6PacketSectorPrefillMatchesSerialSectorPackets) {
+  auto serialPayloads = preparedTileArrayUpdatePayloads(false);
+  auto prefilledPayloads = preparedTileArrayUpdatePayloads(true);
+
+  ASSERT_EQ(serialPayloads.size(), prefilledPayloads.size());
+  EXPECT_EQ(serialPayloads, prefilledPayloads);
 }
 
 TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {

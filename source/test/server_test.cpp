@@ -190,6 +190,61 @@ TEST(ServerTest, PendingHandshakeStateMachineRejectsProtocolMismatch) {
   server.join();
 }
 
+TEST(ServerTest, PendingHandshakeStateMachineTimesOutProtocolRequest) {
+  ConfigurationValueGuard configGuard("universeServerConfigOverrides", JsonObject{
+      {"usePendingConnectionStateMachine", true},
+      {"clientWaitLimit", 100}});
+  TemporaryUniverseStorage storage;
+  UniverseServer server(storage.universe);
+  server.start();
+
+  auto connection = server.addLocalClient();
+  auto status = waitForServerStatus(server, [](UniverseServer::ServerStatus const& status) {
+    return status.pendingHandshakeTimedOut == 1 && status.pendingHandshakes == 0;
+  });
+
+  EXPECT_EQ(status.pendingHandshakeAccepted, 1u);
+  EXPECT_EQ(status.pendingHandshakeRejected, 0u);
+  EXPECT_EQ(status.pendingHandshakeFinalized, 0u);
+
+  server.stop();
+  server.join();
+}
+
+TEST(ServerTest, PendingHandshakeStateMachineTimesOutClientConnect) {
+  ConfigurationValueGuard configGuard("universeServerConfigOverrides", JsonObject{
+      {"usePendingConnectionStateMachine", true},
+      {"clientWaitLimit", 100}});
+  TemporaryUniverseStorage storage;
+  UniverseServer server(storage.universe);
+  server.start();
+
+  auto connection = server.addLocalClient();
+  connection.pushSingle(make_shared<ProtocolRequestPacket>(StarProtocolVersion));
+  ASSERT_TRUE(connection.sendAll(1000));
+
+  PacketPtr protocolPacket;
+  ASSERT_TRUE(waitUntil([&]() {
+    connection.receive();
+    protocolPacket = connection.pullSingle();
+    return protocolPacket != nullptr;
+  }));
+
+  auto protocolResponse = as<ProtocolResponsePacket>(protocolPacket);
+  ASSERT_TRUE(protocolResponse);
+  ASSERT_TRUE(protocolResponse->allowed);
+
+  auto status = waitForServerStatus(server, [](UniverseServer::ServerStatus const& status) {
+    return status.pendingHandshakeTimedOut == 1 && status.pendingHandshakeRejected == 1 && status.pendingHandshakes == 0;
+  });
+
+  EXPECT_EQ(status.pendingHandshakeAccepted, 1u);
+  EXPECT_EQ(status.pendingHandshakeFinalized, 0u);
+
+  server.stop();
+  server.join();
+}
+
 TEST(ServerTest, AsyncPersistenceCompletesTriggeredStorage) {
   ConfigurationValueGuard configGuard("universeServerConfigOverrides", JsonObject{
       {"useAsyncPersistence", true},
@@ -216,6 +271,37 @@ TEST(ServerTest, AsyncPersistenceCompletesTriggeredStorage) {
 
   server.stop();
   server.join();
+}
+
+TEST(ServerTest, AsyncPersistenceDrainsQueuedWritesOnShutdown) {
+  ConfigurationValueGuard configGuard("universeServerConfigOverrides", JsonObject{
+      {"useAsyncPersistence", true},
+      {"persistenceWorkerThreads", 1},
+      {"maxQueuedPersistenceSnapshots", 128},
+      {"maxPersistenceWriteRetries", 0}});
+  TemporaryUniverseStorage storage;
+  UniverseServer server(storage.universe);
+  server.start();
+
+  waitForServerStatus(server, [](UniverseServer::ServerStatus const& status) {
+    return status.persistenceSnapshotsPending > 0 || status.persistenceSnapshotsWritten >= 2;
+  });
+
+  server.stop();
+  server.join();
+
+  auto status = server.serverStatus();
+  EXPECT_EQ(status.persistenceFailures, 0u);
+  EXPECT_EQ(status.persistenceBatchesPending, 0u);
+  EXPECT_EQ(status.persistenceSnapshotsPending, 0u);
+  EXPECT_GE(status.persistenceSnapshotsWritten, 2u);
+
+  auto universeSettingsFile = File::relativeTo(storage.universe, "universe.dat");
+  auto tempWorldIndexFile = File::relativeTo(storage.universe, "tempworlds.index");
+  ASSERT_TRUE(File::isFile(universeSettingsFile));
+  ASSERT_TRUE(File::isFile(tempWorldIndexFile));
+  EXPECT_TRUE(loadVersionedJsonFile(universeSettingsFile, "UniverseSettings").isType(Json::Type::Object));
+  EXPECT_TRUE(loadVersionedJsonFile(tempWorldIndexFile, "TempWorldIndex").isType(Json::Type::Object));
 }
 
 TEST(ServerTest, AsyncPersistenceFallsBackWhenQueueIsFull) {

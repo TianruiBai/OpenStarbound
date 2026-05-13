@@ -96,6 +96,7 @@ UniverseServer::UniverseServer(String const& storageDir)
   m_storageTriggerDeadline = 0;
   m_clearBrokenWorldsDeadline = 0;
   m_nextPendingConnectionId = 1;
+  m_pendingConnectionStateWaitLimit = 0;
   m_pendingHandshakeAccepted = 0;
   m_pendingHandshakeFinalized = 0;
   m_pendingHandshakeRejected = 0;
@@ -120,6 +121,7 @@ UniverseServer::UniverseServer(String const& storageDir)
 
   auto universeConfig = readUniverseServerConfig();
   m_usePendingConnectionStateMachine = universeConfig.getBool("usePendingConnectionStateMachine", true);
+  m_pendingConnectionStateWaitLimit = universeConfig.getInt("clientWaitLimit");
   auto persistenceWorkerThreads = universeConfig.optUInt("persistenceWorkerThreads").value(1);
   m_useAsyncPersistence = universeConfig.getBool("useAsyncPersistence", false) && persistenceWorkerThreads > 0;
   m_persistenceMaxQueuedSnapshots = universeConfig.optUInt("maxQueuedPersistenceSnapshots").value(128);
@@ -2242,9 +2244,8 @@ String UniverseServer::pendingConnectionStateName(PendingConnectionState state) 
 }
 
 void UniverseServer::setPendingConnectionState(PendingConnection& pendingConnection, PendingConnectionState state) {
-  int clientWaitLimit = Root::singleton().assets()->json("/universe_server.config:clientWaitLimit").toInt();
   pendingConnection.state = state;
-  pendingConnection.stateDeadline = Time::monotonicMilliseconds() + clientWaitLimit;
+  pendingConnection.stateDeadline = Time::monotonicMilliseconds() + m_pendingConnectionStateWaitLimit;
 }
 
 void UniverseServer::failPendingConnection(PendingConnection& pendingConnection, String message, bool timedOut) {
