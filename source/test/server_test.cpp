@@ -107,6 +107,14 @@ TEST(ServerTest, ServerStatusIncludesLoopTimings) {
   server.join();
 }
 
+TEST(ServerTest, WorldStatsCommandReportsDiagnostics) {
+  TemporaryUniverseStorage storage;
+  UniverseServer server(storage.universe);
+
+  auto output = server.adminCommand("worldstats");
+  EXPECT_TRUE(output.contains("World stats: active=0, system=0"));
+}
+
 TEST(ServerTest, PendingHandshakeStateMachineAcceptsLocalClient) {
   ConfigurationValueGuard configGuard("universeServerConfigOverrides", JsonObject{{"usePendingConnectionStateMachine", true}});
   TemporaryUniverseStorage storage;

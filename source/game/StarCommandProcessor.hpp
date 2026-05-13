@@ -31,6 +31,7 @@ private:
   String timescale(ConnectionId connectionId, String const& argumentString);
   String tickrate(ConnectionId connectionId, String const& argumentString);
   String serverStatus(ConnectionId connectionId, String const& argumentString);
+  String worldStats(ConnectionId connectionId, String const& argumentString);
   String serverNetStats(ConnectionId connectionId, String const& argumentString);
   String setTileProtection(ConnectionId connectionId, String const& argumentString);
   String setDungeonId(ConnectionId connectionId, String const& argumentString);

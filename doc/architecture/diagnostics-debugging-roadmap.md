@@ -95,7 +95,7 @@ Recommended commands:
 | --- | --- |
 | `/serverstatus` | Summary of uptime, tick rate, connected players, active worlds, pending handshakes, storage queue depth, memory, and build identifiers. |
 | `/servernetstats` | Existing network worker ownership, scan, wakeup, wait, packet, and callback counters. |
-| `/worldstats [world]` | Tick timing, entity counts, packet output, storage work, and client count for one world or all worlds. |
+| `/worldstats` | Per-world command queue age/counts, tick timing, packet-prep counters, Phase 6 counters, and system-world command/client/instance counts. |
 | `/serverprofile [seconds]` | Short diagnostic sample window with p50/p95/p99 summaries for universe, world, network, and storage phases. |
 | `/dumpdiag [scope]` | Writes a redacted diagnostic bundle to disk and returns the path. |
 
@@ -184,7 +184,7 @@ Go/no-go decisions should use these numbers instead of subjective smoothness alo
 ### D2: Better Overlay And Server Commands
 
 - Add `/debug page`, `/debug copy`, and `/debug dump`.
-- Add `/serverstatus`, `/worldstats`, and `/dumpdiag`.
+- Add `/serverstatus`, `/worldstats`, and `/dumpdiag`; `/serverstatus` and `/worldstats` are started, while `/dumpdiag` remains future work.
 - Add readable grouping and truncation for long overlay values.
 - Add admin permission checks for server diagnostic commands.
 
@@ -224,7 +224,8 @@ Go/no-go decisions should use these numbers instead of subjective smoothness alo
 ## Immediate Tickets
 
 - Add more F3-style context to the current `LogMap` overlay: server UUID, player UUID, world id, admin state, player count, and ship/flight state.
-- Add `/serverstatus` as a compact counterpart to `/servernetstats`. Started with uptime, player count, active world counts, pending queue sizes, TCP state, and aggregate network counters.
+- Add `/serverstatus` as a compact counterpart to `/servernetstats`. Started with uptime, player count, active world counts, pending queue sizes, TCP state, aggregate network counters, and aggregate world-command age/counts.
+- Add `/worldstats` for per-world diagnostics. Started with world command queue age/counts, packet-prep counters, Phase 6 counters, timing summaries, and system-world command/client/instance counts.
 - Add a bounded recent-log ring buffer to `Logger`. Started with `Logger::recentLogMessages()` and configurable in-memory retention for formatted log lines.
 - Add a crash report JSON writer that can be called from fatal exception paths. Started with a core `StarDiagnostics` writer that emits version metadata, fatal context, and recent logs into `crashes/`.
 - Add a redaction helper and tests before writing diagnostic bundles. Started with redaction for password/token/auth text, IPv4 addresses, and common user-home path forms.

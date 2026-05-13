@@ -485,12 +485,12 @@ Started work:
 - `WorldServerThread::applyShipUpgrades()` replaces the remaining ship-upgrade `executeAction()` call with a named command/result path that returns species, upgraded ship state, and ship chunks for the client-context snapshot update.
 - `SystemWorldServerThread` now has a small command mailbox for `addClient()` and `removeClient()`, drained before incoming packet handling and system simulation; active instance worlds and clients are read from published thread-side state under locks.
 - Command waiters are released with a failure if the world thread exits before their command runs.
-- Per-thread command counters exist in `WorldServerThread::CommandStats` and aggregate pending, processed, direct, failed, and wait-time values are visible in `/serverstatus`.
+- Per-thread command counters exist in `WorldServerThread::CommandStats`; aggregate pending, oldest pending age, processed, direct, failed, and wait-time values are visible in `/serverstatus`, while `/worldstats` exposes per-world and system-world command diagnostics plus per-world packet-prep and Phase 6 counters.
 
 Phase 4 closeout result:
 
 1. Done: `SystemWorldServerThread` publishes read snapshots for clients, ship locations, sky parameters, warp actions, and active instance worlds under the queue lock after owner-thread updates.
-2. Deferred: oldest command age and per-world/system-world command details belong in `/worldstats` once that command exists.
+2. Done: `/worldstats` reports oldest pending command age and per-world/system-world command details, including per-world packet-prep and Phase 6 counters.
 3. Done for the safe slice: focused tests cover queued pause mutation and ship-upgrade command/result propagation through the mailbox without command failures.
 4. Deferred: command failure propagation, disconnect during queued world work, and broader admin/RPC behaviors remain hardening coverage before removing the generic compatibility wrapper.
 
@@ -527,7 +527,7 @@ Phase 4 diagnostics status:
 
 - Done: `/serverstatus` aggregates world command queue depth, processed/direct/failed counts, and total wait time.
 - Done: world-thread update time split into command drain, packet handling, simulation, messages, outgoing packet collection, update callbacks, and sync is visible through timing status.
-- Deferred: oldest command age, per-world/system-world command details, and explicit remaining-wrapper audits belong in `/worldstats` or hardening diagnostics.
+- Done: `/worldstats` reports oldest command age plus per-world/system-world command details; explicit remaining-wrapper audits remain hardening diagnostics before compatibility wrappers are removed.
 
 Phase 4 compatibility checkpoints:
 
@@ -794,7 +794,7 @@ Closed Phase 0-6 implemented work:
 2. Phase 1 worker sharding, wakeups, focused many-idle/ordering/remove tests, and worker-stat diagnostics are implemented; socket readiness remains future networking work.
 3. Phase 2 pending handshakes are implemented behind `usePendingConnectionStateMachine` with the legacy accept-thread fallback retained for extended-matrix hardening.
 4. Phase 3 immutable JSON persistence snapshots, bounded async executor, synchronous fallback, retry accounting, shutdown draining, and focused queue-pressure/shutdown-drain tests are implemented while async persistence is default-enabled in the game config with explicit opt-out.
-5. Phase 4 world-thread commands, command diagnostics, ship-upgrade command/result handling, focused queued-result coverage, and system-world add/remove command plus read snapshots are implemented while compatibility wrappers remain for audited rollout.
+5. Phase 4 world-thread commands, aggregate and `/worldstats` command diagnostics, ship-upgrade command/result handling, focused queued-result coverage, and system-world add/remove command plus read snapshots are implemented while compatibility wrappers remain for audited rollout.
 6. Phase 5 serial snapshot/prep groundwork is implemented: owner-indexed entity updates, per-tick monitoring-region snapshot reuse, generation-priority memoization, sector packet cache, entity store cache, packet-prep counters, and focused regression tests.
 7. Phase 6 storage-generation planning and packet-sector prefill are default-enabled in the game config with serial fallback diagnostics, default-enabled differential checks, divergence counters, default-enabled serial liquid/falling-block/wiring/entity/Lua baseline metrics, and focused guard/equivalence tests; deeper liquid, falling-block, wiring, entity, and Lua parallel mutation is intentionally deferred.
 
@@ -803,7 +803,7 @@ Post-audit hardening after default enablement or before Phase 6 expansion:
 1. Run broader TCP/high-connection and high-fan-out profiling before changing socket readiness or `sendPackets` behavior.
 2. Complete the remaining extended pending-handshake matrix before removing the legacy accept-thread fallback: password, duplicate UUID, asset mismatch, max-player/admin-priority, login bursts, legacy/OpenStarbound TCP paths, and password/challenge flush timeouts.
 3. Validate async persistence under save/load depth, disconnect/ship-upgrade while save is pending, failure injection, old-save loading, and latency profiling before removing synchronous fallbacks or broadening async persistence scope.
-4. Add `/worldstats` or equivalent per-world/system-world command diagnostics if command wrappers are removed or if system-world command detail becomes operationally important.
+4. Expand `/worldstats` with wrapper-audit and command-failure details if command wrappers are removed or if system-world command detail becomes operationally important.
 5. Add entity packet-equivalence tests and immutable entity serialization inputs before moving packet preparation onto worker jobs; sector tile-array packet prefill already has focused serial-equivalence coverage.
 6. Keep Phase 6 experiments isolated, independently disable-able, and backed by differential tests; the first differential-check path now covers the two implemented worker helpers, and liquid/falling/wiring/entity/Lua now have serial baseline counters, but still need fixed-seed state comparisons, dependency analysis, an original gameplay mechanism compatible API contract, or a formal mod-visibility model before any parallel mutation path lands.
 7. Revisit lower-level primitive cleanup after ownership boundaries are flatter: recursive mutex reduction, spinlock replacement, and `WorkerPool` backpressure improvements.

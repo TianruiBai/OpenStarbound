@@ -63,6 +63,9 @@ WorldServerThread::CommandStats WorldServerThread::commandStats() const {
   {
     MutexLocker locker(m_commandMutex);
     stats.pending = m_commandQueue.size();
+    auto now = Time::monotonicMicroseconds();
+    for (auto const& command : m_commandQueue)
+      stats.oldestPendingAgeMicroseconds = max<int64_t>(stats.oldestPendingAgeMicroseconds, now - command.queuedAt);
   }
   stats.processed = m_commandsProcessed;
   stats.direct = m_commandsProcessedDirect;
@@ -210,8 +213,10 @@ void WorldServerThread::failPendingCommands(String const& error) {
     commands = take(m_commandQueue);
   }
 
+  auto now = Time::monotonicMicroseconds();
   for (auto& command : commands) {
     ++m_commandsFailed;
+    m_commandWaitMicroseconds += now - command.queuedAt;
     {
       MutexLocker stateLocker(command.state->mutex);
       command.state->failed = true;

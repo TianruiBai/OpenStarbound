@@ -21,6 +21,7 @@ public:
 
   struct CommandStats {
     size_t pending;
+    int64_t oldestPendingAgeMicroseconds;
     uint64_t processed;
     uint64_t direct;
     uint64_t failed;

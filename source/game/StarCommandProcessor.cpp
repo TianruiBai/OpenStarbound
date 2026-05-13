@@ -3,6 +3,7 @@
 #include "StarJsonExtra.hpp"
 #include "StarNpc.hpp"
 #include "StarWorldServer.hpp"
+#include "StarWarping.hpp"
 #include "StarUniverseServer.hpp"
 #include "StarUniverseSettings.hpp"
 #include "StarRoot.hpp"
@@ -314,8 +315,9 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.networkPacketsProcessed,
       status.networkWakeups,
       status.networkIdleTimedWaits));
-  lines.append(strf("World commands: pending={}, processed={}, direct={}, failed={}, waitUs={}",
+  lines.append(strf("World commands: pending={}, oldestPendingUs={}, processed={}, direct={}, failed={}, waitUs={}",
       status.worldCommandQueueDepth,
+      status.worldCommandOldestPendingAgeMicroseconds,
       status.worldCommandsProcessed,
       status.worldCommandsDirect,
       status.worldCommandsFailed,
@@ -414,6 +416,91 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
   };
   appendTimingLine("World thread", status.worldThreadTimings);
   appendTimingLine("World update", status.worldUpdateTimings);
+
+  return lines.join("\n");
+}
+
+String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
+  if (auto errorMsg = adminCheck(connectionId, "view world stats"))
+    return *errorMsg;
+
+  auto summary = m_universe->worldStats();
+  StringList lines;
+  lines.append(strf("World stats: active={}, system={}", summary.worlds.size(), summary.systemWorlds.size()));
+
+  for (auto const& world : summary.worlds) {
+    String state = world.loaded ? "loaded" : (world.loading ? "loading" : "errored");
+    auto const& commands = world.commandStats;
+    auto const& packetPrep = world.packetPreparationStats;
+    auto const& phase6 = world.phase6WorldParallelismStats;
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} falling:{} wiring:{} entity:{} lua:{}",
+        printWorldId(world.worldId),
+        state,
+        world.clients,
+        commands.pending,
+        commands.oldestPendingAgeMicroseconds,
+        commands.processed,
+        commands.direct,
+        commands.failed,
+        commands.waitMicroseconds,
+        packetPrep.ticks,
+        packetPrep.monitoringRegionBuilds,
+        packetPrep.monitoringRegionRects,
+        packetPrep.monitoringRegionSplitRects,
+        packetPrep.sectorPacketCacheHits,
+        packetPrep.sectorPacketCacheMisses,
+        packetPrep.entityStoreCacheHits,
+        packetPrep.entityStoreCacheMisses,
+        packetPrep.entityNetStateCacheHits,
+        packetPrep.entityNetStateCacheMisses,
+        phase6.storageGenerationPlanningTicks,
+        phase6.storageGenerationPlanningSerialTicks,
+        phase6.storageGenerationPlanningParallelTicks,
+        phase6.storageGenerationPlanningSectors,
+        phase6.storageGenerationPlanningFallbacks,
+        phase6.storageGenerationPlanningDivergences,
+        phase6.packetPreparationSectorPrefillTicks,
+        phase6.packetPreparationSectorPrefillSerialTicks,
+        phase6.packetPreparationSectorPrefillParallelTicks,
+        phase6.packetPreparationSectorPrefillSectors,
+        phase6.packetPreparationSectorPrefillFallbacks,
+        phase6.packetPreparationSectorPrefillDivergences,
+        phase6.liquidBaselineTicks,
+        phase6.fallingBlocksBaselineTicks,
+        phase6.wiringBaselineTicks,
+        phase6.entityBaselineTicks,
+        phase6.luaBaselineTicks));
+
+    StringList threadTimingParts;
+    for (auto const& timing : world.threadTimings) {
+      if (timing.samples != 0)
+        threadTimingParts.append(strf("{}={}/{}/{}/{}/{}", timing.name, timing.averageMicroseconds, timing.p50Microseconds, timing.p95Microseconds, timing.p99Microseconds, timing.maxMicroseconds));
+    }
+    if (!threadTimingParts.empty())
+      lines.append(strf("world {} thread timings us avg/p50/p95/p99/max: {}", printWorldId(world.worldId), threadTimingParts.join(", ")));
+
+    StringList worldTimingParts;
+    for (auto const& timing : world.worldTimings) {
+      if (timing.samples != 0)
+        worldTimingParts.append(strf("{}={}/{}/{}/{}/{}", timing.name, timing.averageMicroseconds, timing.p50Microseconds, timing.p95Microseconds, timing.p99Microseconds, timing.maxMicroseconds));
+    }
+    if (!worldTimingParts.empty())
+      lines.append(strf("world {} update timings us avg/p50/p95/p99/max: {}", printWorldId(world.worldId), worldTimingParts.join(", ")));
+  }
+
+  for (auto const& systemWorld : summary.systemWorlds) {
+    auto const& commands = systemWorld.commandStats;
+    lines.append(strf("system {}: clients={}, activeInstances={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}",
+        systemWorld.location,
+        systemWorld.clients,
+        systemWorld.activeInstanceWorlds,
+        commands.pending,
+        commands.oldestPendingAgeMicroseconds,
+        commands.processed,
+        commands.direct,
+        commands.failed,
+        commands.waitMicroseconds));
+  }
 
   return lines.join("\n");
 }
@@ -1193,6 +1280,7 @@ const StringMap<std::function<String(CommandProcessor*, ConnectionId, String)>> 
   add("timescale", &CommandProcessor::timescale);
   add("tickrate", &CommandProcessor::tickrate);
   add("serverstatus", &CommandProcessor::serverStatus);
+  add("worldstats", &CommandProcessor::worldStats);
   add("servernetstats", &CommandProcessor::serverNetStats);
   add("settileprotection", &CommandProcessor::setTileProtection);
   add("setdungeonid", &CommandProcessor::setDungeonId);

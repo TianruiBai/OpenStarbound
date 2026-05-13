@@ -3,6 +3,7 @@
 #include "StarTickRateMonitor.hpp"
 #include "StarNetPackets.hpp"
 #include "StarLogging.hpp"
+#include "StarTime.hpp"
 
 namespace Star {
 
@@ -95,13 +96,14 @@ void SystemWorldServerThread::executeCommand(String const& name, function<void()
     WriteLocker queueLocker(m_queueMutex);
     WriteLocker locker(m_mutex);
     action();
+    ++m_commandsProcessedDirect;
     return;
   }
 
   auto state = make_shared<CommandState>();
   {
     MutexLocker locker(m_commandMutex);
-    m_commandQueue.append(Command{name, std::move(action), state});
+    m_commandQueue.append(Command{name, std::move(action), state, Time::monotonicMicroseconds()});
   }
 
   MutexLocker stateLocker(state->mutex);
@@ -130,6 +132,11 @@ void SystemWorldServerThread::processCommands() {
       Logger::error("SystemWorldServerThread exception caught running queued command '{}': {}", command.name, error);
     }
 
+    ++m_commandsProcessed;
+    m_commandWaitMicroseconds += Time::monotonicMicroseconds() - command.queuedAt;
+    if (failed)
+      ++m_commandsFailed;
+
     {
       MutexLocker stateLocker(command.state->mutex);
       command.state->failed = failed;
@@ -147,7 +154,10 @@ void SystemWorldServerThread::failPendingCommands(String const& error) {
     commands = take(m_commandQueue);
   }
 
+  auto now = Time::monotonicMicroseconds();
   for (auto& command : commands) {
+    ++m_commandsFailed;
+    m_commandWaitMicroseconds += now - command.queuedAt;
     {
       MutexLocker stateLocker(command.state->mutex);
       command.state->failed = true;
@@ -198,6 +208,22 @@ void SystemWorldServerThread::update() {
 
   if (m_updateAction)
     m_updateAction(this);
+}
+
+SystemWorldServerThread::CommandStats SystemWorldServerThread::commandStats() const {
+  CommandStats stats{};
+  {
+    MutexLocker locker(m_commandMutex);
+    stats.pending = m_commandQueue.size();
+    auto now = Time::monotonicMicroseconds();
+    for (auto const& command : m_commandQueue)
+      stats.oldestPendingAgeMicroseconds = max<int64_t>(stats.oldestPendingAgeMicroseconds, now - command.queuedAt);
+  }
+  stats.processed = m_commandsProcessed;
+  stats.direct = m_commandsProcessedDirect;
+  stats.failed = m_commandsFailed;
+  stats.waitMicroseconds = m_commandWaitMicroseconds;
+  return stats;
 }
 
 void SystemWorldServerThread::setClientDestination(ConnectionId clientId, SystemLocation const& destination) {

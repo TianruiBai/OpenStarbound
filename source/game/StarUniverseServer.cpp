@@ -346,6 +346,7 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
         if (auto world = maybeWorldPromise->get()) {
           auto commandStats = world->commandStats();
           status.worldCommandQueueDepth += commandStats.pending;
+          status.worldCommandOldestPendingAgeMicroseconds = max<int64_t>(status.worldCommandOldestPendingAgeMicroseconds, commandStats.oldestPendingAgeMicroseconds);
           status.worldCommandsProcessed += commandStats.processed;
           status.worldCommandsDirect += commandStats.direct;
           status.worldCommandsFailed += commandStats.failed;
@@ -465,6 +466,56 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
   }
 
   return status;
+}
+
+UniverseServer::WorldStatsSummary UniverseServer::worldStats() const {
+  WorldStatsSummary summary;
+  RecursiveMutexLocker locker(m_mainLock);
+
+  for (auto const& pair : m_worlds) {
+    WorldStats stats;
+    stats.worldId = pair.first;
+
+    auto const& maybeWorldPromise = pair.second;
+    if (!maybeWorldPromise) {
+      stats.loading = true;
+      summary.worlds.append(std::move(stats));
+      continue;
+    }
+
+    try {
+      if (!maybeWorldPromise->poll()) {
+        stats.loading = true;
+      } else if (auto world = maybeWorldPromise->get()) {
+        stats.loaded = true;
+        stats.clients = world->clients().size();
+        stats.commandStats = world->commandStats();
+        stats.packetPreparationStats = world->packetPreparationStats();
+        stats.phase6WorldParallelismStats = world->phase6WorldParallelismStats();
+        stats.threadTimings = world->threadTimingStatus();
+        stats.worldTimings = world->worldTimingStatus();
+      } else {
+        stats.errored = true;
+      }
+    } catch (std::exception const&) {
+      stats.errored = true;
+    }
+
+    summary.worlds.append(std::move(stats));
+  }
+
+  for (auto const& pair : m_systemWorlds) {
+    SystemWorldStats stats;
+    stats.location = pair.first;
+    if (auto const& systemWorld = pair.second) {
+      stats.clients = systemWorld->clients().size();
+      stats.activeInstanceWorlds = systemWorld->activeInstanceWorlds().size();
+      stats.commandStats = systemWorld->commandStats();
+    }
+    summary.systemWorlds.append(std::move(stats));
+  }
+
+  return summary;
 }
 
 List<UniverseConnectionServer::NetworkWorkerStats> UniverseServer::connectionWorkerStats() const {

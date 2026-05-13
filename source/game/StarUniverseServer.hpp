@@ -71,6 +71,7 @@ public:
     size_t pendingWorldMessageWorlds;
     size_t pendingWorldMessages;
     size_t worldCommandQueueDepth;
+    int64_t worldCommandOldestPendingAgeMicroseconds;
     uint64_t worldCommandsProcessed;
     uint64_t worldCommandsDirect;
     uint64_t worldCommandsFailed;
@@ -155,6 +156,31 @@ public:
     List<TimingStatus> worldUpdateTimings;
   };
 
+  struct WorldStats {
+    WorldId worldId;
+    bool loaded = false;
+    bool loading = false;
+    bool errored = false;
+    size_t clients = 0;
+    WorldServerThread::CommandStats commandStats{};
+    WorldServer::PacketPreparationStats packetPreparationStats{};
+    WorldServer::Phase6WorldParallelismStats phase6WorldParallelismStats{};
+    List<ServerTimingStatus> threadTimings;
+    List<ServerTimingStatus> worldTimings;
+  };
+
+  struct SystemWorldStats {
+    Vec3I location;
+    size_t clients = 0;
+    size_t activeInstanceWorlds = 0;
+    SystemWorldServerThread::CommandStats commandStats{};
+  };
+
+  struct WorldStatsSummary {
+    List<WorldStats> worlds;
+    List<SystemWorldStats> systemWorlds;
+  };
+
   UniverseServer(String const& storageDir);
   ~UniverseServer();
 
@@ -183,6 +209,7 @@ public:
   size_t numberOfClients() const;
   uint32_t maxClients() const;
   ServerStatus serverStatus() const;
+  WorldStatsSummary worldStats() const;
   List<UniverseConnectionServer::NetworkWorkerStats> connectionWorkerStats() const;
   bool isConnectedClient(ConnectionId clientId) const;
 

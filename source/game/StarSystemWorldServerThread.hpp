@@ -13,6 +13,15 @@ typedef function<void(SystemClientShip*)> ClientShipAction;
 
 class SystemWorldServerThread : public Thread {
 public:
+  struct CommandStats {
+    size_t pending;
+    int64_t oldestPendingAgeMicroseconds;
+    uint64_t processed;
+    uint64_t direct;
+    uint64_t failed;
+    uint64_t waitMicroseconds;
+  };
+
   SystemWorldServerThread(Vec3I const& location, SystemWorldServerPtr systemWorld, String storageFile);
   ~SystemWorldServerThread();
 
@@ -27,6 +36,7 @@ public:
   void stop();
 
   void update();
+  CommandStats commandStats() const;
 
   void setClientDestination(ConnectionId clientId, SystemLocation const& location);
   void executeClientShipAction(ConnectionId clientId, ClientShipAction action);
@@ -57,6 +67,7 @@ private:
     String name;
     function<void()> action;
     shared_ptr<CommandState> state;
+    int64_t queuedAt;
   };
 
   struct SystemWorldStorageSnapshot {
@@ -84,8 +95,12 @@ private:
 
   ReadersWriterMutex m_mutex;
   mutable ReadersWriterMutex m_queueMutex;
-  Mutex m_commandMutex;
+  mutable Mutex m_commandMutex;
   List<Command> m_commandQueue;
+  atomic<uint64_t> m_commandsProcessed{0};
+  atomic<uint64_t> m_commandsProcessedDirect{0};
+  atomic<uint64_t> m_commandsFailed{0};
+  atomic<uint64_t> m_commandWaitMicroseconds{0};
 
   HashSet<ConnectionId> m_clients;
   HashMap<ConnectionId, SystemLocation> m_clientShipDestinations;
