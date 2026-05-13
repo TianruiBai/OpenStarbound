@@ -60,12 +60,16 @@ public:
     uint64_t monitoringRegionBuilds = 0;
     uint64_t monitoringRegionRects = 0;
     uint64_t monitoringRegionSplitRects = 0;
+    uint64_t monitoringRegionReuses = 0;
     uint64_t sectorPacketCacheHits = 0;
     uint64_t sectorPacketCacheMisses = 0;
     uint64_t entityStoreCacheHits = 0;
     uint64_t entityStoreCacheMisses = 0;
     uint64_t entityNetStateCacheHits = 0;
     uint64_t entityNetStateCacheMisses = 0;
+    uint64_t sectorClientFanoutLookups = 0;
+    uint64_t sectorClientFanoutRecipients = 0;
+    uint64_t sectorClientFanoutMisses = 0;
   };
 
   struct Phase6WorldParallelismStats {
@@ -104,6 +108,12 @@ public:
     uint64_t liquidBaselineTicks = 0;
     uint64_t liquidActiveCells = 0;
     uint64_t liquidMonitoringRegions = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheBuilds = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheRegions = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheBuckets = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheLookups = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheCandidates = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheHits = 0;
     uint64_t fallingBlocksBaselineTicks = 0;
     uint64_t fallingBlocksPendingPositions = 0;
     uint64_t fallingBlocksProcessedPositions = 0;
@@ -409,6 +419,7 @@ private:
     List<RectI> clientWindows;
     List<RectI> monitoringRegions;
     HashMap<ConnectionId, List<RectI>> monitoringRegionsByConnection;
+    HashMap<ConnectionId, List<RectI>> activeSignalRegionsByConnection;
     HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdateCache;
     HashMap<NetCompatibilityRules, HashMap<EntityId, EntityCreateSnapshot>> entityCreateCache;
     PacketPreparationStats packetPreparationStats;
@@ -451,6 +462,7 @@ private:
   Maybe<unsigned> shouldRunThisStep(String const& timingConfiguration);
 
   WorldTickSnapshot buildWorldTickSnapshot();
+  void updateClientActiveSectors(ClientInfo& clientInfo, HashSet<ServerTileSectorArray::Sector> activeSectors);
   List<ServerTileSectorArray::Sector> collectPendingSectorUpdates() const;
   SectorUpdateSnapshot buildSectorUpdateSnapshot(ServerTileSectorArray::Sector sector) const;
   static PacketPtr buildSectorUpdatePacket(SectorUpdateSnapshot sectorUpdateSnapshot);
@@ -482,6 +494,7 @@ private:
   // Push modified tile data to each client.
   void queueTileUpdates(Vec2I const& pos);
   void queueTileDamageUpdates(Vec2I const& pos, TileLayer layer);
+  void queueLiquidUpdates(Vec2I const& pos);
   void writeNetTile(Vec2I const& pos, NetTile& netTile) const;
 
   void dirtyCollision(RectI const& region);
@@ -553,6 +566,7 @@ private:
   bool m_phase6PacketPreparationSectorPrefillDifferentialCheck;
   bool m_phase6SubsystemBaselineMetricsEnabled;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
+  HashMap<ServerTileSectorArray::Sector, HashSet<ConnectionId>> m_sectorClientSubscriptions;
 
   GameTimer m_entityUpdateTimer;
   GameTimer m_tileEntityBreakCheckTimer;

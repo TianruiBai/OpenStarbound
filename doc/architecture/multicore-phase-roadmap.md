@@ -785,6 +785,43 @@ Tests:
 - Liquid-heavy worlds.
 - Modded smoke tests.
 
+## Post-Phase-6 Performance Plan
+
+Goal: move from compatibility-first worker groundwork to measurable production optimization without changing legacy save, packet, or Lua/entity behavior by default.
+
+The first concrete release slice for this post-Phase-6 plan is `26.5.2a`; see `server-optimization-roadmap-26.5.2a.md`. That slice explicitly parks Vulkan work and targets the remaining hot authoritative world-thread problem through fixed workload gates, serial hot-path bookkeeping wins, packet-prep snapshot expansion, storage-depth work, network readiness hardening, mechanism-compatible API seeds, and mutation-experiment preflight.
+
+Post-Phase-6 work should be treated as a set of gated tracks rather than one large mutation-parallelism switch:
+
+1. Measurement and workload gates: keep fixed benchmark worlds for crowded hubs, high-fan-out replication, liquid-heavy regions, wiring-heavy bases, generation-heavy exploration, save/disconnect spikes, login bursts, and modded smoke packs. Every optimization claim should be tied to p50/p95/p99 tick time, queue depth, worker time, memory pressure, packet latency, and CPU distribution.
+2. Low-risk serial wins: land algorithmic and cache improvements that preserve current ordering, including generation-priority snapshots, monitoring-region reuse, sector/client fan-out indexing, liquid no-limit membership caches, dirty wiring-network tracking, and per-entity serialization counters.
+3. Snapshot worker expansion: broaden packet preparation only after immutable net-state inputs and `writeNetState(0)` equivalence are proven. Worker jobs may prepare bytes or immutable structures; the owner thread still performs the visible merge and packet ordering decisions.
+4. Storage depth: keep async persistence and snapshot creation bounded, then reduce avoidable full exports, add dirty-sector filtering, tune database cache/commit behavior, and offload compression only from immutable sector snapshots.
+5. Mechanism-compatible API profile: add explicit opt-in capability flags, batched reads, deferred writes, immutable tick snapshots, dirty-component subscriptions, and phase-boundary event hooks. Existing mods stay in legacy exact mode unless they opt into the narrower contract.
+6. Mutation experiment graduation: graduate liquid, falling-block, and wiring experiments one subsystem at a time only after fixed-seed signatures, dependency analysis, mod-visibility contracts, implementation gates, differential checks, and fallback behavior are all in place.
+7. Entity/Lua research: keep parallel entity and Lua mutation research-only until staged APIs and event phases can make ordering guarantees explicit. Hidden default parallelism here is not acceptable because mods can observe too much intermediate state.
+
+Recommended execution order:
+
+1. Add or refresh benchmark workloads and diagnostics consumers before broadening worker behavior.
+2. Finish immutable entity net-state inputs and deeper packet byte-equivalence tests.
+3. Land serial algorithmic fixes that reduce hot-world cost even when all parallel flags are disabled.
+4. Extend packet preparation workers under default-on differential checks.
+5. Add the first mechanism-compatible API capability probes and batched read/deferred-write APIs.
+6. Run liquid, falling, and wiring mutation experiments behind per-subsystem config flags with serial fallback and divergence counters.
+7. Consider native optimized mod APIs only after the mechanism-compatible profile has real adopters and diagnostics.
+
+Post-Phase-6 go/no-go gates:
+
+- Legacy exact mode remains the default for existing saves and mods.
+- Mechanism-compatible behavior is opt-in, versioned, capability-queryable, and documented as a phase-boundary contract.
+- Default server config never enables a mutation worker that can change Lua-visible order.
+- Serial fallback remains available for every subsystem experiment.
+- Divergence, queue overload, worker starvation, or p99 regression automatically keeps an experiment hidden or disabled.
+- Modded smoke packs remain part of the release gate, not an afterthought.
+
+Client graphics backend work can proceed in parallel, but it is a separate performance track. See `graphics-backend-roadmap.md` for the OpenGL-plus-experimental-Vulkan plan; graphics backend changes should not change server simulation semantics or weaken the Phase 6 compatibility gates.
+
 ## Phase 0-6 Closeout And Gate Work
 
 The practical Phase 0-6 implementation backlog is closed for the compatibility-first slices described above. The remaining items are validation, diagnostics consumers, or future Phase 6 expansion gates that should stay visible but should not be treated as unfinished implementation work.

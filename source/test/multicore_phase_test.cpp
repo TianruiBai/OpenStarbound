@@ -1,3 +1,4 @@
+#include "StarCellularLiquid.hpp"
 #include "StarConfiguration.hpp"
 #include "StarDataStreamDevices.hpp"
 #include "StarFile.hpp"
@@ -45,6 +46,33 @@ struct ConfigurationValueGuard {
   String key;
   Json previousValue;
 };
+
+struct TestLiquidWorld : CellularLiquidWorld<int> {
+  CellularLiquidCell<int> cell(Vec2I const& location) const override {
+    return cells.value(location, CellularLiquidFlowCell<int>{Maybe<int>(), 0.0f, 0.0f});
+  }
+
+  void setFlow(Vec2I const& location, CellularLiquidFlowCell<int> const& flow) override {
+    cells.set(location, flow);
+  }
+
+  HashMap<Vec2I, CellularLiquidFlowCell<int>> cells;
+};
+
+LiquidCellEngineParameters testLiquidEngineParameters() {
+  return LiquidCellEngineParameters{
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.0f,
+      0.001f,
+      0.001f,
+      0.001f,
+      0.5f};
+}
 
 template <typename Predicate>
 bool waitUntil(Predicate predicate, unsigned timeoutMillis = 3000) {
@@ -184,6 +212,15 @@ List<ByteArray> preparedEntityPacketPayloads(bool packetSectorPrefill) {
   return payloads;
 }
 
+size_t packetTypeCount(List<PacketPtr> const& packets, PacketType packetType) {
+  size_t count = 0;
+  for (auto const& packet : packets) {
+    if (packet->type() == packetType)
+      count += 1;
+  }
+  return count;
+}
+
 LiquidId firstTestLiquidId() {
   auto liquidsDatabase = Root::singleton().liquidsDatabase();
   for (auto const& liquidName : liquidsDatabase->liquidNames()) {
@@ -229,6 +266,9 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   EXPECT_GT(stats.liquidBaselineTicks, 0u);
   EXPECT_GT(stats.liquidActiveCells, 0u);
   EXPECT_GT(stats.liquidMonitoringRegions, 0u);
+  EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheBuilds, 0u);
+  EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheRegions, 0u);
+  EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheBuckets, 0u);
   EXPECT_GT(stats.fallingBlocksBaselineTicks, 0u);
   EXPECT_GT(stats.wiringBaselineTicks, 0u);
   EXPECT_GT(stats.entityBaselineTicks, 0u);
@@ -242,6 +282,12 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.liquidBaselineTicks,
       stats.liquidActiveCells,
       stats.liquidMonitoringRegions,
+      stats.liquidNoProcessingLimitRegionCacheBuilds,
+      stats.liquidNoProcessingLimitRegionCacheRegions,
+      stats.liquidNoProcessingLimitRegionCacheBuckets,
+      stats.liquidNoProcessingLimitRegionCacheLookups,
+      stats.liquidNoProcessingLimitRegionCacheCandidates,
+      stats.liquidNoProcessingLimitRegionCacheHits,
       stats.fallingBlocksBaselineTicks,
       stats.fallingBlocksPendingPositions,
       stats.fallingBlocksProcessedPositions,
@@ -442,9 +488,84 @@ TEST(MulticorePhaseTest, Phase5WorldTickSnapshotReusesSectorPacketPrep) {
   EXPECT_EQ(stats.monitoringRegionBuilds, 2u);
   EXPECT_GE(stats.monitoringRegionRects, 2u);
   EXPECT_GE(stats.monitoringRegionSplitRects, stats.monitoringRegionRects);
+  EXPECT_GE(stats.monitoringRegionReuses, stats.monitoringRegionRects * 2);
   EXPECT_GT(stats.sectorPacketCacheMisses, 0u);
   EXPECT_GT(stats.sectorPacketCacheHits, 0u);
   EXPECT_TRUE(hasTimingSample(worldServer.updateTimingStatus(), "packetPreparation"));
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationSectorClientFanoutQueuesOnlySubscribedClients) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(2048, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+
+  ASSERT_TRUE(worldServer.addClient(1, SpawnTargetPosition(Vec2F(16, 36)), true));
+  ASSERT_TRUE(worldServer.addClient(2, SpawnTargetPosition(Vec2F(1536, 36)), true));
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(0, 32), Vec2I(16, 16)));
+  acknowledgeClientWindow(worldServer, 2, RectI::withSize(Vec2I(1536, 32), Vec2I(16, 16)));
+
+  worldServer.update(1.0f / 60.0f);
+  worldServer.getOutgoingPackets(1);
+  worldServer.getOutgoingPackets(2);
+
+  auto liquidId = firstTestLiquidId();
+  ASSERT_NE(liquidId, EmptyLiquidId);
+
+  auto beforeFanout = worldServer.packetPreparationStats();
+  worldServer.modifyLiquid(Vec2I(8, 36), liquidId, 1.0f);
+  auto afterFanout = worldServer.packetPreparationStats();
+  EXPECT_EQ(afterFanout.sectorClientFanoutLookups, beforeFanout.sectorClientFanoutLookups + 1);
+  EXPECT_EQ(afterFanout.sectorClientFanoutRecipients, beforeFanout.sectorClientFanoutRecipients + 1);
+  EXPECT_EQ(afterFanout.sectorClientFanoutMisses, beforeFanout.sectorClientFanoutMisses);
+
+  worldServer.update(1.0f / 60.0f);
+  EXPECT_GT(packetTypeCount(worldServer.getOutgoingPackets(1), PacketType::TileLiquidUpdate), 0u);
+  EXPECT_EQ(packetTypeCount(worldServer.getOutgoingPackets(2), PacketType::TileLiquidUpdate), 0u);
+
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(1536, 32), Vec2I(16, 16)));
+  beforeFanout = worldServer.packetPreparationStats();
+  worldServer.modifyLiquid(Vec2I(8, 36), liquidId, 0.5f);
+  afterFanout = worldServer.packetPreparationStats();
+  EXPECT_EQ(afterFanout.sectorClientFanoutLookups, beforeFanout.sectorClientFanoutLookups + 1);
+  EXPECT_EQ(afterFanout.sectorClientFanoutRecipients, beforeFanout.sectorClientFanoutRecipients);
+  EXPECT_EQ(afterFanout.sectorClientFanoutMisses, beforeFanout.sectorClientFanoutMisses + 1);
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationLiquidNoProcessingLimitCacheUsesBucketedCandidates) {
+  auto liquidWorld = make_shared<TestLiquidWorld>();
+  List<Vec2I> activePositions{{-36, 0}, {0, 0}, {32, 0}, {100, 0}, {260, 0}};
+  for (auto const& position : activePositions) {
+    liquidWorld->cells.set(position, CellularLiquidFlowCell<int>{1, 1.0f, 0.0f});
+  }
+
+  LiquidCellEngine<int> liquidEngine(testLiquidEngineParameters(), liquidWorld);
+  for (auto const& position : activePositions)
+    liquidEngine.visitLocation(position);
+  liquidEngine.update();
+
+  liquidEngine.setProcessingLimit(0);
+  liquidEngine.setNoProcessingLimitRegions({
+      RectI::withSize(Vec2I(-40, -8), Vec2I(16, 16)),
+      RectI::withSize(Vec2I(96, -8), Vec2I(16, 16)),
+      RectI::withSize(Vec2I(256, -8), Vec2I(16, 16))});
+
+  auto builtStats = liquidEngine.noProcessingLimitRegionCacheStats();
+  EXPECT_EQ(builtStats.builds, 1u);
+  EXPECT_EQ(builtStats.regions, 3u);
+  EXPECT_GT(builtStats.buckets, 0u);
+
+  liquidEngine.update();
+  auto lookupStats = liquidEngine.noProcessingLimitRegionCacheStats();
+  EXPECT_GT(lookupStats.lookups, 0u);
+  EXPECT_GT(lookupStats.hits, 0u);
+  EXPECT_LT(lookupStats.candidates, lookupStats.lookups * lookupStats.regions);
 }
 
 TEST(MulticorePhaseTest, Phase6PacketSectorPrefillMatchesSerialSectorPackets) {

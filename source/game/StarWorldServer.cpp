@@ -375,6 +375,7 @@ List<PacketPtr> WorldServer::removeClient(ConnectionId clientId) {
   }
 
   auto packets = std::move(info->outgoingPackets);
+  updateClientActiveSectors(*info, HashSet<ServerTileSectorArray::Sector>());
   m_clientInfo.remove(clientId);
 
   packets.append(make_shared<WorldStopPacket>("Removed"));
@@ -438,12 +439,14 @@ void WorldServer::handleIncomingPackets(ConnectionId clientId, List<PacketPtr> c
 
       // Need to send all sectors that are now in the client window but were not
       // in the old
-      HashSet<ServerTileSectorArray::Sector> oldSectors = take(clientInfo->activeSectors);
+      HashSet<ServerTileSectorArray::Sector> oldSectors = clientInfo->activeSectors;
+      HashSet<ServerTileSectorArray::Sector> activeSectors;
 
       for (auto const& monitoredRegion : clientInfo->monitoringRegions(m_entityMap))
-        clientInfo->activeSectors.addAll(m_tileArray->validSectorsFor(monitoredRegion));
+        activeSectors.addAll(m_tileArray->validSectorsFor(monitoredRegion));
 
-      clientInfo->pendingSectors.addAll(clientInfo->activeSectors.difference(oldSectors));
+      clientInfo->pendingSectors.addAll(activeSectors.difference(oldSectors));
+      updateClientActiveSectors(*clientInfo, std::move(activeSectors));
 
     } else if (auto mtpacket = as<ModifyTileListPacket>(packet)) {
       auto unappliedModifications = applyTileModifications(mtpacket->modifications, mtpacket->allowEntityOverlap);
@@ -686,20 +689,26 @@ float WorldServer::expiryTime() {
 WorldServer::WorldTickSnapshot WorldServer::buildWorldTickSnapshot() {
   WorldTickSnapshot snapshot;
   snapshot.packetPreparationStats.ticks = 1;
+  auto activeRegionPad = jsonToVec2I(m_serverConfig.get("playerActiveRegionPad"));
 
   for (auto const& pair : m_clientInfo) {
     snapshot.clientWindows.append(pair.second->clientState.window());
 
     auto monitoringRegions = pair.second->monitoringRegions(m_entityMap);
+    List<RectI> activeSignalRegions;
+    activeSignalRegions.reserve(monitoringRegions.size());
     snapshot.packetPreparationStats.monitoringRegionBuilds += 1;
     snapshot.packetPreparationStats.monitoringRegionRects += monitoringRegions.size();
     snapshot.monitoringRegionsByConnection.set(pair.first, monitoringRegions);
 
     for (auto const& region : monitoringRegions) {
+      activeSignalRegions.append(region.padded(activeRegionPad));
       auto splitRegions = m_geometry.splitRect(region);
       snapshot.packetPreparationStats.monitoringRegionSplitRects += splitRegions.size();
       snapshot.monitoringRegions.appendAll(splitRegions);
     }
+
+    snapshot.activeSignalRegionsByConnection.set(pair.first, std::move(activeSignalRegions));
   }
 
   return snapshot;
@@ -719,6 +728,25 @@ List<ServerTileSectorArray::Sector> WorldServer::collectPendingSectorUpdates() c
   }
 
   return sectors;
+}
+
+void WorldServer::updateClientActiveSectors(ClientInfo& clientInfo, HashSet<ServerTileSectorArray::Sector> activeSectors) {
+  for (auto const& sector : clientInfo.activeSectors.difference(activeSectors)) {
+    if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
+      subscribers->remove(clientInfo.clientId);
+      if (subscribers->empty())
+        m_sectorClientSubscriptions.remove(sector);
+    }
+  }
+
+  for (auto const& sector : activeSectors.difference(clientInfo.activeSectors)) {
+    auto subscribers = m_sectorClientSubscriptions.ptr(sector);
+    if (!subscribers)
+      subscribers = &m_sectorClientSubscriptions.set(sector, HashSet<ConnectionId>());
+    subscribers->add(clientInfo.clientId);
+  }
+
+  clientInfo.activeSectors = std::move(activeSectors);
 }
 
 WorldServer::SectorUpdateSnapshot WorldServer::buildSectorUpdateSnapshot(ServerTileSectorArray::Sector sector) const {
@@ -850,6 +878,7 @@ void WorldServer::recordPacketPreparationStats(WorldTickSnapshot const& snapshot
   m_packetPreparationStats.monitoringRegionBuilds += snapshot.packetPreparationStats.monitoringRegionBuilds;
   m_packetPreparationStats.monitoringRegionRects += snapshot.packetPreparationStats.monitoringRegionRects;
   m_packetPreparationStats.monitoringRegionSplitRects += snapshot.packetPreparationStats.monitoringRegionSplitRects;
+  m_packetPreparationStats.monitoringRegionReuses += snapshot.packetPreparationStats.monitoringRegionReuses;
   m_packetPreparationStats.sectorPacketCacheHits += snapshot.packetPreparationStats.sectorPacketCacheHits;
   m_packetPreparationStats.sectorPacketCacheMisses += snapshot.packetPreparationStats.sectorPacketCacheMisses;
   m_packetPreparationStats.entityStoreCacheHits += snapshot.packetPreparationStats.entityStoreCacheHits;
@@ -1139,13 +1168,22 @@ void WorldServer::update(float dt) {
 
   timePhase(UpdateTimingPhase::Liquid, [&]() {
     if (shouldRunThisStep("liquidUpdate")) {
+      auto liquidRegionCacheStatsBefore = m_liquidEngine->noProcessingLimitRegionCacheStats();
       m_liquidEngine->setProcessingLimit(m_fidelityConfig.optUInt("liquidEngineBackgroundProcessingLimit"));
       m_liquidEngine->setNoProcessingLimitRegions(tickSnapshot.monitoringRegions);
+      tickSnapshot.packetPreparationStats.monitoringRegionReuses += tickSnapshot.monitoringRegions.size();
       m_liquidEngine->update();
       if (m_phase6SubsystemBaselineMetricsEnabled) {
+        auto liquidRegionCacheStatsAfter = m_liquidEngine->noProcessingLimitRegionCacheStats();
         m_phase6WorldParallelismStats.liquidBaselineTicks += 1;
         m_phase6WorldParallelismStats.liquidActiveCells += m_liquidEngine->activeCells();
         m_phase6WorldParallelismStats.liquidMonitoringRegions += tickSnapshot.monitoringRegions.size();
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheBuilds += liquidRegionCacheStatsAfter.builds - liquidRegionCacheStatsBefore.builds;
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheRegions += liquidRegionCacheStatsAfter.regions - liquidRegionCacheStatsBefore.regions;
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheBuckets += liquidRegionCacheStatsAfter.buckets - liquidRegionCacheStatsBefore.buckets;
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheLookups += liquidRegionCacheStatsAfter.lookups - liquidRegionCacheStatsBefore.lookups;
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheCandidates += liquidRegionCacheStatsAfter.candidates - liquidRegionCacheStatsBefore.candidates;
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheHits += liquidRegionCacheStatsAfter.hits - liquidRegionCacheStatsBefore.hits;
       }
     }
   });
@@ -1193,9 +1231,10 @@ void WorldServer::update(float dt) {
     tickSnapshot.sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
     prefillSectorUpdateCache(tickSnapshot);
     for (auto const& pair : m_clientInfo) {
-      auto const& monitoringRegions = tickSnapshot.monitoringRegionsByConnection.get(pair.first);
-      for (auto const& monitoredRegion : monitoringRegions)
-        signalRegion(monitoredRegion.padded(jsonToVec2I(m_serverConfig.get("playerActiveRegionPad"))));
+      auto const& activeSignalRegions = tickSnapshot.activeSignalRegionsByConnection.get(pair.first);
+      tickSnapshot.packetPreparationStats.monitoringRegionReuses += activeSignalRegions.size();
+      for (auto const& activeSignalRegion : activeSignalRegions)
+        signalRegion(activeSignalRegion);
       queueUpdatePackets(pair.first, tickSnapshot);
     }
     m_netStateCache.clear();
@@ -1210,15 +1249,21 @@ void WorldServer::update(float dt) {
 
     LogMap::set(strf("server_{}_entities", m_worldId), strf("{} in {} sectors", m_entityMap->size(), m_tileArray->loadedSectorCount()));
     LogMap::set(strf("server_{}_time", m_worldId), strf("age = {:4.2f}, day = {:4.2f}/{:4.2f}s", epochTime(), timeOfDay(), dayLength()));
-    LogMap::set(strf("server_{}_packet_prep", m_worldId), strf("ticks={}, regions={}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}",
+    LogMap::set(strf("server_{}_packet_prep", m_worldId), strf("ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, sectorFanout={}/{}/{}",
         m_packetPreparationStats.ticks,
         m_packetPreparationStats.monitoringRegionBuilds,
+        m_packetPreparationStats.monitoringRegionRects,
+        m_packetPreparationStats.monitoringRegionSplitRects,
+        m_packetPreparationStats.monitoringRegionReuses,
         m_packetPreparationStats.sectorPacketCacheHits,
         m_packetPreparationStats.sectorPacketCacheMisses,
         m_packetPreparationStats.entityStoreCacheHits,
         m_packetPreparationStats.entityStoreCacheMisses,
         m_packetPreparationStats.entityNetStateCacheHits,
-        m_packetPreparationStats.entityNetStateCacheMisses));
+        m_packetPreparationStats.entityNetStateCacheMisses,
+        m_packetPreparationStats.sectorClientFanoutLookups,
+        m_packetPreparationStats.sectorClientFanoutRecipients,
+        m_packetPreparationStats.sectorClientFanoutMisses));
     LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
     LogMap::set(strf("server_{}_lua_mem", m_worldId), m_luaRoot->luaMemoryUsage());
   });
@@ -1644,10 +1689,7 @@ ItemDescriptor WorldServer::collectLiquid(List<Vec2I> const& tilePositions, Liqu
         maybeDrainTiles.append(tile);
       }
 
-      for (auto const& pair : m_clientInfo) {
-        if (pair.second->activeSectors.contains(m_tileArray->sectorFor(pos)))
-          pair.second->pendingLiquidUpdates.add(pos);
-      }
+      queueLiquidUpdates(pos);
       m_liquidEngine->visitLocation(pos);
     }
   }
@@ -2400,12 +2442,8 @@ void WorldServer::setLiquid(Vec2I const& pos, LiquidId liquid, float level, floa
     if (liquid == EmptyLiquidId)
       level = 0;
 
-    if (auto netUpdate = tile->liquid.update(liquid, level, pressure)) {
-      for (auto const& pair : m_clientInfo) {
-        if (pair.second->activeSectors.contains(m_tileArray->sectorFor(pos)))
-          pair.second->pendingLiquidUpdates.add(pos);
-      }
-    }
+    if (auto netUpdate = tile->liquid.update(liquid, level, pressure))
+      queueLiquidUpdates(pos);
   }
 }
 
@@ -2545,6 +2583,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
 
   HashSet<EntityPtr> monitoredEntities;
   auto const& monitoringRegions = snapshot.monitoringRegionsByConnection.get(clientId);
+  snapshot.packetPreparationStats.monitoringRegionReuses += monitoringRegions.size();
   for (auto const& monitoredRegion : monitoringRegions)
     monitoredEntities.addAll(m_entityMap->entityQuery(RectF(monitoredRegion)));
 
@@ -2712,16 +2751,38 @@ void WorldServer::checkEntityBreaks(RectF const& rect) {
 }
 
 void WorldServer::queueTileUpdates(Vec2I const& pos) {
-  for (auto const& pair : m_clientInfo) {
-    if (pair.second->activeSectors.contains(m_tileArray->sectorFor(pos)))
-      pair.second->pendingTileUpdates.add(pos);
+  auto sector = m_tileArray->sectorFor(pos);
+  m_packetPreparationStats.sectorClientFanoutLookups += 1;
+  if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
+    m_packetPreparationStats.sectorClientFanoutRecipients += subscribers->size();
+    for (auto const& clientId : subscribers->values())
+      m_clientInfo.get(clientId)->pendingTileUpdates.add(pos);
+  } else {
+    m_packetPreparationStats.sectorClientFanoutMisses += 1;
   }
 }
 
 void WorldServer::queueTileDamageUpdates(Vec2I const& pos, TileLayer layer) {
-  for (auto const& pair : m_clientInfo) {
-    if (pair.second->activeSectors.contains(m_tileArray->sectorFor(pos)))
-      pair.second->pendingTileDamageUpdates.add({pos, layer});
+  auto sector = m_tileArray->sectorFor(pos);
+  m_packetPreparationStats.sectorClientFanoutLookups += 1;
+  if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
+    m_packetPreparationStats.sectorClientFanoutRecipients += subscribers->size();
+    for (auto const& clientId : subscribers->values())
+      m_clientInfo.get(clientId)->pendingTileDamageUpdates.add({pos, layer});
+  } else {
+    m_packetPreparationStats.sectorClientFanoutMisses += 1;
+  }
+}
+
+void WorldServer::queueLiquidUpdates(Vec2I const& pos) {
+  auto sector = m_tileArray->sectorFor(pos);
+  m_packetPreparationStats.sectorClientFanoutLookups += 1;
+  if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
+    m_packetPreparationStats.sectorClientFanoutRecipients += subscribers->size();
+    for (auto const& clientId : subscribers->values())
+      m_clientInfo.get(clientId)->pendingLiquidUpdates.add(pos);
+  } else {
+    m_packetPreparationStats.sectorClientFanoutMisses += 1;
   }
 }
 

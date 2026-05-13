@@ -14,7 +14,11 @@ The review focused on the code paths that dominate thread ownership, packet flow
 
 - `source/game/StarUniverseServer.cpp`
 - `source/game/StarUniverseConnection.cpp`
+- `source/game/StarWorldServer.cpp`
 - `source/game/StarWorldServerThread.cpp`
+- `source/game/StarWireProcessor.cpp`
+- `source/game/StarFallingBlocksAgent.cpp`
+- `source/base/StarCellularLiquid.hpp`
 - `source/game/StarNetPacketSocket.cpp`
 - `source/core/StarWorkerPool.cpp`
 - `source/core/StarAtomicSharedPtr.hpp`
@@ -34,6 +38,8 @@ The strongest performance and multithreading opportunities are:
 2. replace sleep-based networking loops with readiness-driven I/O and true worker sharding
 3. remove persistence and maintenance work from the universe tick path
 4. simplify low-level synchronization primitives only after the larger scheduling bottlenecks are addressed
+
+Post-Phase-6 reassessment: the main-thread jam has been relieved, but not eliminated. It is relieved for login bursts, persistence writes, selected packet-preparation work, storage-generation prioritization, and connection-worker ownership. It still exists for one crowded world because the authoritative `WorldServer::update()` lane still performs entity, Lua, liquid, falling-block, wiring, damage, storage, removal, and packet-preparation phases in one ordered owner-thread tick.
 
 ## 3. Confirmed Findings
 
@@ -72,32 +78,33 @@ Modernization direction:
 
 This is the highest-value concurrency refactor in the codebase.
 
-### 3.2 Networking still depends on polling sleeps and repeated full-connection scans
+### 3.2 Networking still depends on polling sleeps, though full-map worker scans have been relieved
 
-The networking layer uses explicit polling loops at both the individual connection level and the connection-server worker level.
+The networking layer still uses explicit polling loops, but the connection-server worker model has improved since the earlier review. `UniverseConnectionServer` now keeps per-worker connection lists and wakes the assigned worker when connections are added, removed, or sent to.
 
-Verified patterns:
+Current verified patterns:
 
 - `UniverseConnection::sendAll()` loops until output drains and sleeps for `PacketSocketPollSleep`
 - `UniverseConnection::receiveAny()` loops until any packet arrives and sleeps for `PacketSocketPollSleep`
-- `UniverseConnectionServer` workers copy `m_connections.pairs()` each pass, then filter by `workerIndex`
-- when no data was transmitted, the worker sleeps for `PacketSocketPollSleep`
+- `UniverseConnectionServer` workers scan their owned connection ids each pass, send queued packets, call `writeData()`, call `readData()`, and dispatch received packet groups
+- when no data was transmitted, the worker waits on its condition variable for `PacketSocketPollSleep`
+- `UniverseConnectionServer::sendPackets()` appends to the worker-owned send queue, but also immediately calls `sendPackets(take(sendQueue))` and `writeData()` under the connection mutex before waking the worker
 
 Why it matters:
 
 - idle or lightly loaded servers still wake up frequently just to discover no work is available
-- each worker performs bookkeeping over the whole connection set, not just its own shard
 - latency is tied to poll intervals rather than socket readiness
+- caller threads can still do synchronous socket flush work in the send path
 - CPU time is spent on scheduler wakeups and queue churn instead of useful packet processing
 
 Modernization direction:
 
-- partition connections by worker instead of rescanning the full map on every loop
-- move to readiness-driven socket processing rather than sleep polling
+- keep the worker-owned connection partitioning, but move actual socket writes fully onto the owning worker
+- move to readiness-driven socket processing rather than sleep polling, using an IOCP/epoll/kqueue-style abstraction or an existing cross-platform event library
 - preserve per-connection ordering, but let worker wakeups follow actual network activity
 - keep transport buffering, packet framing, and compression separate from worker scheduling decisions
 
-This is the second-highest scaling issue after world ownership.
+This is no longer the same full-map-scan issue as the original draft, but it remains a key scaling issue for large player counts and packet-heavy worlds.
 
 ### 3.3 UniverseServer is a serial scheduler and still performs durable work on the tick path
 
@@ -125,30 +132,34 @@ Modernization direction:
 
 This is the strongest non-network scheduling issue in the server.
 
-### 3.4 Connection acceptance uses one thread per pending handshake and blocks during protocol setup
+### 3.4 Connection acceptance now has a state-machine path, with a legacy thread fallback
 
-Incoming TCP connections are accepted in `UniverseServer::run()`, which spawns a dedicated `Thread::invoke("UniverseServer::acceptConnection", ...)` task for each pending handshake.
+Incoming TCP connections now use `usePendingConnectionStateMachine` by default. The current path enqueues a `PendingConnection`, advances it in `processPendingConnections()`, and tracks states such as `AwaitProtocolRequest`, `SendProtocolResponse`, `AwaitClientConnect`, `AwaitHandshakeResponse`, `FinalizeClient`, and `RejectAndFlush`.
 
-Inside `acceptConnection()` the handshake path performs timeout-driven blocking steps such as:
+The old `Thread::invoke("UniverseServer::acceptConnection", ...)` path still exists as a fallback when the state machine is disabled.
 
-- `connection.receiveAny(clientWaitLimit)`
-- `connection.sendAll(clientWaitLimit)`
+The current state machine performs nonblocking progression steps such as:
+
+- `connection.receive()`
+- `connection.send()`
 - version and asset compatibility checks
 - optional password challenge/response handling
 
 Why it matters:
 
-- the design is bounded by `maxPendingConnections`, so it is not unbounded thread explosion
-- but slow or hostile handshakes still consume a full thread slot for their lifetime
-- the cost of pending logins grows with thread scheduling overhead instead of actual I/O readiness
+- the default path no longer consumes one thread per pending handshake
+- pending handshakes are still advanced by the serial universe loop under the main lock
+- connection readiness is still not integrated with the network-worker readiness model
+- the fallback thread-per-handshake path should remain disabled by default and eventually become diagnostic or removal-only
 
 Modernization direction:
 
-- fold handshake progression into the network worker model, or
-- use a bounded handshake queue serviced by a small dedicated pool
-- treat login as an explicit connection state machine instead of a blocking thread function
+- keep login as an explicit state machine
+- attach pending sockets to the same readiness-driven connection worker model used for established clients
+- perform expensive compatibility checks on bounded workers only after immutable request data is captured
+- wake the universe loop only when a pending connection reaches a decision point
 
-This is worth addressing, but it is lower priority than the world and network worker models.
+This issue has moved from a thread-exhaustion concern to an integration concern: handshake work is better bounded, but it still belongs in the future event-driven network architecture.
 
 ### 3.5 SpinLock remains a pure busy-spin primitive and is used in shared helpers
 
@@ -173,30 +184,30 @@ Modernization direction:
 
 This should be treated as a secondary cleanup after the larger architectural bottlenecks.
 
-### 3.6 Inbound entity delta application still scans the whole world
+### 3.6 Inbound entity delta application has been narrowed to client-owned entities
 
-The server-side `EntityUpdateSetPacket` path in `WorldServer::handleIncomingPackets()` does not iterate only the entity ids present in the packet.
+The server-side `EntityUpdateSetPacket` path in `WorldServer::handleIncomingPackets()` no longer scans the whole world entity map for every client delta batch. It now iterates that client's `clientMasterEntities` set and applies matching deltas to those entities.
 
 Verified pattern:
 
-- on `EntityUpdateSetPacket`, `WorldServer` calls `m_entityMap->forAllEntities(...)`
-- inside that loop, it filters by `connectionForEntity(entityId) == clientId`
-- it then reads the delta from `entityUpdateSet->deltas.value(entityId)`
+- on `EntityUpdateSetPacket`, `WorldServer` iterates `clientInfo->clientMasterEntities.values()`
+- each entity id is looked up directly through `m_entityMap->entity(entityId)`
+- the delta is read from `entityUpdateSet->deltas.value(entityId)` and applied with the client's interpolation and compatibility rules
 
 Why it matters:
 
-- applying one client delta batch scales with total entity count in the world, not with the number of changed entities in the packet
-- busy worlds pay this scan cost even when only a small subset of client-owned entities actually changed
-- the pattern compounds the single-hot-world problem because it sits directly on the authoritative world thread
+- this relieves a previous `O(total world entities)` hot-world cost
+- the remaining cost still scales with the number of entities mastered by the client, including blank delta delivery that preserves interpolation/extrapolation behavior
+- the path remains on the authoritative world thread and should stay compatibility-sensitive
 
 Modernization direction:
 
-- iterate the keys present in the packet delta set
-- look up each entity directly in `EntityMap`
-- verify connection ownership before applying the delta
+- keep the owner-indexed path as the default compatibility baseline
+- measure whether blank deltas for unchanged mastered entities are still significant before changing them
+- any future key-only iteration must prove it does not break interpolation/extrapolation or ownership semantics
 - keep packet format and replication ordering unchanged
 
-This is a high-confidence, compatibility-preserving optimization.
+This optimization has mostly moved from finding to baseline. The remaining work is measurement and a narrower compatibility study, not a broad full-world-scan fix.
 
 ### 3.7 World replication rebuilds monitoring and visibility state multiple times per tick
 
@@ -743,3 +754,56 @@ The best first draft is:
 5. introduce deeper world-internal parallelism only behind explicit experimental boundaries
 
 That path will not instantly make one crowded world use every core, but it is the strongest route to higher multicore utilization without destabilizing the gameplay and mod ecosystem.
+
+## 13. Post-Phase-6 Main-Thread Jam Reassessment
+
+Short answer: the jam still exists for one crowded world, but several surrounding sources of pressure have been relieved.
+
+The most precise name for the remaining problem is a hot authoritative world thread, not strictly the process main thread. `UniverseServer::run()` is still a central serial orchestration loop, but in a loaded hub the more important hotspot is one `WorldServerThread` entering `WorldServer::update()` and running the full simulation and replication lane for that world.
+
+### 13.1 What has been relieved
+
+Phase 0-6 work meaningfully reduced non-simulation pressure around the hot world lane:
+
+- connection workers now own assigned connection lists instead of forcing every worker to filter the full connection map
+- login handshakes now have a default pending-connection state machine instead of one blocking thread per pending client
+- persistence has async snapshot/write paths and retry/fallback accounting
+- selected storage-generation priority work and sector packet prefill can run on worker jobs
+- packet preparation has stronger immutable snapshot and cache groundwork, including entity-create serialization inputs
+- diagnostics now expose universe, world-thread, packet-preparation, Phase 6 subsystem, network, and persistence counters needed to prove or reject optimization claims
+
+These changes help login bursts, save-heavy moments, packet-heavy sector entry, generation-heavy exploration, and servers with work spread across many worlds.
+
+### 13.2 What still jams
+
+The crowded-world case remains structurally serial.
+
+Current source evidence:
+
+- `WorldServerThread::update()` processes queued commands, incoming packets, `WorldServer::update(dt)`, messages, outgoing packets, and update actions on one world thread.
+- `WorldServer::update()` still runs an ordered sequence of frame start, spawner, entity updates, script contexts, damage, wiring, sky, snapshot, weather, liquid, falling blocks, block damage, storage tick, storage generation, entity removal, packet preparation, and expiry/log phases.
+- `EntityMap::updateAllEntities()` copies entity entries into a temporary buffer, invokes the callback, and updates spatial/unique state serially.
+- `WireProcessor::process()` begins from a full live-entity scan, recursively loads wire networks, and then evaluates all working wire entities.
+- `LiquidCellEngine::update()` performs ordered setup, pressure, spreading, movement, interaction, and finish passes over live working cells.
+- `FallingBlocksAgent::update()` takes the pending set, shuffles and sorts positions, and directly moves blocks through the facade while adding new pending positions.
+- `WorldServer::queueUpdatePackets()` is still per-client and performs pending sector/tile/liquid/damage output, monitored entity queries, create/delta/destroy decisions, and packet ordering decisions on the owner thread.
+- `queueTileUpdates()` and `queueTileDamageUpdates()` still fan out by checking every client when a tile changes.
+
+This means Phase 6 has not solved the Amdahl limit for a single dense world. It has reduced the costs that can be moved safely, and it has created gates for future experiments, but entity/Lua/liquid/falling/wiring mutation parallelism remains intentionally disabled in legacy exact mode.
+
+### 13.3 Modernized architecture target
+
+The best-performance target should be an actor-plus-job architecture with a serial compatibility lane, not a broad shared-state thread pool.
+
+Recommended shape:
+
+1. Strict actor ownership: `UniverseServer`, each `WorldServerThread`, each `SystemWorldServerThread`, each connection worker, and each storage writer owns its mutable state. Cross-owner work moves through typed mailboxes, promises, or immutable snapshots.
+2. Readiness-driven networking: use an IOCP/epoll/kqueue-style backend, or a cross-platform event library with those primitives underneath. The connection worker owns socket reads, socket writes, send queues, backpressure, compression stream progression, and packet batching.
+3. Bounded job graph: replace ad hoc helper jobs with named lanes for packet preparation, storage serialization, compression, celestial queries, generation planning, and low-risk world helpers. Jobs need priorities, budgets, cancellation/backpressure, per-lane timing, and queue-depth diagnostics.
+4. Immutable tick snapshots: workers read snapshot data, produce bytes or command buffers, and return results to the owner thread. The owner thread performs the single visible merge at explicit phase boundaries.
+5. Data-oriented hot indices: add sector-to-client and entity-to-client visibility indices, dirty tile/liquid/entity/wiring subscriptions, cached monitoring windows with generation counters, and per-entity serialization counters. These reduce serial work even when all parallel flags are disabled.
+6. Storage pipeline: capture dirty-sector snapshots on the owner thread, then serialize, compress, and commit off-thread. Avoid full `readChunks()` exports for ship/disconnect paths unless compatibility requires them.
+7. Mechanism-compatible mod APIs: add opt-in batched reads, deferred writes, immutable tick snapshots, dirty-component subscriptions, and explicit phase-boundary hooks. Existing immediate world/Lua/entity APIs stay serial by default.
+8. Graduated mutation experiments: test liquid, falling blocks, and wiring first because they can be isolated by regions or networks. Entity and Lua parallelism should remain research until scripts can opt into staged visibility and deferred mutation semantics.
+
+The practical order is still: measure fixed workloads, remove serial algorithmic waste, deepen packet/storage snapshots, finish strict owner boundaries, modernize network readiness, then graduate subsystem mutation experiments one at a time. This route does not hide behavior changes from mods, and it gives the project real multicore gains before attempting the hardest single-world entity/Lua work.

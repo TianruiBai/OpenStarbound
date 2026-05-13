@@ -6,7 +6,7 @@ The goal is to increase practical multicore utilization on dedicated servers whi
 
 This is not a promise that one crowded world can immediately use every core. The current architecture makes that difficult because the authoritative world tick is mostly serial. The plan therefore improves multicore use in layers: first by reducing scheduler waste and offloading non-simulation work, then by tightening world ownership, then by adding carefully bounded parallel work around the serial simulation lane.
 
-For an execution checklist with Windows tooling notes, researched threading guidance, code touch points, acceptance criteria, and tests for each phase, see `doc/architecture/multicore-phase-roadmap.md`. For the F3-style status overlay, crash reports, structured logs, and diagnostic bundles that should support this work, see `doc/architecture/diagnostics-debugging-roadmap.md`.
+For an execution checklist with Windows tooling notes, researched threading guidance, code touch points, acceptance criteria, and tests for each phase, see `doc/architecture/multicore-phase-roadmap.md`. For the first concrete post-Phase-6 release slice, see `doc/architecture/server-optimization-roadmap-26.5.2a.md`. For the F3-style status overlay, crash reports, structured logs, and diagnostic bundles that should support this work, see `doc/architecture/diagnostics-debugging-roadmap.md`.
 
 ## 1. Design Goals
 
@@ -785,3 +785,23 @@ Stop or gate behind config if:
 - save output changes without an intentional migration
 - world unload or disconnect races increase
 - p99 tick time regresses under representative load
+
+## 17. Post-Phase-6 Execution Plan
+
+The next stage should not jump directly from Phase 6 worker helpers to broad world mutation parallelism. The safer route is to turn the new ownership, snapshot, differential-check, and diagnostics surfaces into a measured optimization program.
+
+Recommended order:
+
+1. Refresh fixed workloads for crowded worlds, high-fan-out replication, liquid, wiring, generation, save/disconnect spikes, login bursts, and modded smoke packs.
+2. Finish immutable entity net-state inputs and deepen packet byte-equivalence tests before broadening packet preparation workers.
+3. Land serial hot-path improvements that keep legacy exact behavior: monitoring-region reuse, sector/client fan-out indexing, liquid membership caches, dirty wiring-network tracking, and storage snapshot reduction.
+4. Extend snapshot worker jobs where the owner thread can still perform the single visible merge.
+5. Add mechanism-compatible API capabilities for opt-in mods: batched reads, deferred writes, immutable tick snapshots, dirty-component subscriptions, and explicit phase-boundary hooks.
+6. Graduate liquid, falling-block, and wiring experiments one at a time only after fixed-seed signatures, dependency analysis, mod-visibility contracts, serial-versus-parallel differential checks, diagnostics, and fallback paths are all present.
+7. Keep entity and Lua mutation parallelism as research until new staged APIs can define order and visibility. Existing immediate APIs remain serial in legacy exact mode.
+
+Success should be judged by measured p95/p99 tick improvement, stable packet/save compatibility, lower queue contention, clear CPU distribution across world/worker threads, and successful modded smoke testing.
+
+The first concrete release slice for this plan is `26.5.2a`, documented in `server-optimization-roadmap-26.5.2a.md`. It focuses on fixed workload gates, serial hot-path bookkeeping wins, packet-prep snapshot expansion, storage-depth work, network readiness hardening, mechanism-compatible API seeds, and mutation-experiment preflight.
+
+Client graphics backend modernization is a parallel client-side track, not part of the server simulation gates. The OpenGL-plus-experimental-Vulkan plan is documented in `graphics-backend-roadmap.md`.

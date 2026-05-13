@@ -70,6 +70,8 @@ Responsibilities:
 - initialize audio and renderer state
 - bootstrap mods before asset-dependent UI work starts
 
+Graphics backend planning implication: `source/application/` is the right layer for choosing OpenGL versus an experimental Vulkan backend. `ClientApplication`, `GuiContext`, widgets, and world painters should continue to consume the generic `Renderer` contract where possible. See `graphics-backend-roadmap.md` for the backend split plan.
+
 ### 3.2 GUI context layer
 
 `source/windowing/StarGuiContext.*` is the client-wide GUI service singleton.

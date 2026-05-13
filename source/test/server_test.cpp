@@ -228,6 +228,11 @@ TEST(ServerTest, WorldStatsCommandReportsDiagnostics) {
 
   auto output = server.adminCommand("worldstats");
   EXPECT_TRUE(output.contains("World stats: active=0, system=0"));
+
+  auto statusOutput = server.adminCommand("serverstatus");
+  EXPECT_TRUE(statusOutput.contains("regions="));
+  EXPECT_TRUE(statusOutput.contains("sectorFanout="));
+  EXPECT_TRUE(statusOutput.contains("liquidCache="));
 }
 
 TEST(ServerTest, PendingHandshakeStateMachineAcceptsLocalClient) {

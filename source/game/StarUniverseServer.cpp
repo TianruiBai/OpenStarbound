@@ -370,12 +370,16 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.worldPacketPrepMonitoringRegionBuilds += packetPreparationStats.monitoringRegionBuilds;
           status.worldPacketPrepMonitoringRegionRects += packetPreparationStats.monitoringRegionRects;
           status.worldPacketPrepMonitoringRegionSplitRects += packetPreparationStats.monitoringRegionSplitRects;
+          status.worldPacketPrepMonitoringRegionReuses += packetPreparationStats.monitoringRegionReuses;
           status.worldPacketPrepSectorCacheHits += packetPreparationStats.sectorPacketCacheHits;
           status.worldPacketPrepSectorCacheMisses += packetPreparationStats.sectorPacketCacheMisses;
           status.worldPacketPrepEntityStoreCacheHits += packetPreparationStats.entityStoreCacheHits;
           status.worldPacketPrepEntityStoreCacheMisses += packetPreparationStats.entityStoreCacheMisses;
           status.worldPacketPrepNetStateCacheHits += packetPreparationStats.entityNetStateCacheHits;
           status.worldPacketPrepNetStateCacheMisses += packetPreparationStats.entityNetStateCacheMisses;
+          status.worldPacketPrepSectorClientFanoutLookups += packetPreparationStats.sectorClientFanoutLookups;
+          status.worldPacketPrepSectorClientFanoutRecipients += packetPreparationStats.sectorClientFanoutRecipients;
+          status.worldPacketPrepSectorClientFanoutMisses += packetPreparationStats.sectorClientFanoutMisses;
 
           auto phase6Stats = world->phase6WorldParallelismStats();
           if (phase6Stats.storageGenerationPlanningEnabled)
@@ -413,6 +417,12 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6LiquidBaselineTicks += phase6Stats.liquidBaselineTicks;
           status.phase6LiquidActiveCells += phase6Stats.liquidActiveCells;
           status.phase6LiquidMonitoringRegions += phase6Stats.liquidMonitoringRegions;
+          status.phase6LiquidNoProcessingLimitRegionCacheBuilds += phase6Stats.liquidNoProcessingLimitRegionCacheBuilds;
+          status.phase6LiquidNoProcessingLimitRegionCacheRegions += phase6Stats.liquidNoProcessingLimitRegionCacheRegions;
+          status.phase6LiquidNoProcessingLimitRegionCacheBuckets += phase6Stats.liquidNoProcessingLimitRegionCacheBuckets;
+          status.phase6LiquidNoProcessingLimitRegionCacheLookups += phase6Stats.liquidNoProcessingLimitRegionCacheLookups;
+          status.phase6LiquidNoProcessingLimitRegionCacheCandidates += phase6Stats.liquidNoProcessingLimitRegionCacheCandidates;
+          status.phase6LiquidNoProcessingLimitRegionCacheHits += phase6Stats.liquidNoProcessingLimitRegionCacheHits;
           status.phase6FallingBlocksBaselineTicks += phase6Stats.fallingBlocksBaselineTicks;
           status.phase6FallingBlocksPendingPositions += phase6Stats.fallingBlocksPendingPositions;
           status.phase6FallingBlocksProcessedPositions += phase6Stats.fallingBlocksProcessedPositions;

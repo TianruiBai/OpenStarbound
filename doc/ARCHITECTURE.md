@@ -16,6 +16,7 @@ Use this guide as the entry point, then go deeper in the subsystem and planning 
 - `doc/architecture/performance-threading-review.md`
 - `doc/architecture/multicore-engineering-plan.md`
 - `doc/architecture/multicore-phase-roadmap.md`
+- `doc/architecture/server-optimization-roadmap-26.5.2a.md`
 - `doc/architecture/diagnostics-debugging-roadmap.md`
 
 ## 1. Executive Summary
@@ -88,7 +89,7 @@ Additional outputs:
 The vcpkg manifest shows the main external dependencies:
 
 - SDL3 for platform window/input/audio integration
-- GLEW and OpenGL-adjacent rendering support
+- GLEW and OpenGL-adjacent rendering support, with Vulkan planned as an experimental side-by-side client backend rather than an OpenGL replacement
 - Zlib, libpng, zstd, freetype, libvorbis, opus for asset and media handling
 - `cpr` for HTTP
 - `imgui` for debug and tooling UI integration

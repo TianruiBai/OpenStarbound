@@ -73,6 +73,15 @@ class LiquidCellEngine {
 public:
   typedef shared_ptr<CellularLiquidWorld<LiquidId>> CellularLiquidWorldPtr;
 
+  struct NoProcessingLimitRegionCacheStats {
+    uint64_t builds = 0;
+    uint64_t regions = 0;
+    uint64_t buckets = 0;
+    uint64_t lookups = 0;
+    uint64_t candidates = 0;
+    uint64_t hits = 0;
+  };
+
   LiquidCellEngine(LiquidCellEngineParameters parameters, CellularLiquidWorldPtr cellWorld);
 
   unsigned liquidTickDelta(LiquidId liquid);
@@ -82,6 +91,7 @@ public:
 
   List<RectI> noProcessingLimitRegions() const;
   void setNoProcessingLimitRegions(List<RectI> noProcessingLimitRegions);
+  NoProcessingLimitRegionCacheStats noProcessingLimitRegionCacheStats() const;
 
   void visitLocation(Vec2I const& location);
   void visitRegion(RectI const& region);
@@ -132,6 +142,11 @@ private:
   void findInteractions();
   void finish();
 
+  static int noProcessingLimitRegionBucketCoordinate(int coordinate);
+  static Vec2I noProcessingLimitRegionBucket(Vec2I const& position);
+  void rebuildNoProcessingLimitRegionCache();
+  bool noProcessingLimitRegionContains(Vec2I const& position);
+
   WorkingCell* workingCell(Vec2I p);
   WorkingCell* adjacentCell(WorkingCell* cell, Adjacency adjacency);
 
@@ -148,6 +163,8 @@ private:
   BAHashMap<LiquidId, unsigned> m_liquidTickDeltas;
   Maybe<unsigned> m_processingLimit;
   List<RectI> m_noProcessingLimitRegions;
+  BAHashMap<Vec2I, List<size_t>> m_noProcessingLimitRegionBuckets;
+  NoProcessingLimitRegionCacheStats m_noProcessingLimitRegionCacheStats;
   uint64_t m_step;
 
   BAHashMap<Vec2I, Maybe<WorkingCell>> m_workingCells;
@@ -202,7 +219,13 @@ List<RectI> LiquidCellEngine<LiquidId>::noProcessingLimitRegions() const {
 
 template <typename LiquidId>
 void LiquidCellEngine<LiquidId>::setNoProcessingLimitRegions(List<RectI> noProcessingLimitRegions) {
-  m_noProcessingLimitRegions = noProcessingLimitRegions;
+  m_noProcessingLimitRegions = std::move(noProcessingLimitRegions);
+  rebuildNoProcessingLimitRegionCache();
+}
+
+template <typename LiquidId>
+auto LiquidCellEngine<LiquidId>::noProcessingLimitRegionCacheStats() const -> typename LiquidCellEngine<LiquidId>::NoProcessingLimitRegionCacheStats {
+  return m_noProcessingLimitRegionCacheStats;
 }
 
 template <typename LiquidId>
@@ -270,15 +293,7 @@ void LiquidCellEngine<LiquidId>::setup() {
     size_t limitedCellNumber = 0;
     for (auto const& pos : activeCellsPair.second.values()) {
       if (m_processingLimit) {
-        bool foundInUnlimitedRegion = false;
-        for (auto const& region : m_noProcessingLimitRegions) {
-          if (region.contains(pos)) {
-            foundInUnlimitedRegion = true;
-            break;
-          }
-        }
-
-        if (!foundInUnlimitedRegion) {
+        if (!noProcessingLimitRegionContains(pos)) {
           if (limitedCellNumber < *m_processingLimit)
             ++limitedCellNumber;
           else
@@ -299,6 +314,58 @@ void LiquidCellEngine<LiquidId>::setup() {
   sort(m_currentActiveCells, [](WorkingCell* lhs, WorkingCell* rhs) {
       return lhs->position[1] < rhs->position[1];
     });
+}
+
+template <typename LiquidId>
+int LiquidCellEngine<LiquidId>::noProcessingLimitRegionBucketCoordinate(int coordinate) {
+  static int const BucketSize = 32;
+  if (coordinate >= 0)
+    return coordinate / BucketSize;
+  return ((coordinate + 1) / BucketSize) - 1;
+}
+
+template <typename LiquidId>
+Vec2I LiquidCellEngine<LiquidId>::noProcessingLimitRegionBucket(Vec2I const& position) {
+  return {noProcessingLimitRegionBucketCoordinate(position[0]), noProcessingLimitRegionBucketCoordinate(position[1])};
+}
+
+template <typename LiquidId>
+void LiquidCellEngine<LiquidId>::rebuildNoProcessingLimitRegionCache() {
+  m_noProcessingLimitRegionBuckets.clear();
+  m_noProcessingLimitRegionCacheStats.builds += 1;
+  m_noProcessingLimitRegionCacheStats.regions += m_noProcessingLimitRegions.size();
+
+  for (size_t regionIndex = 0; regionIndex < m_noProcessingLimitRegions.size(); ++regionIndex) {
+    auto const& region = m_noProcessingLimitRegions.at(regionIndex);
+    if (region.isEmpty())
+      continue;
+
+    int bucketXMin = noProcessingLimitRegionBucketCoordinate(region.xMin());
+    int bucketXMax = noProcessingLimitRegionBucketCoordinate(region.xMax() - 1);
+    int bucketYMin = noProcessingLimitRegionBucketCoordinate(region.yMin());
+    int bucketYMax = noProcessingLimitRegionBucketCoordinate(region.yMax() - 1);
+    for (int x = bucketXMin; x <= bucketXMax; ++x) {
+      for (int y = bucketYMin; y <= bucketYMax; ++y)
+        m_noProcessingLimitRegionBuckets[{x, y}].append(regionIndex);
+    }
+  }
+
+  m_noProcessingLimitRegionCacheStats.buckets += m_noProcessingLimitRegionBuckets.size();
+}
+
+template <typename LiquidId>
+bool LiquidCellEngine<LiquidId>::noProcessingLimitRegionContains(Vec2I const& position) {
+  m_noProcessingLimitRegionCacheStats.lookups += 1;
+  if (auto candidates = m_noProcessingLimitRegionBuckets.ptr(noProcessingLimitRegionBucket(position))) {
+    m_noProcessingLimitRegionCacheStats.candidates += candidates->size();
+    for (auto regionIndex : *candidates) {
+      if (m_noProcessingLimitRegions.at(regionIndex).contains(position)) {
+        m_noProcessingLimitRegionCacheStats.hits += 1;
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 template <typename LiquidId>

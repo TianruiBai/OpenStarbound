@@ -64,7 +64,7 @@ Pages should be added incrementally:
 | Page | Data |
 | --- | --- |
 | Basic | FPS, update rate, frame/update ms, player position, velocity, aim, biome/world id, server UUID, player UUID, admin state. |
-| Renderer | OpenGL version, renderer id, window mode, resolution, texture atlas sizes, draw calls if available, frame timings. |
+| Renderer | Graphics backend, API version, renderer id, GPU/adapter, window mode, resolution, texture atlas sizes, swap/present state, draw calls if available, frame timings. |
 | World | world id, template, gravity, weather, liquid at cursor, dungeon id, protected state, entity counts, tile sector info. |
 | Network | connection id, protocol, server player count, ping/latency once measured, packet rates, pending send/receive queues. |
 | Lua/Mods | loaded mods, asset digest, active Lua contexts, recent Lua errors, Lua profile summary when enabled. |
