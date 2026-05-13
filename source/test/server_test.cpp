@@ -284,7 +284,7 @@ TEST(ServerTest, PendingHandshakeStateMachineAcceptsLocalClient) {
 }
 
 TEST(ServerTest, PendingHandshakeStateMachineAcceptsRemoteOpenStarboundAndLegacyClients) {
-  ConfigurationValueGuard stateMachineGuard("universeServerConfigOverrides", JsonObject{{"usePendingConnectionStateMachine", false}});
+  ConfigurationValueGuard stateMachineGuard("universeServerConfigOverrides", JsonObject{{"usePendingConnectionStateMachine", true}});
   ConfigurationValueGuard anonymousGuard("allowAnonymousConnections", true);
   ConfigurationValueGuard anonymousAdminGuard("anonymousConnectionsAreAdmin", false);
   TemporaryUniverseStorage storage;
@@ -302,6 +302,9 @@ TEST(ServerTest, PendingHandshakeStateMachineAcceptsRemoteOpenStarboundAndLegacy
   auto status = waitForServerStatus(server, [](UniverseServer::ServerStatus const& status) {
     return status.clients == 2 && status.pendingHandshakeFinalized == 2 && status.pendingHandshakes == 0;
   });
+  EXPECT_EQ(status.clients, 2u);
+  EXPECT_EQ(status.pendingHandshakeFinalized, 2u);
+  EXPECT_EQ(status.pendingHandshakes, 0u);
   EXPECT_EQ(status.pendingHandshakeRejected, 0u);
   EXPECT_EQ(status.pendingHandshakeTimedOut, 0u);
 
