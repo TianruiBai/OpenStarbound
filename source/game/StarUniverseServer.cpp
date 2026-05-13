@@ -419,6 +419,7 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
     }
     status.worldThreadTimings = serverTimingStatusList(worldThreadTimingRecords);
     status.worldUpdateTimings = serverTimingStatusList(worldUpdateTimingRecords);
+    status.persistenceAsyncEnabled = m_useAsyncPersistence;
     status.persistenceBatchesPending = m_pendingPersistenceWrites.size();
     status.persistenceSnapshotsPending = m_persistenceSnapshotsPending;
     auto now = Time::monotonicMilliseconds();

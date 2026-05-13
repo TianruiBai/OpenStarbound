@@ -373,7 +373,8 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6WiringLoadedEntities,
       status.phase6WiringNetworkLoads,
       status.phase6WiringEvaluatedEntities));
-  lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
+  lines.append(strf("Persistence: asyncEnabled={}, pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
+      status.persistenceAsyncEnabled,
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,
       status.persistenceOldestPendingAgeMilliseconds,

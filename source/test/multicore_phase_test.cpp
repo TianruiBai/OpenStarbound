@@ -111,9 +111,13 @@ List<ByteArray> tileArrayUpdatePayloads(List<PacketPtr> const& packets) {
 
 List<ByteArray> preparedTileArrayUpdatePayloads(bool packetSectorPrefill) {
   ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
       {"packetPreparationSectorPrefill", packetSectorPrefill},
       {"packetPreparationSectorPrefillWorkerThreads", 2},
-      {"packetPreparationSectorPrefillMinimumSectors", 0}}}});
+      {"packetPreparationSectorPrefillMinimumSectors", 0},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
 
   WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
   worldServer.setFidelity(WorldServerFidelity::Minimum);
@@ -143,6 +147,10 @@ LiquidId firstTestLiquidId() {
 
 List<uint64_t> phase6SubsystemBaselineSignature() {
   ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+  {"storageGenerationPlanning", false},
+  {"storageGenerationPlanningDifferentialCheck", false},
+  {"packetPreparationSectorPrefill", false},
+  {"packetPreparationSectorPrefillDifferentialCheck", false},
       {"subsystemBaselineMetrics", true}}}});
 
   WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
@@ -283,7 +291,6 @@ TEST(MulticorePhaseTest, Phase2PendingHandshakeStateMachineRejectsBadProtocol) {
 
 TEST(MulticorePhaseTest, Phase3AsyncPersistenceSnapshotsAndFallbacks) {
   ConfigurationValueGuard configGuard("universeServerConfigOverrides", JsonObject{
-      {"useAsyncPersistence", true},
       {"persistenceWorkerThreads", 1},
       {"maxQueuedPersistenceSnapshots", 1},
       {"maxPersistenceWriteRetries", 0}});
@@ -295,6 +302,7 @@ TEST(MulticorePhaseTest, Phase3AsyncPersistenceSnapshotsAndFallbacks) {
     return status.persistenceQueueFullFallbacks > 0 && status.persistenceSnapshotsWritten >= 2;
   });
 
+  EXPECT_TRUE(status.persistenceAsyncEnabled);
   EXPECT_EQ(status.persistenceFailures, 0u);
   EXPECT_GT(status.persistenceSynchronousFallbacks, 0u);
   EXPECT_EQ(status.persistenceBatchesPending, 0u);
@@ -352,6 +360,13 @@ TEST(MulticorePhaseTest, Phase4WorldCommandMailboxPropagatesQueuedCommandResults
 }
 
 TEST(MulticorePhaseTest, Phase5WorldTickSnapshotReusesSectorPacketPrep) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
   WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
   worldServer.setFidelity(WorldServerFidelity::Minimum);
   worldServer.setSpawningEnabled(false);
@@ -382,6 +397,23 @@ TEST(MulticorePhaseTest, Phase6PacketSectorPrefillMatchesSerialSectorPackets) {
 
 TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
   {
+    WorldServer worldServer(Vec2U(256, 128), File::ephemeralFile());
+    auto stats = worldServer.phase6WorldParallelismStats();
+    EXPECT_TRUE(stats.storageGenerationPlanningEnabled);
+    EXPECT_TRUE(stats.storageGenerationPlanningDifferentialCheckEnabled);
+    EXPECT_TRUE(stats.packetPreparationSectorPrefillEnabled);
+    EXPECT_TRUE(stats.packetPreparationSectorPrefillDifferentialCheckEnabled);
+    EXPECT_TRUE(stats.subsystemBaselineMetricsEnabled);
+  }
+
+  {
+    ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+        {"storageGenerationPlanning", false},
+        {"storageGenerationPlanningDifferentialCheck", false},
+        {"packetPreparationSectorPrefill", false},
+        {"packetPreparationSectorPrefillDifferentialCheck", false},
+        {"subsystemBaselineMetrics", false}}}});
+
     WorldServer worldServer(Vec2U(256, 128), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
     EXPECT_FALSE(stats.storageGenerationPlanningEnabled);

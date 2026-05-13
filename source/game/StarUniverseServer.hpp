@@ -85,6 +85,7 @@ public:
     uint64_t worldPacketPrepEntityStoreCacheMisses;
     uint64_t worldPacketPrepNetStateCacheHits;
     uint64_t worldPacketPrepNetStateCacheMisses;
+    bool persistenceAsyncEnabled;
     size_t phase6StorageGenerationPlanningEnabledWorlds;
     uint64_t phase6StorageGenerationPlanningTicks;
     uint64_t phase6StorageGenerationPlanningSerialTicks;

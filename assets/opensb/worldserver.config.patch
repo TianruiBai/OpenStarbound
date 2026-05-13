@@ -1,14 +1,14 @@
 {
   "scriptContexts" : { "OpenStarbound" : ["/scripts/opensb/worldserver/worldserver.lua"] },
   "phase6WorldParallelism" : {
-    "storageGenerationPlanning" : false,
+    "storageGenerationPlanning" : true,
     "storageGenerationPlanningWorkerThreads" : 2,
     "storageGenerationPlanningMinimumSectors" : 8,
-    "storageGenerationPlanningDifferentialCheck" : false,
-    "packetPreparationSectorPrefill" : false,
+    "storageGenerationPlanningDifferentialCheck" : true,
+    "packetPreparationSectorPrefill" : true,
     "packetPreparationSectorPrefillWorkerThreads" : 2,
     "packetPreparationSectorPrefillMinimumSectors" : 8,
-    "packetPreparationSectorPrefillDifferentialCheck" : false,
-    "subsystemBaselineMetrics" : false
+    "packetPreparationSectorPrefillDifferentialCheck" : true,
+    "subsystemBaselineMetrics" : true
   }
 }
