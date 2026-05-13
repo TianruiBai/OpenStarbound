@@ -380,6 +380,8 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.worldPacketPrepSectorClientFanoutLookups += packetPreparationStats.sectorClientFanoutLookups;
           status.worldPacketPrepSectorClientFanoutRecipients += packetPreparationStats.sectorClientFanoutRecipients;
           status.worldPacketPrepSectorClientFanoutMisses += packetPreparationStats.sectorClientFanoutMisses;
+          for (auto const& serializationStats : packetPreparationStats.entitySerializationStats)
+            status.worldPacketPrepEntitySerializationStats[serializationStats.first].add(serializationStats.second);
 
           auto phase6Stats = world->phase6WorldParallelismStats();
           if (phase6Stats.storageGenerationPlanningEnabled)

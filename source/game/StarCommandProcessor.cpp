@@ -26,6 +26,44 @@
 
 namespace Star {
 
+namespace {
+
+String packetPrepEntitySerializationSummary(HashMap<EntityType, WorldServer::EntitySerializationStats> const& stats) {
+  StringList parts;
+  List<EntityType> entityTypes{
+      EntityType::Plant,
+      EntityType::Object,
+      EntityType::Vehicle,
+      EntityType::ItemDrop,
+      EntityType::PlantDrop,
+      EntityType::Projectile,
+      EntityType::Stagehand,
+      EntityType::Monster,
+      EntityType::Npc,
+      EntityType::Player};
+
+  for (auto entityType : entityTypes) {
+    if (auto typeStats = stats.ptr(entityType)) {
+      if (typeStats->totalCalls() != 0) {
+        parts.append(strf("{}=store:{}/{} first:{}/{} delta:{}/{}",
+            EntityTypeNames.getRight(entityType),
+            typeStats->createStoreCalls,
+            typeStats->createStoreBytes,
+            typeStats->initialNetStateCalls,
+            typeStats->initialNetStateBytes,
+            typeStats->deltaNetStateCalls,
+            typeStats->deltaNetStateBytes));
+      }
+    }
+  }
+
+  if (parts.empty())
+    return "none";
+  return parts.join(",");
+}
+
+}
+
 CommandProcessor::CommandProcessor(UniverseServer* universe, LuaRootPtr luaRoot)
   : m_universe(universe) {
   auto assets = Root::singleton().assets();
@@ -322,7 +360,7 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldCommandsDirect,
       status.worldCommandsFailed,
       status.worldCommandWaitMicroseconds));
-  lines.append(strf("World packet prep: ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, sectorFanout={}/{}/{}",
+  lines.append(strf("World packet prep: ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, sectorFanout={}/{}/{}, entitySerialize={}",
       status.worldPacketPrepTicks,
       status.worldPacketPrepMonitoringRegionBuilds,
       status.worldPacketPrepMonitoringRegionRects,
@@ -336,7 +374,8 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldPacketPrepNetStateCacheMisses,
       status.worldPacketPrepSectorClientFanoutLookups,
       status.worldPacketPrepSectorClientFanoutRecipients,
-      status.worldPacketPrepSectorClientFanoutMisses));
+      status.worldPacketPrepSectorClientFanoutMisses,
+      packetPrepEntitySerializationSummary(status.worldPacketPrepEntitySerializationStats)));
   lines.append(strf("Phase 6 storage planning: enabledWorlds={}, ticks={}, serialTicks={}, parallelTicks={}, sectors={}, serialUs={}, parallelUs={}, mergeUs={}, fallbacks={}, diffWorlds={}, diffChecks={}, diffUs={}, divergences={}",
       status.phase6StorageGenerationPlanningEnabledWorlds,
       status.phase6StorageGenerationPlanningTicks,
@@ -443,7 +482,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{} entitySerialize:{}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -467,6 +506,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         packetPrep.sectorClientFanoutLookups,
         packetPrep.sectorClientFanoutRecipients,
         packetPrep.sectorClientFanoutMisses,
+        packetPrepEntitySerializationSummary(packetPrep.entitySerializationStats),
         phase6.storageGenerationPlanningTicks,
         phase6.storageGenerationPlanningSerialTicks,
         phase6.storageGenerationPlanningParallelTicks,

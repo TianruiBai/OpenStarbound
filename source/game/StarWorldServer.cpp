@@ -85,6 +85,11 @@ bool phase6StorageGenerationDistancesEquivalent(HashMap<WorldStorage::Sector, fl
   return true;
 }
 
+void addEntitySerializationStats(HashMap<EntityType, WorldServer::EntitySerializationStats>& target, HashMap<EntityType, WorldServer::EntitySerializationStats> const& source) {
+  for (auto const& pair : source)
+    target[pair.first].add(pair.second);
+}
+
 }
 
 EnumMap<WorldServerFidelity> const WorldServerFidelityNames{
@@ -885,6 +890,7 @@ void WorldServer::recordPacketPreparationStats(WorldTickSnapshot const& snapshot
   m_packetPreparationStats.entityStoreCacheMisses += snapshot.packetPreparationStats.entityStoreCacheMisses;
   m_packetPreparationStats.entityNetStateCacheHits += snapshot.packetPreparationStats.entityNetStateCacheHits;
   m_packetPreparationStats.entityNetStateCacheMisses += snapshot.packetPreparationStats.entityNetStateCacheMisses;
+  addEntitySerializationStats(m_packetPreparationStats.entitySerializationStats, snapshot.packetPreparationStats.entitySerializationStats);
 }
 
 char const* WorldServer::updateTimingPhaseName(UpdateTimingPhase phase) {
@@ -2616,7 +2622,11 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
           auto i = cache.find(pair);
           if (i == cache.end()) {
             snapshot.packetPreparationStats.entityNetStateCacheMisses += 1;
-            i = cache.insert(pair, monitoredEntity->writeNetState(*version, netRules)).first;
+            auto netState = monitoredEntity->writeNetState(*version, netRules);
+            auto& serializationStats = snapshot.packetPreparationStats.entitySerializationStats[monitoredEntity->entityType()];
+            serializationStats.deltaNetStateCalls += 1;
+            serializationStats.deltaNetStateBytes += netState.first.size();
+            i = cache.insert(pair, std::move(netState)).first;
           } else {
             snapshot.packetPreparationStats.entityNetStateCacheHits += 1;
           }
@@ -2628,12 +2638,18 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
       } else if (!monitoredEntity->masterOnly()) {
         // Client was unaware of this entity until now
         auto firstUpdate = monitoredEntity->writeNetState(0, netRules);
+        auto& serializationStats = snapshot.packetPreparationStats.entitySerializationStats[monitoredEntity->entityType()];
+        serializationStats.initialNetStateCalls += 1;
+        serializationStats.initialNetStateBytes += firstUpdate.first.size();
         clientInfo->clientSlavesNetVersion.add(entityId, firstUpdate.second);
         auto& createCache = snapshot.entityCreateCache[netRules];
         auto i = createCache.find(entityId);
         if (i == createCache.end()) {
           snapshot.packetPreparationStats.entityStoreCacheMisses += 1;
-          i = createCache.insert(entityId, EntityCreateSnapshot{monitoredEntity->entityType(), entityFactory->netStoreEntity(monitoredEntity, netRules)}).first;
+          auto storeData = entityFactory->netStoreEntity(monitoredEntity, netRules);
+          serializationStats.createStoreCalls += 1;
+          serializationStats.createStoreBytes += storeData.size();
+          i = createCache.insert(entityId, EntityCreateSnapshot{monitoredEntity->entityType(), std::move(storeData)}).first;
         } else {
           snapshot.packetPreparationStats.entityStoreCacheHits += 1;
         }

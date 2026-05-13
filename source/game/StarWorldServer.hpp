@@ -55,6 +55,28 @@ public:
   typedef shared_ptr<ScriptComponent> ScriptComponentPtr;
   typedef function<void(Json const&)> WorldPropertyListener;
 
+  struct EntitySerializationStats {
+    uint64_t createStoreCalls = 0;
+    uint64_t createStoreBytes = 0;
+    uint64_t initialNetStateCalls = 0;
+    uint64_t initialNetStateBytes = 0;
+    uint64_t deltaNetStateCalls = 0;
+    uint64_t deltaNetStateBytes = 0;
+
+    uint64_t totalCalls() const {
+      return createStoreCalls + initialNetStateCalls + deltaNetStateCalls;
+    }
+
+    void add(EntitySerializationStats const& stats) {
+      createStoreCalls += stats.createStoreCalls;
+      createStoreBytes += stats.createStoreBytes;
+      initialNetStateCalls += stats.initialNetStateCalls;
+      initialNetStateBytes += stats.initialNetStateBytes;
+      deltaNetStateCalls += stats.deltaNetStateCalls;
+      deltaNetStateBytes += stats.deltaNetStateBytes;
+    }
+  };
+
   struct PacketPreparationStats {
     uint64_t ticks = 0;
     uint64_t monitoringRegionBuilds = 0;
@@ -70,6 +92,7 @@ public:
     uint64_t sectorClientFanoutLookups = 0;
     uint64_t sectorClientFanoutRecipients = 0;
     uint64_t sectorClientFanoutMisses = 0;
+    HashMap<EntityType, EntitySerializationStats> entitySerializationStats;
   };
 
   struct Phase6WorldParallelismStats {

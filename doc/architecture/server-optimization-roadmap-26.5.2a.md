@@ -24,8 +24,8 @@ Current checklist:
 1. Done: sector-to-client fan-out index for tile, tile-damage, and liquid update queueing, with `sectorFanout` diagnostics and focused coverage.
 2. Done: first monitoring-region snapshot reuse slice, with precomputed player-active signal regions and `regions=builds/rects/splits/reuses` diagnostics for liquid and packet-prep consumers.
 3. Done: liquid no-limit membership cache using bucketed region candidates, with `liquidCache=builds/regions/buckets/lookups/candidates/hits` diagnostics and focused engine coverage.
-4. Next: per-entity serialization counters for packet-prep cost attribution.
-5. Pending: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests.
+4. Done: per-entity serialization counters for packet-prep cost attribution, with `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` diagnostics and focused ItemDrop coverage.
+5. Next: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests.
 6. Pending: storage timing counters and one storage spike-reduction ticket.
 7. Pending: queue-only network send experiment behind measurement and fallback gates.
 
@@ -82,7 +82,7 @@ Priority tickets:
 2. Done: first monitoring-region generation/reuse slice. `WorldTickSnapshot` now carries precomputed player-active signal regions, counts downstream monitoring-region reuse, and exposes `regions=builds/rects/splits/reuses` through `LogMap`, `/serverstatus`, and `/worldstats`. Further liquid-cell membership pruning belongs to the liquid no-limit cache ticket.
 3. Done: liquid no-limit membership cache. Replaced the per-active-cell full `m_noProcessingLimitRegions` scan under a processing limit with bucketed region candidates that are still confirmed with exact `RectI::contains` checks. Diagnostics: `liquidCache=builds/regions/buckets/lookups/candidates/hits` in Phase 6 subsystem output, `/serverstatus`, and `/worldstats`.
 4. Pending: dirty wiring-network prototype. Keep the full scan as fallback, but start tracking dirty topology/output state so unchanged disconnected networks can be skipped or measured.
-5. Next: per-entity serialization counters. Identify whether players, NPCs, monsters, objects, projectiles, or scripted entities dominate packet serialization before widening worker prep.
+5. Done: per-entity serialization counters. Packet preparation now attributes create-store serialization, first-observation `writeNetState(0)`, and later delta `writeNetState(version)` calls/bytes by `EntityType`. Diagnostics: `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` in `/serverstatus` and `/worldstats`.
 
 Must-ship acceptance:
 
@@ -96,8 +96,8 @@ Goal: move more replication prep off the owner thread only after immutable input
 
 Priority tickets:
 
-1. Finish immutable net-state input research for first-observation and later-delta paths.
-2. Add deeper `writeNetState(0)` equivalence tests, including cases where first writes advance entity net versions.
+1. Next: finish immutable net-state input research for first-observation and later-delta paths.
+2. Next: add deeper `writeNetState(0)` equivalence tests, including cases where first writes advance entity net versions.
 3. Separate byte generation from owner-thread version advancement where possible, or explicitly document why a path must remain serial.
 4. Extend workerized packet preparation from sector tile-array prefill toward entity create/update payload preparation only when the worker consumes immutable inputs and the owner thread performs the visible merge.
 5. Keep default-enabled serial-versus-worker differential checks and divergence counters for every expanded packet-prep worker path.

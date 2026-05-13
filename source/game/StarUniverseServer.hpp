@@ -90,6 +90,7 @@ public:
     uint64_t worldPacketPrepSectorClientFanoutLookups;
     uint64_t worldPacketPrepSectorClientFanoutRecipients;
     uint64_t worldPacketPrepSectorClientFanoutMisses;
+    HashMap<EntityType, WorldServer::EntitySerializationStats> worldPacketPrepEntitySerializationStats;
     bool persistenceAsyncEnabled;
     size_t phase6StorageGenerationPlanningEnabledWorlds;
     uint64_t phase6StorageGenerationPlanningTicks;

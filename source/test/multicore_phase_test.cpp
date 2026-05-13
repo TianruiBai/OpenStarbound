@@ -568,6 +568,49 @@ TEST(MulticorePhaseTest, ServerOptimizationLiquidNoProcessingLimitCacheUsesBucke
   EXPECT_LT(lookupStats.candidates, lookupStats.lookups * lookupStats.regions);
 }
 
+TEST(MulticorePhaseTest, ServerOptimizationEntitySerializationStatsAttributePacketPrepByType) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+
+  ASSERT_TRUE(worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true));
+  ASSERT_TRUE(worldServer.addClient(2, SpawnTargetPosition(Vec2F(32, 32)), true));
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+  acknowledgeClientWindow(worldServer, 2, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(32, 32), Vec2F(), Vec2F(), true);
+  ASSERT_TRUE(itemDrop);
+  worldServer.addEntity(itemDrop, 100);
+
+  worldServer.update(1.0f / 60.0f);
+  auto packetPrepStats = worldServer.packetPreparationStats();
+  auto createStats = packetPrepStats.entitySerializationStats.ptr(EntityType::ItemDrop);
+  ASSERT_TRUE(createStats);
+  EXPECT_EQ(createStats->createStoreCalls, 1u);
+  EXPECT_GT(createStats->createStoreBytes, 0u);
+  EXPECT_EQ(createStats->initialNetStateCalls, 2u);
+  EXPECT_GT(createStats->initialNetStateBytes, 0u);
+  EXPECT_EQ(createStats->deltaNetStateCalls, 0u);
+
+  worldServer.getOutgoingPackets(1);
+  worldServer.getOutgoingPackets(2);
+  worldServer.update(1.0f / 60.0f);
+
+  auto packetPrepStatsAfterDelta = worldServer.packetPreparationStats();
+  auto deltaStats = packetPrepStatsAfterDelta.entitySerializationStats.ptr(EntityType::ItemDrop);
+  ASSERT_TRUE(deltaStats);
+  EXPECT_EQ(deltaStats->createStoreCalls, 1u);
+  EXPECT_EQ(deltaStats->initialNetStateCalls, 2u);
+  EXPECT_EQ(deltaStats->deltaNetStateCalls, createStats->deltaNetStateCalls + 2);
+}
+
 TEST(MulticorePhaseTest, Phase6PacketSectorPrefillMatchesSerialSectorPackets) {
   auto serialPayloads = preparedTileArrayUpdatePayloads(false);
   auto prefilledPayloads = preparedTileArrayUpdatePayloads(true);
