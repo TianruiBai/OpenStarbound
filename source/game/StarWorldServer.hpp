@@ -108,6 +108,13 @@ public:
     uint64_t wiringLoadedEntities = 0;
     uint64_t wiringNetworkLoads = 0;
     uint64_t wiringEvaluatedEntities = 0;
+    uint64_t entityBaselineTicks = 0;
+    uint64_t entityUpdatedEntities = 0;
+    uint64_t entityTileEntities = 0;
+    uint64_t entityDestroyedEntities = 0;
+    uint64_t luaBaselineTicks = 0;
+    uint64_t luaScriptContexts = 0;
+    uint64_t luaScriptUpdates = 0;
   };
 
   // Create a new world with the given template, writing new storage file.

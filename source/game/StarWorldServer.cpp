@@ -1061,10 +1061,14 @@ void WorldServer::update(float dt) {
   });
 
   timePhase(UpdateTimingPhase::Entities, [&]() {
+    uint64_t updatedEntities = 0;
+    uint64_t tileEntities = 0;
     m_entityMap->updateAllEntities([&](EntityPtr const& entity) {
+        updatedEntities += 1;
         entity->update(dt, m_currentStep);
 
         if (auto tileEntity = as<TileEntity>(entity)) {
+          tileEntities += 1;
           // Only do break checks on objects if all sectors the object touches
           // *and surrounding sectors* are active.  Objects that this object
           // rests on can be up to an entire sector large in any direction.
@@ -1078,11 +1082,27 @@ void WorldServer::update(float dt) {
       }, [](EntityPtr const& a, EntityPtr const& b) {
         return a->entityType() < b->entityType();
       });
+
+    if (m_phase6SubsystemBaselineMetricsEnabled) {
+      m_phase6WorldParallelismStats.entityBaselineTicks += 1;
+      m_phase6WorldParallelismStats.entityUpdatedEntities += updatedEntities;
+      m_phase6WorldParallelismStats.entityTileEntities += tileEntities;
+      m_phase6WorldParallelismStats.entityDestroyedEntities += toRemove.size();
+    }
   });
 
   timePhase(UpdateTimingPhase::Scripts, [&]() {
-    for (auto& pair : m_scriptContexts)
+    uint64_t scriptUpdates = 0;
+    for (auto& pair : m_scriptContexts) {
       pair.second->update(pair.second->updateDt(dt));
+      scriptUpdates += 1;
+    }
+
+    if (m_phase6SubsystemBaselineMetricsEnabled) {
+      m_phase6WorldParallelismStats.luaBaselineTicks += 1;
+      m_phase6WorldParallelismStats.luaScriptContexts += m_scriptContexts.size();
+      m_phase6WorldParallelismStats.luaScriptUpdates += scriptUpdates;
+    }
   });
 
   timePhase(UpdateTimingPhase::Damage, [&]() {

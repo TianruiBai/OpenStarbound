@@ -172,7 +172,8 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   for (size_t i = 0; i < 180; ++i) {
     worldServer.update(1.0f / 60.0f);
     stats = worldServer.phase6WorldParallelismStats();
-    if (stats.liquidBaselineTicks > 0 && stats.fallingBlocksBaselineTicks > 0 && stats.wiringBaselineTicks > 0)
+    if (stats.liquidBaselineTicks > 0 && stats.fallingBlocksBaselineTicks > 0 && stats.wiringBaselineTicks > 0
+      && stats.entityBaselineTicks > 0 && stats.luaBaselineTicks > 0)
       break;
   }
 
@@ -182,8 +183,12 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   EXPECT_GT(stats.liquidMonitoringRegions, 0u);
   EXPECT_GT(stats.fallingBlocksBaselineTicks, 0u);
   EXPECT_GT(stats.wiringBaselineTicks, 0u);
+  EXPECT_GT(stats.entityBaselineTicks, 0u);
+  EXPECT_GT(stats.luaBaselineTicks, 0u);
   EXPECT_GE(stats.fallingBlocksProcessedPositions, stats.fallingBlocksMovedBlocks);
   EXPECT_GE(stats.wiringLoadedEntities, stats.wiringEvaluatedEntities);
+  EXPECT_GE(stats.entityUpdatedEntities, stats.entityTileEntities);
+  EXPECT_GE(stats.luaScriptUpdates, stats.luaScriptContexts);
 
   return List<uint64_t>{
       stats.liquidBaselineTicks,
@@ -197,7 +202,14 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.wiringInitialEntities,
       stats.wiringLoadedEntities,
       stats.wiringNetworkLoads,
-      stats.wiringEvaluatedEntities};
+      stats.wiringEvaluatedEntities,
+      stats.entityBaselineTicks,
+      stats.entityUpdatedEntities,
+      stats.entityTileEntities,
+      stats.entityDestroyedEntities,
+      stats.luaBaselineTicks,
+      stats.luaScriptContexts,
+      stats.luaScriptUpdates};
 }
 
 }

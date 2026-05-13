@@ -408,6 +408,13 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6WiringLoadedEntities += phase6Stats.wiringLoadedEntities;
           status.phase6WiringNetworkLoads += phase6Stats.wiringNetworkLoads;
           status.phase6WiringEvaluatedEntities += phase6Stats.wiringEvaluatedEntities;
+          status.phase6EntityBaselineTicks += phase6Stats.entityBaselineTicks;
+          status.phase6EntityUpdatedEntities += phase6Stats.entityUpdatedEntities;
+          status.phase6EntityTileEntities += phase6Stats.entityTileEntities;
+          status.phase6EntityDestroyedEntities += phase6Stats.entityDestroyedEntities;
+          status.phase6LuaBaselineTicks += phase6Stats.luaBaselineTicks;
+          status.phase6LuaScriptContexts += phase6Stats.luaScriptContexts;
+          status.phase6LuaScriptUpdates += phase6Stats.luaScriptUpdates;
 
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);

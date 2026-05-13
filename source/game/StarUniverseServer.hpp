@@ -125,6 +125,13 @@ public:
     uint64_t phase6WiringLoadedEntities;
     uint64_t phase6WiringNetworkLoads;
     uint64_t phase6WiringEvaluatedEntities;
+    uint64_t phase6EntityBaselineTicks;
+    uint64_t phase6EntityUpdatedEntities;
+    uint64_t phase6EntityTileEntities;
+    uint64_t phase6EntityDestroyedEntities;
+    uint64_t phase6LuaBaselineTicks;
+    uint64_t phase6LuaScriptContexts;
+    uint64_t phase6LuaScriptUpdates;
     size_t networkWorkers;
     size_t networkOwnedConnections;
     uint64_t networkPacketsProcessed;

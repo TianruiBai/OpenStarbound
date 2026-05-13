@@ -359,7 +359,7 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6PacketPreparationSectorPrefillDifferentialChecks,
       status.phase6PacketPreparationSectorPrefillDifferentialMicroseconds,
       status.phase6PacketPreparationSectorPrefillDivergences));
-  lines.append(strf("Phase 6 subsystem baselines: enabledWorlds={}, liquidTicks={}, liquidActiveCells={}, liquidRegions={}, fallingTicks={}, fallingPending={}, fallingProcessed={}, fallingMoved={}, wiringTicks={}, wiringInitial={}, wiringLoaded={}, wiringNetworkLoads={}, wiringEvaluated={}",
+  lines.append(strf("Phase 6 subsystem baselines: enabledWorlds={}, liquidTicks={}, liquidActiveCells={}, liquidRegions={}, fallingTicks={}, fallingPending={}, fallingProcessed={}, fallingMoved={}, wiringTicks={}, wiringInitial={}, wiringLoaded={}, wiringNetworkLoads={}, wiringEvaluated={}, entityTicks={}, entityUpdated={}, entityTile={}, entityDestroyed={}, luaTicks={}, luaContexts={}, luaUpdates={}",
       status.phase6SubsystemBaselineMetricsEnabledWorlds,
       status.phase6LiquidBaselineTicks,
       status.phase6LiquidActiveCells,
@@ -372,7 +372,14 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6WiringInitialEntities,
       status.phase6WiringLoadedEntities,
       status.phase6WiringNetworkLoads,
-      status.phase6WiringEvaluatedEntities));
+      status.phase6WiringEvaluatedEntities,
+      status.phase6EntityBaselineTicks,
+      status.phase6EntityUpdatedEntities,
+      status.phase6EntityTileEntities,
+      status.phase6EntityDestroyedEntities,
+      status.phase6LuaBaselineTicks,
+      status.phase6LuaScriptContexts,
+      status.phase6LuaScriptUpdates));
   lines.append(strf("Persistence: asyncEnabled={}, pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceAsyncEnabled,
       status.persistenceBatchesPending,
