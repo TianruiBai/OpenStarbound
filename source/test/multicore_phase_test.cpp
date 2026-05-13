@@ -1,6 +1,7 @@
 #include "StarConfiguration.hpp"
 #include "StarDataStreamDevices.hpp"
 #include "StarFile.hpp"
+#include "StarLiquidsDatabase.hpp"
 #include "StarNetPackets.hpp"
 #include "StarRoot.hpp"
 #include "StarTime.hpp"
@@ -129,6 +130,66 @@ List<ByteArray> preparedTileArrayUpdatePayloads(bool packetSectorPrefill) {
   auto payloads = tileArrayUpdatePayloads(worldServer.getOutgoingPackets(1));
   EXPECT_FALSE(payloads.empty());
   return payloads;
+}
+
+LiquidId firstTestLiquidId() {
+  auto liquidsDatabase = Root::singleton().liquidsDatabase();
+  for (auto const& liquidName : liquidsDatabase->liquidNames()) {
+    if (liquidName != "empty")
+      return liquidsDatabase->liquidId(liquidName);
+  }
+  return EmptyLiquidId;
+}
+
+List<uint64_t> phase6SubsystemBaselineSignature() {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"subsystemBaselineMetrics", true}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+
+  if (!worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true)) {
+    ADD_FAILURE() << "Could not add baseline metrics test client";
+    return {};
+  }
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  auto liquidId = firstTestLiquidId();
+  EXPECT_NE(liquidId, EmptyLiquidId);
+  if (liquidId != EmptyLiquidId)
+    worldServer.modifyLiquid(Vec2I(32, 36), liquidId, 1.0f);
+
+  WorldServer::Phase6WorldParallelismStats stats;
+  for (size_t i = 0; i < 180; ++i) {
+    worldServer.update(1.0f / 60.0f);
+    stats = worldServer.phase6WorldParallelismStats();
+    if (stats.liquidBaselineTicks > 0 && stats.fallingBlocksBaselineTicks > 0 && stats.wiringBaselineTicks > 0)
+      break;
+  }
+
+  EXPECT_TRUE(stats.subsystemBaselineMetricsEnabled);
+  EXPECT_GT(stats.liquidBaselineTicks, 0u);
+  EXPECT_GT(stats.liquidActiveCells, 0u);
+  EXPECT_GT(stats.liquidMonitoringRegions, 0u);
+  EXPECT_GT(stats.fallingBlocksBaselineTicks, 0u);
+  EXPECT_GT(stats.wiringBaselineTicks, 0u);
+  EXPECT_GE(stats.fallingBlocksProcessedPositions, stats.fallingBlocksMovedBlocks);
+  EXPECT_GE(stats.wiringLoadedEntities, stats.wiringEvaluatedEntities);
+
+  return List<uint64_t>{
+      stats.liquidBaselineTicks,
+      stats.liquidActiveCells,
+      stats.liquidMonitoringRegions,
+      stats.fallingBlocksBaselineTicks,
+      stats.fallingBlocksPendingPositions,
+      stats.fallingBlocksProcessedPositions,
+      stats.fallingBlocksMovedBlocks,
+      stats.wiringBaselineTicks,
+      stats.wiringInitialEntities,
+      stats.wiringLoadedEntities,
+      stats.wiringNetworkLoads,
+      stats.wiringEvaluatedEntities};
 }
 
 }
@@ -324,13 +385,17 @@ TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
     WorldServer worldServer(Vec2U(256, 128), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
     EXPECT_FALSE(stats.storageGenerationPlanningEnabled);
+    EXPECT_FALSE(stats.storageGenerationPlanningDifferentialCheckEnabled);
     EXPECT_FALSE(stats.packetPreparationSectorPrefillEnabled);
+    EXPECT_FALSE(stats.packetPreparationSectorPrefillDifferentialCheckEnabled);
+    EXPECT_FALSE(stats.subsystemBaselineMetricsEnabled);
   }
 
   ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
       {"storageGenerationPlanning", true},
       {"storageGenerationPlanningWorkerThreads", 2},
-      {"storageGenerationPlanningMinimumSectors", 0}}}});
+      {"storageGenerationPlanningMinimumSectors", 0},
+      {"storageGenerationPlanningDifferentialCheck", true}}}});
 
   WorldServer worldServer(Vec2U(512, 256), File::ephemeralFile());
   worldServer.setFidelity(WorldServerFidelity::High);
@@ -346,16 +411,20 @@ TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
   }
 
   EXPECT_TRUE(stats.storageGenerationPlanningEnabled);
+  EXPECT_TRUE(stats.storageGenerationPlanningDifferentialCheckEnabled);
   EXPECT_GT(stats.storageGenerationPlanningTicks, 0u);
   EXPECT_GT(stats.storageGenerationPlanningSectors, 0u);
   EXPECT_GT(stats.storageGenerationPlanningSerialTicks + stats.storageGenerationPlanningParallelTicks, 0u);
+  EXPECT_GT(stats.storageGenerationPlanningDifferentialChecks, 0u);
+  EXPECT_EQ(stats.storageGenerationPlanningDivergences, 0u);
 }
 
 TEST(MulticorePhaseTest, Phase6PacketSectorPrefillIsGuarded) {
   ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
       {"packetPreparationSectorPrefill", true},
       {"packetPreparationSectorPrefillWorkerThreads", 2},
-      {"packetPreparationSectorPrefillMinimumSectors", 0}}}});
+      {"packetPreparationSectorPrefillMinimumSectors", 0},
+      {"packetPreparationSectorPrefillDifferentialCheck", true}}}});
 
   WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
   worldServer.setFidelity(WorldServerFidelity::Minimum);
@@ -369,7 +438,17 @@ TEST(MulticorePhaseTest, Phase6PacketSectorPrefillIsGuarded) {
   worldServer.update(1.0f / 60.0f);
   auto stats = worldServer.phase6WorldParallelismStats();
   EXPECT_TRUE(stats.packetPreparationSectorPrefillEnabled);
+  EXPECT_TRUE(stats.packetPreparationSectorPrefillDifferentialCheckEnabled);
   EXPECT_GT(stats.packetPreparationSectorPrefillTicks, 0u);
   EXPECT_GT(stats.packetPreparationSectorPrefillSectors, 0u);
   EXPECT_GT(stats.packetPreparationSectorPrefillSerialTicks + stats.packetPreparationSectorPrefillParallelTicks, 0u);
+  EXPECT_GT(stats.packetPreparationSectorPrefillDifferentialChecks, 0u);
+  EXPECT_EQ(stats.packetPreparationSectorPrefillDivergences, 0u);
+}
+
+TEST(MulticorePhaseTest, Phase6SubsystemBaselineMetricsAreGuardedAndStable) {
+  auto firstSignature = phase6SubsystemBaselineSignature();
+  auto secondSignature = phase6SubsystemBaselineSignature();
+
+  EXPECT_EQ(firstSignature, secondSignature);
 }

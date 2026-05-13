@@ -30,9 +30,15 @@ public:
 
 class FallingBlocksAgent {
 public:
+  struct UpdateStats {
+    size_t pendingPositions = 0;
+    uint64_t processedPositions = 0;
+    uint64_t movedBlocks = 0;
+  };
+
   FallingBlocksAgent(FallingBlocksFacadePtr worldFacade);
 
-  void update();
+  UpdateStats update();
 
   void visitLocation(Vec2I const& location);
   void visitRegion(RectI const& region);

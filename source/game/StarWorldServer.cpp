@@ -1,6 +1,7 @@
 #include "StarWorldServer.hpp"
 #include "StarLogging.hpp"
 #include "StarIterator.hpp"
+#include "StarDataStreamDevices.hpp"
 #include "StarDataStreamExtra.hpp"
 #include "StarBiome.hpp"
 #include "StarWireProcessor.hpp"
@@ -48,6 +49,40 @@ float distanceToClosestPlayer(Vec2F const& sectorCenter, List<Vec2F> const& play
   for (auto const& playerPosition : playerPositions)
     distance = min(vmag(sectorCenter - playerPosition), distance);
   return distance;
+}
+
+ByteArray phase6PacketPayload(PacketPtr const& packet) {
+  DataStreamBuffer buffer;
+  packet->write(buffer, {});
+  return buffer.takeData();
+}
+
+bool phase6SectorUpdatePacketsEquivalent(HashMap<ServerTileSectorArray::Sector, PacketPtr> const& lhs, HashMap<ServerTileSectorArray::Sector, PacketPtr> const& rhs) {
+  if (lhs.size() != rhs.size())
+    return false;
+
+  for (auto const& pair : lhs) {
+    auto rhsPacket = rhs.ptr(pair.first);
+    if (!rhsPacket)
+      return false;
+    if (phase6PacketPayload(pair.second) != phase6PacketPayload(*rhsPacket))
+      return false;
+  }
+
+  return true;
+}
+
+bool phase6StorageGenerationDistancesEquivalent(HashMap<WorldStorage::Sector, float> const& lhs, HashMap<WorldStorage::Sector, float> const& rhs) {
+  if (lhs.size() != rhs.size())
+    return false;
+
+  for (auto const& pair : lhs) {
+    auto rhsDistance = rhs.ptr(pair.first);
+    if (!rhsDistance || *rhsDistance != pair.second)
+      return false;
+  }
+
+  return true;
 }
 
 }
@@ -770,12 +805,26 @@ void WorldServer::prefillSectorUpdateCache(WorldTickSnapshot& snapshot) {
     return;
 
   HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdatePackets;
+  List<SectorUpdateSnapshot> sectorUpdateSnapshots;
   if (sectors.size() >= m_phase6PacketPreparationSectorPrefillMinimumSectors && m_phase6WorkerPool.getWorkerCount() > 1) {
     try {
+      sectorUpdateSnapshots = buildSectorUpdateSnapshots(sectors);
       auto parallelStart = Time::monotonicMicroseconds();
-      sectorUpdatePackets = buildSectorUpdatePacketsParallel(buildSectorUpdateSnapshots(sectors));
+      sectorUpdatePackets = buildSectorUpdatePacketsParallel(sectorUpdateSnapshots);
       m_phase6WorldParallelismStats.packetPreparationSectorPrefillParallelMicroseconds += Time::monotonicMicroseconds() - parallelStart;
       m_phase6WorldParallelismStats.packetPreparationSectorPrefillParallelTicks += 1;
+
+      if (m_phase6PacketPreparationSectorPrefillDifferentialCheck && sectorUpdatePackets.size() == sectors.size()) {
+        auto differentialStart = Time::monotonicMicroseconds();
+        auto serialSectorUpdatePackets = buildSectorUpdatePackets(sectorUpdateSnapshots);
+        m_phase6WorldParallelismStats.packetPreparationSectorPrefillDifferentialChecks += 1;
+        m_phase6WorldParallelismStats.packetPreparationSectorPrefillDifferentialMicroseconds += Time::monotonicMicroseconds() - differentialStart;
+        if (!phase6SectorUpdatePacketsEquivalent(sectorUpdatePackets, serialSectorUpdatePackets)) {
+          m_phase6WorldParallelismStats.packetPreparationSectorPrefillDivergences += 1;
+          m_phase6WorldParallelismStats.packetPreparationSectorPrefillFallbacks += 1;
+          sectorUpdatePackets = std::move(serialSectorUpdatePackets);
+        }
+      }
     } catch (std::exception const&) {
       m_phase6WorldParallelismStats.packetPreparationSectorPrefillFallbacks += 1;
     }
@@ -783,7 +832,9 @@ void WorldServer::prefillSectorUpdateCache(WorldTickSnapshot& snapshot) {
 
   if (sectorUpdatePackets.size() != sectors.size()) {
     auto serialStart = Time::monotonicMicroseconds();
-    sectorUpdatePackets = buildSectorUpdatePackets(buildSectorUpdateSnapshots(sectors));
+    if (sectorUpdateSnapshots.empty())
+      sectorUpdateSnapshots = buildSectorUpdateSnapshots(sectors);
+    sectorUpdatePackets = buildSectorUpdatePackets(sectorUpdateSnapshots);
     m_phase6WorldParallelismStats.packetPreparationSectorPrefillSerialMicroseconds += Time::monotonicMicroseconds() - serialStart;
     m_phase6WorldParallelismStats.packetPreparationSectorPrefillSerialTicks += 1;
   }
@@ -943,6 +994,18 @@ void WorldServer::generateQueuedStorage(Maybe<size_t> sectorGenerationLevelLimit
       sectorDistances = buildStorageGenerationSectorDistancesParallel(sectorCenters, playerPositions);
       m_phase6WorldParallelismStats.storageGenerationPlanningParallelMicroseconds += Time::monotonicMicroseconds() - parallelStart;
       m_phase6WorldParallelismStats.storageGenerationPlanningParallelTicks += 1;
+
+      if (m_phase6StorageGenerationPlanningDifferentialCheck && sectorDistances.size() == sectorCenters.size()) {
+        auto differentialStart = Time::monotonicMicroseconds();
+        auto serialSectorDistances = buildStorageGenerationSectorDistances(sectorCenters, playerPositions);
+        m_phase6WorldParallelismStats.storageGenerationPlanningDifferentialChecks += 1;
+        m_phase6WorldParallelismStats.storageGenerationPlanningDifferentialMicroseconds += Time::monotonicMicroseconds() - differentialStart;
+        if (!phase6StorageGenerationDistancesEquivalent(sectorDistances, serialSectorDistances)) {
+          m_phase6WorldParallelismStats.storageGenerationPlanningDivergences += 1;
+          m_phase6WorldParallelismStats.storageGenerationPlanningFallbacks += 1;
+          sectorDistances = std::move(serialSectorDistances);
+        }
+      }
     } catch (std::exception const&) {
       m_phase6WorldParallelismStats.storageGenerationPlanningFallbacks += 1;
     }
@@ -1027,8 +1090,16 @@ void WorldServer::update(float dt) {
   });
 
   timePhase(UpdateTimingPhase::Wiring, [&]() {
-    if (shouldRunThisStep("wiringUpdate"))
-      m_wireProcessor->process();
+    if (shouldRunThisStep("wiringUpdate")) {
+      auto wiringStats = m_wireProcessor->process();
+      if (m_phase6SubsystemBaselineMetricsEnabled) {
+        m_phase6WorldParallelismStats.wiringBaselineTicks += 1;
+        m_phase6WorldParallelismStats.wiringInitialEntities += wiringStats.initialEntities;
+        m_phase6WorldParallelismStats.wiringLoadedEntities += wiringStats.loadedEntities;
+        m_phase6WorldParallelismStats.wiringNetworkLoads += wiringStats.networkLoads;
+        m_phase6WorldParallelismStats.wiringEvaluatedEntities += wiringStats.evaluatedEntities;
+      }
+    }
   });
 
   timePhase(UpdateTimingPhase::Sky, [&]() {
@@ -1051,12 +1122,24 @@ void WorldServer::update(float dt) {
       m_liquidEngine->setProcessingLimit(m_fidelityConfig.optUInt("liquidEngineBackgroundProcessingLimit"));
       m_liquidEngine->setNoProcessingLimitRegions(tickSnapshot.monitoringRegions);
       m_liquidEngine->update();
+      if (m_phase6SubsystemBaselineMetricsEnabled) {
+        m_phase6WorldParallelismStats.liquidBaselineTicks += 1;
+        m_phase6WorldParallelismStats.liquidActiveCells += m_liquidEngine->activeCells();
+        m_phase6WorldParallelismStats.liquidMonitoringRegions += tickSnapshot.monitoringRegions.size();
+      }
     }
   });
 
   timePhase(UpdateTimingPhase::FallingBlocks, [&]() {
-    if (shouldRunThisStep("fallingBlocksUpdate"))
-      m_fallingBlocksAgent->update();
+    if (shouldRunThisStep("fallingBlocksUpdate")) {
+      auto fallingBlocksStats = m_fallingBlocksAgent->update();
+      if (m_phase6SubsystemBaselineMetricsEnabled) {
+        m_phase6WorldParallelismStats.fallingBlocksBaselineTicks += 1;
+        m_phase6WorldParallelismStats.fallingBlocksPendingPositions += fallingBlocksStats.pendingPositions;
+        m_phase6WorldParallelismStats.fallingBlocksProcessedPositions += fallingBlocksStats.processedPositions;
+        m_phase6WorldParallelismStats.fallingBlocksMovedBlocks += fallingBlocksStats.movedBlocks;
+      }
+    }
   });
 
   timePhase(UpdateTimingPhase::BlockDamage, [&]() {
@@ -1818,11 +1901,17 @@ void WorldServer::init(bool firstTime) {
   m_phase6StorageGenerationPlanningEnabled = phase6Config.getBool("storageGenerationPlanning", false);
   m_phase6StorageGenerationPlanningWorkerThreads = phase6Config.getUInt("storageGenerationPlanningWorkerThreads", 2);
   m_phase6StorageGenerationPlanningMinimumSectors = phase6Config.getUInt("storageGenerationPlanningMinimumSectors", 8);
+  m_phase6StorageGenerationPlanningDifferentialCheck = phase6Config.getBool("storageGenerationPlanningDifferentialCheck", false);
   m_phase6PacketPreparationSectorPrefillEnabled = phase6Config.getBool("packetPreparationSectorPrefill", false);
   m_phase6PacketPreparationSectorPrefillWorkerThreads = phase6Config.getUInt("packetPreparationSectorPrefillWorkerThreads", 2);
   m_phase6PacketPreparationSectorPrefillMinimumSectors = phase6Config.getUInt("packetPreparationSectorPrefillMinimumSectors", 8);
+  m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
+  m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
   m_phase6WorldParallelismStats.storageGenerationPlanningEnabled = m_phase6StorageGenerationPlanningEnabled;
+  m_phase6WorldParallelismStats.storageGenerationPlanningDifferentialCheckEnabled = m_phase6StorageGenerationPlanningDifferentialCheck;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillEnabled = m_phase6PacketPreparationSectorPrefillEnabled;
+  m_phase6WorldParallelismStats.packetPreparationSectorPrefillDifferentialCheckEnabled = m_phase6PacketPreparationSectorPrefillDifferentialCheck;
+  m_phase6WorldParallelismStats.subsystemBaselineMetricsEnabled = m_phase6SubsystemBaselineMetricsEnabled;
   size_t phase6WorkerThreads = 0;
   if (m_phase6StorageGenerationPlanningEnabled)
     phase6WorkerThreads = max(phase6WorkerThreads, m_phase6StorageGenerationPlanningWorkerThreads);

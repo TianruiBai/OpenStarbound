@@ -10,12 +10,15 @@ WireProcessor::WireProcessor(WorldStoragePtr worldStorage) {
   m_worldStorage = worldStorage;
 }
 
-void WireProcessor::process() {
+WireProcessor::ProcessStats WireProcessor::process() {
+  ProcessStats stats;
+
   // First, populate all the working entities that are already live
   m_worldStorage->entityMap()->forAllEntities([&](EntityPtr const& entity) {
     if (auto wireEntity = as<WireEntity>(entity.get()))
       populateWorking(wireEntity);
   });
+  stats.initialEntities = m_workingWireEntities.size();
 
   // Then, scan the network of each entity in the working set.  This may, as a
   // side effect, load further unconnected wire entities. Because our policy is
@@ -27,17 +30,22 @@ void WireProcessor::process() {
   while (true) {
     size_t oldWorkingSize = m_workingWireEntities.size();
     for (auto const& p : m_workingWireEntities.keys()) {
-      if (!m_workingWireEntities.get(p).networkLoaded)
+      if (!m_workingWireEntities.get(p).networkLoaded) {
+        stats.networkLoads += 1;
         loadNetwork(p);
+      }
     }
     if (m_workingWireEntities.size() == oldWorkingSize)
       break;
   }
 
+  stats.loadedEntities = m_workingWireEntities.size();
+  stats.evaluatedEntities = m_workingWireEntities.size();
   for (auto const& p : m_workingWireEntities)
     p.second.wireEntity->evaluate(this);
 
   m_workingWireEntities.clear();
+  return stats;
 }
 
 bool WireProcessor::readInputConnection(WireConnection const& connection) {

@@ -374,6 +374,11 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6StorageGenerationPlanningParallelMicroseconds += phase6Stats.storageGenerationPlanningParallelMicroseconds;
           status.phase6StorageGenerationPlanningMergeMicroseconds += phase6Stats.storageGenerationPlanningMergeMicroseconds;
           status.phase6StorageGenerationPlanningFallbacks += phase6Stats.storageGenerationPlanningFallbacks;
+          if (phase6Stats.storageGenerationPlanningDifferentialCheckEnabled)
+            status.phase6StorageGenerationPlanningDifferentialCheckEnabledWorlds += 1;
+          status.phase6StorageGenerationPlanningDifferentialChecks += phase6Stats.storageGenerationPlanningDifferentialChecks;
+          status.phase6StorageGenerationPlanningDifferentialMicroseconds += phase6Stats.storageGenerationPlanningDifferentialMicroseconds;
+          status.phase6StorageGenerationPlanningDivergences += phase6Stats.storageGenerationPlanningDivergences;
           if (phase6Stats.packetPreparationSectorPrefillEnabled)
             status.phase6PacketPreparationSectorPrefillEnabledWorlds += 1;
           status.phase6PacketPreparationSectorPrefillTicks += phase6Stats.packetPreparationSectorPrefillTicks;
@@ -384,6 +389,25 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6PacketPreparationSectorPrefillParallelMicroseconds += phase6Stats.packetPreparationSectorPrefillParallelMicroseconds;
           status.phase6PacketPreparationSectorPrefillMergeMicroseconds += phase6Stats.packetPreparationSectorPrefillMergeMicroseconds;
           status.phase6PacketPreparationSectorPrefillFallbacks += phase6Stats.packetPreparationSectorPrefillFallbacks;
+          if (phase6Stats.packetPreparationSectorPrefillDifferentialCheckEnabled)
+            status.phase6PacketPreparationSectorPrefillDifferentialCheckEnabledWorlds += 1;
+          status.phase6PacketPreparationSectorPrefillDifferentialChecks += phase6Stats.packetPreparationSectorPrefillDifferentialChecks;
+          status.phase6PacketPreparationSectorPrefillDifferentialMicroseconds += phase6Stats.packetPreparationSectorPrefillDifferentialMicroseconds;
+          status.phase6PacketPreparationSectorPrefillDivergences += phase6Stats.packetPreparationSectorPrefillDivergences;
+          if (phase6Stats.subsystemBaselineMetricsEnabled)
+            status.phase6SubsystemBaselineMetricsEnabledWorlds += 1;
+          status.phase6LiquidBaselineTicks += phase6Stats.liquidBaselineTicks;
+          status.phase6LiquidActiveCells += phase6Stats.liquidActiveCells;
+          status.phase6LiquidMonitoringRegions += phase6Stats.liquidMonitoringRegions;
+          status.phase6FallingBlocksBaselineTicks += phase6Stats.fallingBlocksBaselineTicks;
+          status.phase6FallingBlocksPendingPositions += phase6Stats.fallingBlocksPendingPositions;
+          status.phase6FallingBlocksProcessedPositions += phase6Stats.fallingBlocksProcessedPositions;
+          status.phase6FallingBlocksMovedBlocks += phase6Stats.fallingBlocksMovedBlocks;
+          status.phase6WiringBaselineTicks += phase6Stats.wiringBaselineTicks;
+          status.phase6WiringInitialEntities += phase6Stats.wiringInitialEntities;
+          status.phase6WiringLoadedEntities += phase6Stats.wiringLoadedEntities;
+          status.phase6WiringNetworkLoads += phase6Stats.wiringNetworkLoads;
+          status.phase6WiringEvaluatedEntities += phase6Stats.wiringEvaluatedEntities;
 
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);

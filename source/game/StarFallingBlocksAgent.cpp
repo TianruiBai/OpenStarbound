@@ -9,8 +9,10 @@ FallingBlocksAgent::FallingBlocksAgent(FallingBlocksFacadePtr worldFacade)
   m_immediateUpwardPropagateProbability = Root::singleton().assets()->json("/worldserver.config:fallingBlocksImmediateUpwardPropogateProbability").toFloat();
 }
 
-void FallingBlocksAgent::update() {
+FallingBlocksAgent::UpdateStats FallingBlocksAgent::update() {
+  UpdateStats stats;
   HashSet<Vec2I> processing = take(m_pending);
+  stats.pendingPositions = processing.size();
 
   while (!processing.empty()) {
     List<Vec2I> positions;
@@ -24,6 +26,7 @@ void FallingBlocksAgent::update() {
       });
 
     for (auto const& pos : positions) {
+      stats.processedPositions += 1;
       Vec2I belowPos = pos + Vec2I(0, -1);
       Vec2I belowLeftPos = pos + Vec2I(-1, -1);
       Vec2I belowRightPos = pos + Vec2I(1, -1);
@@ -53,6 +56,7 @@ void FallingBlocksAgent::update() {
       }
 
       if (moveTo) {
+        stats.movedBlocks += 1;
         m_facade->moveBlock(pos, *moveTo);
         if (m_random.randf() < m_immediateUpwardPropagateProbability) {
           processing.add(pos + Vec2I(0, 1));
@@ -65,6 +69,8 @@ void FallingBlocksAgent::update() {
       }
     }
   }
+
+  return stats;
 }
 
 void FallingBlocksAgent::visitLocation(Vec2I const& location) {

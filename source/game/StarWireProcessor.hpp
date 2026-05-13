@@ -13,9 +13,16 @@ STAR_CLASS(WireProcessor);
 // together.
 class WireProcessor : public WireCoordinator {
 public:
+  struct ProcessStats {
+    size_t initialEntities = 0;
+    size_t loadedEntities = 0;
+    uint64_t networkLoads = 0;
+    uint64_t evaluatedEntities = 0;
+  };
+
   WireProcessor(WorldStoragePtr worldStorage);
 
-  void process();
+  ProcessStats process();
 
   bool readInputConnection(WireConnection const& connection) override;
 

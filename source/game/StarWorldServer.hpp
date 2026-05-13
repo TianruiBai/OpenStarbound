@@ -78,6 +78,10 @@ public:
     uint64_t storageGenerationPlanningParallelMicroseconds = 0;
     uint64_t storageGenerationPlanningMergeMicroseconds = 0;
     uint64_t storageGenerationPlanningFallbacks = 0;
+    bool storageGenerationPlanningDifferentialCheckEnabled = false;
+    uint64_t storageGenerationPlanningDifferentialChecks = 0;
+    uint64_t storageGenerationPlanningDifferentialMicroseconds = 0;
+    uint64_t storageGenerationPlanningDivergences = 0;
     bool packetPreparationSectorPrefillEnabled = false;
     uint64_t packetPreparationSectorPrefillTicks = 0;
     uint64_t packetPreparationSectorPrefillSerialTicks = 0;
@@ -87,6 +91,23 @@ public:
     uint64_t packetPreparationSectorPrefillParallelMicroseconds = 0;
     uint64_t packetPreparationSectorPrefillMergeMicroseconds = 0;
     uint64_t packetPreparationSectorPrefillFallbacks = 0;
+    bool packetPreparationSectorPrefillDifferentialCheckEnabled = false;
+    uint64_t packetPreparationSectorPrefillDifferentialChecks = 0;
+    uint64_t packetPreparationSectorPrefillDifferentialMicroseconds = 0;
+    uint64_t packetPreparationSectorPrefillDivergences = 0;
+    bool subsystemBaselineMetricsEnabled = false;
+    uint64_t liquidBaselineTicks = 0;
+    uint64_t liquidActiveCells = 0;
+    uint64_t liquidMonitoringRegions = 0;
+    uint64_t fallingBlocksBaselineTicks = 0;
+    uint64_t fallingBlocksPendingPositions = 0;
+    uint64_t fallingBlocksProcessedPositions = 0;
+    uint64_t fallingBlocksMovedBlocks = 0;
+    uint64_t wiringBaselineTicks = 0;
+    uint64_t wiringInitialEntities = 0;
+    uint64_t wiringLoadedEntities = 0;
+    uint64_t wiringNetworkLoads = 0;
+    uint64_t wiringEvaluatedEntities = 0;
   };
 
   // Create a new world with the given template, writing new storage file.
@@ -508,9 +529,12 @@ private:
   bool m_phase6StorageGenerationPlanningEnabled;
   size_t m_phase6StorageGenerationPlanningWorkerThreads;
   size_t m_phase6StorageGenerationPlanningMinimumSectors;
+  bool m_phase6StorageGenerationPlanningDifferentialCheck;
   bool m_phase6PacketPreparationSectorPrefillEnabled;
   size_t m_phase6PacketPreparationSectorPrefillWorkerThreads;
   size_t m_phase6PacketPreparationSectorPrefillMinimumSectors;
+  bool m_phase6PacketPreparationSectorPrefillDifferentialCheck;
+  bool m_phase6SubsystemBaselineMetricsEnabled;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
 
   GameTimer m_entityUpdateTimer;

@@ -4,8 +4,11 @@
     "storageGenerationPlanning" : false,
     "storageGenerationPlanningWorkerThreads" : 2,
     "storageGenerationPlanningMinimumSectors" : 8,
+    "storageGenerationPlanningDifferentialCheck" : false,
     "packetPreparationSectorPrefill" : false,
     "packetPreparationSectorPrefillWorkerThreads" : 2,
-    "packetPreparationSectorPrefillMinimumSectors" : 8
+    "packetPreparationSectorPrefillMinimumSectors" : 8,
+    "packetPreparationSectorPrefillDifferentialCheck" : false,
+    "subsystemBaselineMetrics" : false
   }
 }
