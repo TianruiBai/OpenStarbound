@@ -17,6 +17,7 @@
 #include "StarRpcThreadPromise.hpp"
 #include "StarItemDescriptor.hpp"
 #include "StarServerTiming.hpp"
+#include "StarWorkerPool.hpp"
 
 namespace Star {
 
@@ -65,6 +66,18 @@ public:
     uint64_t entityStoreCacheMisses = 0;
     uint64_t entityNetStateCacheHits = 0;
     uint64_t entityNetStateCacheMisses = 0;
+  };
+
+  struct Phase6WorldParallelismStats {
+    bool storageGenerationPlanningEnabled = false;
+    uint64_t storageGenerationPlanningTicks = 0;
+    uint64_t storageGenerationPlanningSerialTicks = 0;
+    uint64_t storageGenerationPlanningParallelTicks = 0;
+    uint64_t storageGenerationPlanningSectors = 0;
+    uint64_t storageGenerationPlanningSerialMicroseconds = 0;
+    uint64_t storageGenerationPlanningParallelMicroseconds = 0;
+    uint64_t storageGenerationPlanningMergeMicroseconds = 0;
+    uint64_t storageGenerationPlanningFallbacks = 0;
   };
 
   // Create a new world with the given template, writing new storage file.
@@ -145,6 +158,7 @@ public:
   PacketPreparationStats packetPreparationStats() const;
   List<ServerTimingRecord> updateTimingRecords() const;
   List<ServerTimingStatus> updateTimingStatus() const;
+  Phase6WorldParallelismStats phase6WorldParallelismStats() const;
   MaterialId material(Vec2I const& position, TileLayer layer) const override;
   MaterialHue materialHueShift(Vec2I const& position, TileLayer layer) const override;
   ModId mod(Vec2I const& position, TileLayer layer) const override;
@@ -384,6 +398,13 @@ private:
   Maybe<unsigned> shouldRunThisStep(String const& timingConfiguration);
 
   WorldTickSnapshot buildWorldTickSnapshot();
+  HashMap<WorldStorage::Sector, float> buildStorageGenerationSectorDistances(
+      List<pair<WorldStorage::Sector, Vec2F>> const& sectorCenters,
+      List<Vec2F> const& playerPositions) const;
+  HashMap<WorldStorage::Sector, float> buildStorageGenerationSectorDistancesParallel(
+      List<pair<WorldStorage::Sector, Vec2F>> const& sectorCenters,
+      List<Vec2F> const& playerPositions);
+  void generateQueuedStorage(Maybe<size_t> sectorGenerationLevelLimit, List<Vec2F> const& playerPositions);
   void recordPacketPreparationStats(WorldTickSnapshot const& snapshot);
   static char const* updateTimingPhaseName(UpdateTimingPhase phase);
   void recordUpdateTiming(UpdateTimingPhase phase, int64_t durationMicroseconds);
@@ -459,7 +480,12 @@ private:
 
   HashMap<NetCompatibilityRules, HashMap<pair<EntityId, uint64_t>, pair<ByteArray, uint64_t>>> m_netStateCache;
   PacketPreparationStats m_packetPreparationStats;
+  Phase6WorldParallelismStats m_phase6WorldParallelismStats;
   List<ServerTimingAccumulator> m_updateTimings;
+  WorkerPool m_phase6WorkerPool;
+  bool m_phase6StorageGenerationPlanningEnabled;
+  size_t m_phase6StorageGenerationPlanningWorkerThreads;
+  size_t m_phase6StorageGenerationPlanningMinimumSectors;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
 
   GameTimer m_entityUpdateTimer;

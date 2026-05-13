@@ -28,6 +28,30 @@
 
 namespace Star {
 
+namespace {
+
+Json readWorldServerConfig() {
+  auto& root = Root::singleton();
+  auto worldServerConfig = root.assets()->json("/worldserver.config");
+
+  auto configOverrides = root.configuration()->get("worldServerConfigOverrides", {});
+  if (configOverrides.isType(Json::Type::Object)) {
+    for (auto const& pair : configOverrides.iterateObject())
+      worldServerConfig = worldServerConfig.set(pair.first, pair.second);
+  }
+
+  return worldServerConfig;
+}
+
+float distanceToClosestPlayer(Vec2F const& sectorCenter, List<Vec2F> const& playerPositions) {
+  float distance = highest<float>();
+  for (auto const& playerPosition : playerPositions)
+    distance = min(vmag(sectorCenter - playerPosition), distance);
+  return distance;
+}
+
+}
+
 EnumMap<WorldServerFidelity> const WorldServerFidelityNames{
   {WorldServerFidelity::Minimum, "minimum"},
   {WorldServerFidelity::Low, "low"},
@@ -35,7 +59,8 @@ EnumMap<WorldServerFidelity> const WorldServerFidelityNames{
   {WorldServerFidelity::High, "high"}
 };
 
-WorldServer::WorldServer(WorldTemplatePtr const& worldTemplate, IODevicePtr storage) {
+WorldServer::WorldServer(WorldTemplatePtr const& worldTemplate, IODevicePtr storage)
+  : m_phase6WorkerPool("WorldServerPhase6WorkerPool") {
   m_worldTemplate = worldTemplate;
   m_worldStorage = make_shared<WorldStorage>(m_worldTemplate->size(), storage, make_shared<WorldGenerator>(this));
   m_adjustPlayerStart = true;
@@ -52,7 +77,8 @@ WorldServer::WorldServer(WorldTemplatePtr const& worldTemplate, IODevicePtr stor
 WorldServer::WorldServer(Vec2U const& size, IODevicePtr storage)
   : WorldServer(make_shared<WorldTemplate>(size), storage) {}
 
-WorldServer::WorldServer(IODevicePtr const& storage) {
+WorldServer::WorldServer(IODevicePtr const& storage)
+  : m_phase6WorkerPool("WorldServerPhase6WorkerPool") {
   m_worldStorage = make_shared<WorldStorage>(storage, make_shared<WorldGenerator>(this));
   m_tileProtectionEnabled = true;
   m_universeSettings = make_shared<UniverseSettings>();
@@ -62,7 +88,8 @@ WorldServer::WorldServer(IODevicePtr const& storage) {
   init(false);
 }
 
-WorldServer::WorldServer(WorldChunks const& chunks) {
+WorldServer::WorldServer(WorldChunks const& chunks)
+  : m_phase6WorkerPool("WorldServerPhase6WorkerPool") {
   m_worldStorage = make_shared<WorldStorage>(chunks, make_shared<WorldGenerator>(this));
   m_tileProtectionEnabled = true;
   m_universeSettings = make_shared<UniverseSettings>();
@@ -73,6 +100,8 @@ WorldServer::WorldServer(WorldChunks const& chunks) {
 }
 
 WorldServer::~WorldServer() {
+  m_phase6WorkerPool.stop();
+
   for (auto& p : m_scriptContexts)
     p.second->uninit();
 
@@ -705,6 +734,108 @@ void WorldServer::recordUpdateTiming(UpdateTimingPhase phase, int64_t durationMi
   recordServerTiming(m_updateTimings[index], durationMicroseconds);
 }
 
+HashMap<WorldStorage::Sector, float> WorldServer::buildStorageGenerationSectorDistances(
+    List<pair<WorldStorage::Sector, Vec2F>> const& sectorCenters,
+    List<Vec2F> const& playerPositions) const {
+  HashMap<WorldStorage::Sector, float> sectorDistances;
+  for (auto const& sectorCenter : sectorCenters)
+    sectorDistances.set(sectorCenter.first, distanceToClosestPlayer(sectorCenter.second, playerPositions));
+  return sectorDistances;
+}
+
+HashMap<WorldStorage::Sector, float> WorldServer::buildStorageGenerationSectorDistancesParallel(
+    List<pair<WorldStorage::Sector, Vec2F>> const& sectorCenters,
+    List<Vec2F> const& playerPositions) {
+  HashMap<WorldStorage::Sector, float> sectorDistances;
+  if (sectorCenters.empty())
+    return sectorDistances;
+
+  auto workerCount = min<size_t>(m_phase6WorkerPool.getWorkerCount(), sectorCenters.size());
+  auto chunkSize = (sectorCenters.size() + workerCount - 1) / workerCount;
+  List<WorkerPoolPromise<List<pair<WorldStorage::Sector, float>>>> promises;
+  promises.reserve(workerCount);
+
+  for (size_t chunkStart = 0; chunkStart < sectorCenters.size(); chunkStart += chunkSize) {
+    auto chunkEnd = min(chunkStart + chunkSize, sectorCenters.size());
+    List<pair<WorldStorage::Sector, Vec2F>> chunk;
+    chunk.reserve(chunkEnd - chunkStart);
+    for (size_t i = chunkStart; i < chunkEnd; ++i)
+      chunk.append(sectorCenters[i]);
+
+    promises.append(m_phase6WorkerPool.addProducer<List<pair<WorldStorage::Sector, float>>>([chunk = std::move(chunk), playerPositions]() {
+        List<pair<WorldStorage::Sector, float>> distances;
+        distances.reserve(chunk.size());
+        for (auto const& sectorCenter : chunk)
+          distances.append({sectorCenter.first, distanceToClosestPlayer(sectorCenter.second, playerPositions)});
+        return distances;
+      }));
+  }
+
+  for (auto& promise : promises)
+    promise.get();
+
+  auto mergeStart = Time::monotonicMicroseconds();
+  for (auto& promise : promises) {
+    for (auto const& sectorDistance : promise.get())
+      sectorDistances.set(sectorDistance.first, sectorDistance.second);
+  }
+  m_phase6WorldParallelismStats.storageGenerationPlanningMergeMicroseconds += Time::monotonicMicroseconds() - mergeStart;
+
+  return sectorDistances;
+}
+
+void WorldServer::generateQueuedStorage(Maybe<size_t> sectorGenerationLevelLimit, List<Vec2F> const& playerPositions) {
+  if (!m_phase6StorageGenerationPlanningEnabled) {
+    HashMap<WorldStorage::Sector, float> sectorDistances;
+    m_worldStorage->generateQueue(sectorGenerationLevelLimit, [this, playerPositions, sectorDistances = std::move(sectorDistances)](WorldStorage::Sector a, WorldStorage::Sector b) mutable {
+        auto distanceToClosestQueuedSector = [this, &playerPositions, &sectorDistances](WorldStorage::Sector sector) {
+          if (auto distance = sectorDistances.ptr(sector))
+            return *distance;
+
+          Vec2F sectorCenter = RectF(*m_worldStorage->regionForSector(sector)).center();
+          float distance = distanceToClosestPlayer(sectorCenter, playerPositions);
+          sectorDistances.set(sector, distance);
+          return distance;
+        };
+
+        return distanceToClosestQueuedSector(a) < distanceToClosestQueuedSector(b);
+      });
+    return;
+  }
+
+  auto queuedSectors = m_worldStorage->generationQueueSectors();
+  m_phase6WorldParallelismStats.storageGenerationPlanningTicks += 1;
+  m_phase6WorldParallelismStats.storageGenerationPlanningSectors += queuedSectors.size();
+
+  List<pair<WorldStorage::Sector, Vec2F>> sectorCenters;
+  sectorCenters.reserve(queuedSectors.size());
+  for (auto const& sector : queuedSectors)
+    sectorCenters.append({sector, RectF(*m_worldStorage->regionForSector(sector)).center()});
+
+  HashMap<WorldStorage::Sector, float> sectorDistances;
+  if (sectorCenters.size() >= m_phase6StorageGenerationPlanningMinimumSectors && m_phase6WorkerPool.getWorkerCount() > 1) {
+    try {
+      auto parallelStart = Time::monotonicMicroseconds();
+      sectorDistances = buildStorageGenerationSectorDistancesParallel(sectorCenters, playerPositions);
+      m_phase6WorldParallelismStats.storageGenerationPlanningParallelMicroseconds += Time::monotonicMicroseconds() - parallelStart;
+      m_phase6WorldParallelismStats.storageGenerationPlanningParallelTicks += 1;
+    } catch (std::exception const&) {
+      m_phase6WorldParallelismStats.storageGenerationPlanningFallbacks += 1;
+    }
+  }
+
+  if (sectorDistances.size() != sectorCenters.size()) {
+    auto serialStart = Time::monotonicMicroseconds();
+    sectorDistances = buildStorageGenerationSectorDistances(sectorCenters, playerPositions);
+    m_phase6WorldParallelismStats.storageGenerationPlanningSerialMicroseconds += Time::monotonicMicroseconds() - serialStart;
+    m_phase6WorldParallelismStats.storageGenerationPlanningSerialTicks += 1;
+  }
+
+  m_worldStorage->generateQueue(sectorGenerationLevelLimit, [sectorDistances = std::move(sectorDistances)](WorldStorage::Sector a, WorldStorage::Sector b) {
+      return sectorDistances.value(a, highest<float>()) < sectorDistances.value(b, highest<float>());
+    });
+}
+
 void WorldServer::update(float dt) {
   auto timePhase = [this](UpdateTimingPhase phase, auto&& action) {
     auto start = Time::monotonicMicroseconds();
@@ -822,22 +953,7 @@ void WorldServer::update(float dt) {
           playerPositions.append(player->position());
       }
 
-      HashMap<WorldStorage::Sector, float> sectorDistances;
-      m_worldStorage->generateQueue(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), [this, playerPositions, sectorDistances = std::move(sectorDistances)](WorldStorage::Sector a, WorldStorage::Sector b) mutable {
-          auto distanceToClosestPlayer = [this, &playerPositions, &sectorDistances](WorldStorage::Sector sector) {
-            if (auto distance = sectorDistances.ptr(sector))
-              return *distance;
-
-            Vec2F sectorCenter = RectF(*m_worldStorage->regionForSector(sector)).center();
-            float distance = highest<float>();
-            for (auto const& playerPosition : playerPositions)
-              distance = min(vmag(sectorCenter - playerPosition), distance);
-            sectorDistances.set(sector, distance);
-            return distance;
-          };
-
-          return distanceToClosestPlayer(a) < distanceToClosestPlayer(b);
-        });
+      generateQueuedStorage(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), playerPositions);
     }
   });
 
@@ -901,6 +1017,10 @@ List<ServerTimingRecord> WorldServer::updateTimingRecords() const {
 
 List<ServerTimingStatus> WorldServer::updateTimingStatus() const {
   return serverTimingStatusList(updateTimingRecords());
+}
+
+WorldServer::Phase6WorldParallelismStats WorldServer::phase6WorldParallelismStats() const {
+  return m_phase6WorldParallelismStats;
 }
 
 MaterialId WorldServer::material(Vec2I const& pos, TileLayer layer) const {
@@ -1568,7 +1688,16 @@ void WorldServer::init(bool firstTime) {
   auto assets = root.assets();
   auto liquidsDatabase = root.liquidsDatabase();
 
-  m_serverConfig = assets->json("/worldserver.config");
+  m_serverConfig = readWorldServerConfig();
+  auto phase6Config = m_serverConfig.get("phase6WorldParallelism", JsonObject());
+  m_phase6StorageGenerationPlanningEnabled = phase6Config.getBool("storageGenerationPlanning", false);
+  m_phase6StorageGenerationPlanningWorkerThreads = phase6Config.getUInt("storageGenerationPlanningWorkerThreads", 2);
+  m_phase6StorageGenerationPlanningMinimumSectors = phase6Config.getUInt("storageGenerationPlanningMinimumSectors", 8);
+  m_phase6WorldParallelismStats.storageGenerationPlanningEnabled = m_phase6StorageGenerationPlanningEnabled;
+  if (m_phase6StorageGenerationPlanningEnabled && m_phase6StorageGenerationPlanningWorkerThreads > 1)
+    m_phase6WorkerPool.start(m_phase6StorageGenerationPlanningWorkerThreads);
+  else
+    m_phase6WorkerPool.stop();
   setFidelity(WorldServerFidelity::Medium);
 
   m_worldStorage->setFloatingDungeonWorld(isFloatingDungeonWorld());

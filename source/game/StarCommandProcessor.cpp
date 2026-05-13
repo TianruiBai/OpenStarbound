@@ -331,6 +331,16 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldPacketPrepEntityStoreCacheMisses,
       status.worldPacketPrepNetStateCacheHits,
       status.worldPacketPrepNetStateCacheMisses));
+  lines.append(strf("Phase 6 storage planning: enabledWorlds={}, ticks={}, serialTicks={}, parallelTicks={}, sectors={}, serialUs={}, parallelUs={}, mergeUs={}, fallbacks={}",
+      status.phase6StorageGenerationPlanningEnabledWorlds,
+      status.phase6StorageGenerationPlanningTicks,
+      status.phase6StorageGenerationPlanningSerialTicks,
+      status.phase6StorageGenerationPlanningParallelTicks,
+      status.phase6StorageGenerationPlanningSectors,
+      status.phase6StorageGenerationPlanningSerialMicroseconds,
+      status.phase6StorageGenerationPlanningParallelMicroseconds,
+      status.phase6StorageGenerationPlanningMergeMicroseconds,
+      status.phase6StorageGenerationPlanningFallbacks));
   lines.append(strf("Persistence: pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceBatchesPending,
       status.persistenceSnapshotsPending,

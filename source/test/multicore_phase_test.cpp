@@ -242,3 +242,34 @@ TEST(MulticorePhaseTest, Phase5WorldTickSnapshotReusesSectorPacketPrep) {
   EXPECT_GT(stats.sectorPacketCacheHits, 0u);
   EXPECT_TRUE(hasTimingSample(worldServer.updateTimingStatus(), "packetPreparation"));
 }
+
+TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
+  {
+    WorldServer worldServer(Vec2U(256, 128), File::ephemeralFile());
+    auto stats = worldServer.phase6WorldParallelismStats();
+    EXPECT_FALSE(stats.storageGenerationPlanningEnabled);
+  }
+
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", true},
+      {"storageGenerationPlanningWorkerThreads", 2},
+      {"storageGenerationPlanningMinimumSectors", 0}}}});
+
+  WorldServer worldServer(Vec2U(512, 256), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::High);
+  worldServer.setSpawningEnabled(false);
+  worldServer.signalRegion(RectI::withSize(Vec2I(384, 64), Vec2I(96, 96)));
+
+  WorldServer::Phase6WorldParallelismStats stats;
+  for (size_t i = 0; i < 20; ++i) {
+    worldServer.update(1.0f / 60.0f);
+    stats = worldServer.phase6WorldParallelismStats();
+    if (stats.storageGenerationPlanningTicks > 0)
+      break;
+  }
+
+  EXPECT_TRUE(stats.storageGenerationPlanningEnabled);
+  EXPECT_GT(stats.storageGenerationPlanningTicks, 0u);
+  EXPECT_GT(stats.storageGenerationPlanningSectors, 0u);
+  EXPECT_GT(stats.storageGenerationPlanningSerialTicks + stats.storageGenerationPlanningParallelTicks, 0u);
+}

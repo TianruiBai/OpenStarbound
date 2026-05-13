@@ -55,6 +55,7 @@ public:
   List<ServerTimingRecord> worldTimingRecords() const;
   List<ServerTimingStatus> worldTimingStatus() const;
   WorldServer::PacketPreparationStats packetPreparationStats() const;
+  WorldServer::Phase6WorldParallelismStats phase6WorldParallelismStats() const;
 
   void setWorldPause(bool pause);
 

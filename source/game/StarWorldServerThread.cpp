@@ -97,6 +97,11 @@ WorldServer::PacketPreparationStats WorldServerThread::packetPreparationStats() 
   return m_worldServer->packetPreparationStats();
 }
 
+WorldServer::Phase6WorldParallelismStats WorldServerThread::phase6WorldParallelismStats() const {
+  RecursiveMutexLocker locker(m_mutex);
+  return m_worldServer->phase6WorldParallelismStats();
+}
+
 char const* WorldServerThread::threadTimingPhaseName(ThreadTimingPhase phase) {
   switch (phase) {
     case ThreadTimingPhase::Loop:

@@ -157,6 +157,7 @@ public:
   // increases of SectorGenerationLevel by the sectorGenerationLevelLimit, if
   // given.  If sectorOrdering is given, then it will be used to prioritize the
   // queued sectors.
+  List<Sector> generationQueueSectors() const;
   void generateQueue(Maybe<size_t> sectorGenerationLevelLimit, function<bool(Sector, Sector)> sectorOrdering = {});
   // Ticks down the TTL on sectors and generation queue entries, stores old
   // sectors, expires old generation queue entries, and unloads any zombie

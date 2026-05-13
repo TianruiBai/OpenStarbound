@@ -85,6 +85,15 @@ public:
     uint64_t worldPacketPrepEntityStoreCacheMisses;
     uint64_t worldPacketPrepNetStateCacheHits;
     uint64_t worldPacketPrepNetStateCacheMisses;
+    size_t phase6StorageGenerationPlanningEnabledWorlds;
+    uint64_t phase6StorageGenerationPlanningTicks;
+    uint64_t phase6StorageGenerationPlanningSerialTicks;
+    uint64_t phase6StorageGenerationPlanningParallelTicks;
+    uint64_t phase6StorageGenerationPlanningSectors;
+    uint64_t phase6StorageGenerationPlanningSerialMicroseconds;
+    uint64_t phase6StorageGenerationPlanningParallelMicroseconds;
+    uint64_t phase6StorageGenerationPlanningMergeMicroseconds;
+    uint64_t phase6StorageGenerationPlanningFallbacks;
     size_t networkWorkers;
     size_t networkOwnedConnections;
     uint64_t networkPacketsProcessed;

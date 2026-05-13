@@ -679,12 +679,25 @@ Experiment order and guardrails:
 5. Wiring: build disconnected network components, mark dirty components on topology/output changes, and evaluate unchanged components through the existing serial fallback until dirty tracking is proven.
 6. Entity/Lua grouping: research only; do not enable by default unless a formal dependency and mod-visibility model exists.
 
+Initial research notes:
+
+- Windows thread-pool guidance emphasizes independent work items, avoiding dependency chains between queued jobs, and keeping worker resources bounded. Phase 6 experiments should use explicit worker pools with small item counts rather than unbounded per-sector jobs.
+- The double-buffer pattern is the right mental model for simulation snapshots: workers read immutable current-frame data and the owner thread performs the single visible merge or mutation step.
+- Deterministic-simulation guidance reinforces exact input/order control. Any experiment that can change floating-point, entity, Lua, liquid, wiring, or boundary order must stay hidden until serial-versus-parallel differential checks are practical.
+
+Implemented Phase 6 slice:
+
+- `phase6WorldParallelism.storageGenerationPlanning` is available in `worldserver.config` and is off by default.
+- When enabled, `WorldServer` snapshots the storage generation queue and player positions, optionally computes sector distance priorities on `WorldServerPhase6WorkerPool`, then calls the existing `WorldStorage::generateQueue()` mutation path serially.
+- Diagnostics report enabled worlds, planning ticks, serial ticks, parallel ticks, planned sectors, serial/parallel/merge microseconds, and fallback count through `WorldServer`, `WorldServerThread`, `UniverseServer::ServerStatus`, and `/serverstatus`.
+- Focused regression coverage verifies the flag is off by default and that the opt-in path records planning work without changing the default update path.
+
 Phase 6 diagnostics to add:
 
-- per-experiment enabled flag, serial duration, parallel duration, merge duration, and fallback count
+- per-experiment enabled flag, serial duration, parallel duration, merge duration, and fallback count; storage generation planning now has this baseline instrumentation
 - divergence detector counters for serial-versus-parallel comparison runs
-- per-subsystem work item counts: liquid active cells, falling-block pending positions, wiring networks, generation sectors, packet entities
-- config surface that can disable each experiment independently without changing save or packet formats
+- per-subsystem work item counts: liquid active cells, falling-block pending positions, wiring networks, generation sectors, packet entities; storage generation planning now reports generation sectors
+- config surface that can disable each experiment independently without changing save or packet formats; storage generation planning now has the first defaults-off flag
 
 Phase 6 compatibility checkpoints:
 

@@ -248,6 +248,14 @@ EntityId WorldStorage::loadUniqueEntity(String const& uniqueId) {
   return {};
 }
 
+List<WorldStorage::Sector> WorldStorage::generationQueueSectors() const {
+  List<Sector> sectors;
+  sectors.reserve(m_generationQueue.size());
+  for (auto const& queuedSector : m_generationQueue)
+    sectors.append(queuedSector.first);
+  return sectors;
+}
+
 void WorldStorage::generateQueue(Maybe<size_t> sectorGenerationLevelLimit, function<bool(Sector, Sector)> sectorOrdering) {
   try {
     if (sectorOrdering) {

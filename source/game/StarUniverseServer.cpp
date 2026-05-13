@@ -361,6 +361,18 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.worldPacketPrepNetStateCacheHits += packetPreparationStats.entityNetStateCacheHits;
           status.worldPacketPrepNetStateCacheMisses += packetPreparationStats.entityNetStateCacheMisses;
 
+          auto phase6Stats = world->phase6WorldParallelismStats();
+          if (phase6Stats.storageGenerationPlanningEnabled)
+            status.phase6StorageGenerationPlanningEnabledWorlds += 1;
+          status.phase6StorageGenerationPlanningTicks += phase6Stats.storageGenerationPlanningTicks;
+          status.phase6StorageGenerationPlanningSerialTicks += phase6Stats.storageGenerationPlanningSerialTicks;
+          status.phase6StorageGenerationPlanningParallelTicks += phase6Stats.storageGenerationPlanningParallelTicks;
+          status.phase6StorageGenerationPlanningSectors += phase6Stats.storageGenerationPlanningSectors;
+          status.phase6StorageGenerationPlanningSerialMicroseconds += phase6Stats.storageGenerationPlanningSerialMicroseconds;
+          status.phase6StorageGenerationPlanningParallelMicroseconds += phase6Stats.storageGenerationPlanningParallelMicroseconds;
+          status.phase6StorageGenerationPlanningMergeMicroseconds += phase6Stats.storageGenerationPlanningMergeMicroseconds;
+          status.phase6StorageGenerationPlanningFallbacks += phase6Stats.storageGenerationPlanningFallbacks;
+
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);
           for (auto const& timingRecord : world->worldTimingRecords())
