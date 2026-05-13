@@ -189,6 +189,19 @@ UniverseConnection UniverseServer::addLocalClient() {
   return UniverseConnection(std::move(pair.second));
 }
 
+UniverseConnection UniverseServer::addRemoteLocalClient(HostAddress const& remoteAddress) {
+  auto pair = LocalPacketSocket::openPair();
+  if (m_usePendingConnectionStateMachine) {
+    enqueuePendingConnection(UniverseConnection(std::move(pair.first)), remoteAddress);
+  } else {
+    RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
+    m_connectionAcceptThreads.append(Thread::invoke("UniverseServer::acceptConnection", [this, conn = make_shared<UniverseConnection>(std::move(pair.first)), remoteAddress]() {
+      acceptConnection(std::move(*conn), remoteAddress);
+    }));
+  }
+  return UniverseConnection(std::move(pair.second));
+}
+
 void UniverseServer::stop() {
   m_stop = true;
 }

@@ -9,6 +9,14 @@
     "packetPreparationSectorPrefillWorkerThreads" : 2,
     "packetPreparationSectorPrefillMinimumSectors" : 8,
     "packetPreparationSectorPrefillDifferentialCheck" : true,
-    "subsystemBaselineMetrics" : true
+    "subsystemBaselineMetrics" : true,
+    "liquidMutationParallelism" : false,
+    "fallingBlockMutationParallelism" : false,
+    "wiringMutationParallelism" : false,
+    "entityMutationParallelism" : false,
+    "luaMutationParallelism" : false,
+    "mutationParallelismFixedSeedSignatures" : false,
+    "mutationParallelismDependencyAnalysis" : false,
+    "mutationParallelismModVisibilityContract" : false
   }
 }

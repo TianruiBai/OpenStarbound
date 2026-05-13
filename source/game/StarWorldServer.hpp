@@ -96,6 +96,11 @@ public:
     uint64_t packetPreparationSectorPrefillDifferentialMicroseconds = 0;
     uint64_t packetPreparationSectorPrefillDivergences = 0;
     bool subsystemBaselineMetricsEnabled = false;
+    bool mutationParallelismRequested = false;
+    bool mutationParallelismBlockedByFixedSeedGate = false;
+    bool mutationParallelismBlockedByDependencyGate = false;
+    bool mutationParallelismBlockedByModVisibilityGate = false;
+    bool mutationParallelismBlockedByImplementationGate = false;
     uint64_t liquidBaselineTicks = 0;
     uint64_t liquidActiveCells = 0;
     uint64_t liquidMonitoringRegions = 0;
@@ -394,13 +399,18 @@ private:
     List<Vec2I> roots;
   };
 
+  struct EntityCreateSnapshot {
+    EntityType entityType;
+    ByteArray storeData;
+  };
+
   struct WorldTickSnapshot {
     bool sendRemoteUpdates = false;
     List<RectI> clientWindows;
     List<RectI> monitoringRegions;
     HashMap<ConnectionId, List<RectI>> monitoringRegionsByConnection;
     HashMap<ServerTileSectorArray::Sector, PacketPtr> sectorUpdateCache;
-    HashMap<NetCompatibilityRules, HashMap<EntityId, ByteArray>> entityStoreCache;
+    HashMap<NetCompatibilityRules, HashMap<EntityId, EntityCreateSnapshot>> entityCreateCache;
     PacketPreparationStats packetPreparationStats;
   };
 

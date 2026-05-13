@@ -193,6 +193,9 @@ public:
   // Constructs an in-process connection to a UniverseServer for a
   // UniverseClient, and returns the other side of the connection.
   UniverseConnection addLocalClient();
+  // Constructs an in-process connection that is treated as remote by the
+  // handshake path, and returns the other side of the connection.
+  UniverseConnection addRemoteLocalClient(HostAddress const& remoteAddress);
 
   // Signals the UniverseServer to stop and then joins the thread.
   void stop();

@@ -1927,11 +1927,24 @@ void WorldServer::init(bool firstTime) {
   m_phase6PacketPreparationSectorPrefillMinimumSectors = phase6Config.getUInt("packetPreparationSectorPrefillMinimumSectors", 8);
   m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
   m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
+  bool mutationParallelismRequested = phase6Config.getBool("liquidMutationParallelism", false)
+      || phase6Config.getBool("fallingBlockMutationParallelism", false)
+      || phase6Config.getBool("wiringMutationParallelism", false)
+      || phase6Config.getBool("entityMutationParallelism", false)
+      || phase6Config.getBool("luaMutationParallelism", false);
+  bool mutationFixedSeedGate = phase6Config.getBool("mutationParallelismFixedSeedSignatures", false);
+  bool mutationDependencyGate = phase6Config.getBool("mutationParallelismDependencyAnalysis", false);
+  bool mutationModVisibilityGate = phase6Config.getBool("mutationParallelismModVisibilityContract", false);
   m_phase6WorldParallelismStats.storageGenerationPlanningEnabled = m_phase6StorageGenerationPlanningEnabled;
   m_phase6WorldParallelismStats.storageGenerationPlanningDifferentialCheckEnabled = m_phase6StorageGenerationPlanningDifferentialCheck;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillEnabled = m_phase6PacketPreparationSectorPrefillEnabled;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillDifferentialCheckEnabled = m_phase6PacketPreparationSectorPrefillDifferentialCheck;
   m_phase6WorldParallelismStats.subsystemBaselineMetricsEnabled = m_phase6SubsystemBaselineMetricsEnabled;
+  m_phase6WorldParallelismStats.mutationParallelismRequested = mutationParallelismRequested;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByFixedSeedGate = mutationParallelismRequested && !mutationFixedSeedGate;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByDependencyGate = mutationParallelismRequested && !mutationDependencyGate;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByModVisibilityGate = mutationParallelismRequested && !mutationModVisibilityGate;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGate = mutationParallelismRequested;
   size_t phase6WorkerThreads = 0;
   if (m_phase6StorageGenerationPlanningEnabled)
     phase6WorkerThreads = max(phase6WorkerThreads, m_phase6StorageGenerationPlanningWorkerThreads);
@@ -2577,16 +2590,16 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
         // Client was unaware of this entity until now
         auto firstUpdate = monitoredEntity->writeNetState(0, netRules);
         clientInfo->clientSlavesNetVersion.add(entityId, firstUpdate.second);
-        auto& storeCache = snapshot.entityStoreCache[netRules];
-        auto i = storeCache.find(entityId);
-        if (i == storeCache.end()) {
+        auto& createCache = snapshot.entityCreateCache[netRules];
+        auto i = createCache.find(entityId);
+        if (i == createCache.end()) {
           snapshot.packetPreparationStats.entityStoreCacheMisses += 1;
-          i = storeCache.insert(entityId, entityFactory->netStoreEntity(monitoredEntity, netRules)).first;
+          i = createCache.insert(entityId, EntityCreateSnapshot{monitoredEntity->entityType(), entityFactory->netStoreEntity(monitoredEntity, netRules)}).first;
         } else {
           snapshot.packetPreparationStats.entityStoreCacheHits += 1;
         }
-        clientInfo->outgoingPackets.append(make_shared<EntityCreatePacket>(monitoredEntity->entityType(),
-              i->second, std::move(firstUpdate.first), entityId));
+        clientInfo->outgoingPackets.append(make_shared<EntityCreatePacket>(i->second.entityType,
+              i->second.storeData, std::move(firstUpdate.first), entityId));
       }
     }
   }

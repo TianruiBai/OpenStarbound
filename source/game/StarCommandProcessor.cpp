@@ -433,7 +433,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} falling:{} wiring:{} entity:{} lua:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -469,7 +469,12 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         phase6.fallingBlocksBaselineTicks,
         phase6.wiringBaselineTicks,
         phase6.entityBaselineTicks,
-        phase6.luaBaselineTicks));
+        phase6.luaBaselineTicks,
+        phase6.mutationParallelismRequested,
+        phase6.mutationParallelismBlockedByFixedSeedGate,
+        phase6.mutationParallelismBlockedByDependencyGate,
+        phase6.mutationParallelismBlockedByModVisibilityGate,
+        phase6.mutationParallelismBlockedByImplementationGate));
 
     StringList threadTimingParts;
     for (auto const& timing : world.threadTimings) {
