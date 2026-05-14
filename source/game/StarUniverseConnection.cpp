@@ -123,8 +123,8 @@ Maybe<PacketStats> UniverseConnection::outgoingStats() const {
   return m_packetSocket->outgoingStats();
 }
 
-UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetReceiver, size_t numWorkerThreads)
-    : m_packetReceiver(std::move(packetReceiver)), m_shutdown(false) {
+UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetReceiver, size_t numWorkerThreads, bool queueOnlySends)
+    : m_packetReceiver(std::move(packetReceiver)), m_shutdown(false), m_queueOnlySends(queueOnlySends) {
   if (numWorkerThreads == 0)
     m_numWorkerThreads = max<size_t>(2, std::thread::hardware_concurrency() / 4);
   else
@@ -164,8 +164,18 @@ UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetR
             if (!connection->packetSocket || !connection->packetSocket->isOpen())
               continue;
 
-            connection->packetSocket->sendPackets(take(connection->sendQueue));
+            auto queuedSendPackets = connection->sendQueue.size();
+            if (queuedSendPackets != 0) {
+              m_workerStats[i].workerSendBatches++;
+              m_workerStats[i].workerSendPackets += queuedSendPackets;
+              connection->packetSocket->sendPackets(take(connection->sendQueue));
+            }
+
+            bool hadPendingWrites = queuedSendPackets != 0 || connection->packetSocket->sentPacketsPending();
+            int64_t writeStart = hadPendingWrites ? Time::monotonicMicroseconds() : 0;
             dataTransmitted |= connection->packetSocket->writeData();
+            if (hadPendingWrites)
+              m_workerStats[i].workerWriteTimeMicroseconds += Time::monotonicMicroseconds() - writeStart;
 
             dataTransmitted |= connection->packetSocket->readData();
             List<PacketPtr> receivePackets = connection->packetSocket->receivePackets();
@@ -340,13 +350,29 @@ void UniverseConnectionServer::sendPackets(ConnectionId clientId, List<PacketPtr
   if (auto conn = m_connections.value(clientId)) {
     connectionsLocker.unlock();
     MutexLocker connectionLocker(conn->mutex);
+    auto workerIndex = conn->workerIndex;
+    auto packetCount = packets.size();
     conn->sendQueue.appendAll(std::move(packets));
-
-    if (conn->packetSocket->isOpen()) {
-      conn->packetSocket->sendPackets(take(conn->sendQueue));
-      conn->packetSocket->writeData();
+    if (packetCount != 0) {
+      m_workerStats[workerIndex].queuedSendBatches++;
+      m_workerStats[workerIndex].queuedSendPackets += packetCount;
     }
-    wakeWorker(conn->workerIndex);
+
+    if (!m_queueOnlySends && conn->packetSocket->isOpen()) {
+      auto eagerSendPackets = conn->sendQueue.size();
+      if (eagerSendPackets != 0) {
+        m_workerStats[workerIndex].eagerSendBatches++;
+        m_workerStats[workerIndex].eagerSendPackets += eagerSendPackets;
+      }
+      bool hadPendingWrites = eagerSendPackets != 0 || conn->packetSocket->sentPacketsPending();
+      conn->packetSocket->sendPackets(take(conn->sendQueue));
+      int64_t writeStart = hadPendingWrites ? Time::monotonicMicroseconds() : 0;
+      conn->packetSocket->writeData();
+      if (hadPendingWrites)
+        m_workerStats[workerIndex].eagerWriteTimeMicroseconds += Time::monotonicMicroseconds() - writeStart;
+    }
+    connectionLocker.unlock();
+    wakeWorker(workerIndex);
   } else {
     throw UniverseConnectionException::format("No such client '{}' in UniverseConnectionServer::sendPackets", clientId);
   }
@@ -363,6 +389,10 @@ size_t UniverseConnectionServer::numWorkerThreads() const {
   return m_numWorkerThreads;
 }
 
+bool UniverseConnectionServer::queueOnlySends() const {
+  return m_queueOnlySends;
+}
+
 List<UniverseConnectionServer::NetworkWorkerStats> UniverseConnectionServer::workerStats() const {
   List<NetworkWorkerStats> stats;
   for (size_t i = 0; i < m_workerStats.size(); ++i) {
@@ -373,6 +403,14 @@ List<UniverseConnectionServer::NetworkWorkerStats> UniverseConnectionServer::wor
     workerStats.packetsProcessed = m_workerStats[i].packetsProcessed.load();
     workerStats.callbackGroupsProcessed = m_workerStats[i].callbackGroupsProcessed.load();
     workerStats.callbackTimeMicroseconds = m_workerStats[i].callbackTimeMicroseconds.load();
+    workerStats.queuedSendBatches = m_workerStats[i].queuedSendBatches.load();
+    workerStats.queuedSendPackets = m_workerStats[i].queuedSendPackets.load();
+    workerStats.eagerSendBatches = m_workerStats[i].eagerSendBatches.load();
+    workerStats.eagerSendPackets = m_workerStats[i].eagerSendPackets.load();
+    workerStats.eagerWriteTimeMicroseconds = m_workerStats[i].eagerWriteTimeMicroseconds.load();
+    workerStats.workerSendBatches = m_workerStats[i].workerSendBatches.load();
+    workerStats.workerSendPackets = m_workerStats[i].workerSendPackets.load();
+    workerStats.workerWriteTimeMicroseconds = m_workerStats[i].workerWriteTimeMicroseconds.load();
     workerStats.wakeups = m_workerStats[i].wakeups.load();
     workerStats.timedWaits = m_workerStats[i].timedWaits.load();
     workerStats.idleTimedWaits = m_workerStats[i].idleTimedWaits.load();

@@ -376,12 +376,21 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.pendingChatClients,
       status.pendingWorldMessages,
       status.pendingWorldMessageWorlds));
-  lines.append(strf("Network: workers={}, ownedConnections={}, packets={}, wakeups={}, idleWaits={}",
+  lines.append(strf("Network: workers={}, ownedConnections={}, queueOnly={}, packets={}, wakeups={}, idleWaits={}, sends=q:{}/{} eager:{}/{} worker:{}/{} writeUs:{}/{}",
       status.networkWorkers,
       status.networkOwnedConnections,
+      status.networkQueueOnlySends,
       status.networkPacketsProcessed,
       status.networkWakeups,
-      status.networkIdleTimedWaits));
+      status.networkIdleTimedWaits,
+      status.networkQueuedSendBatches,
+      status.networkQueuedSendPackets,
+      status.networkEagerSendBatches,
+      status.networkEagerSendPackets,
+      status.networkWorkerSendBatches,
+      status.networkWorkerSendPackets,
+      status.networkEagerWriteTimeMicroseconds,
+      status.networkWorkerWriteTimeMicroseconds));
   lines.append(strf("World commands: pending={}, oldestPendingUs={}, processed={}, direct={}, failed={}, waitUs={}",
       status.worldCommandQueueDepth,
       status.worldCommandOldestPendingAgeMicroseconds,
@@ -611,6 +620,14 @@ String CommandProcessor::serverNetStats(ConnectionId connectionId, String const&
 
   uint64_t totalPackets = 0;
   uint64_t totalScans = 0;
+  uint64_t totalQueuedSendBatches = 0;
+  uint64_t totalQueuedSendPackets = 0;
+  uint64_t totalEagerSendBatches = 0;
+  uint64_t totalEagerSendPackets = 0;
+  uint64_t totalEagerWriteTimeMicroseconds = 0;
+  uint64_t totalWorkerSendBatches = 0;
+  uint64_t totalWorkerSendPackets = 0;
+  uint64_t totalWorkerWriteTimeMicroseconds = 0;
   uint64_t totalWakeups = 0;
   uint64_t totalTimedWaits = 0;
   uint64_t totalIdleTimedWaits = 0;
@@ -619,6 +636,14 @@ String CommandProcessor::serverNetStats(ConnectionId connectionId, String const&
     auto const& workerStats = stats[i];
     totalPackets += workerStats.packetsProcessed;
     totalScans += workerStats.connectionScans;
+    totalQueuedSendBatches += workerStats.queuedSendBatches;
+    totalQueuedSendPackets += workerStats.queuedSendPackets;
+    totalEagerSendBatches += workerStats.eagerSendBatches;
+    totalEagerSendPackets += workerStats.eagerSendPackets;
+    totalEagerWriteTimeMicroseconds += workerStats.eagerWriteTimeMicroseconds;
+    totalWorkerSendBatches += workerStats.workerSendBatches;
+    totalWorkerSendPackets += workerStats.workerSendPackets;
+    totalWorkerWriteTimeMicroseconds += workerStats.workerWriteTimeMicroseconds;
     totalWakeups += workerStats.wakeups;
     totalTimedWaits += workerStats.timedWaits;
     totalIdleTimedWaits += workerStats.idleTimedWaits;
@@ -627,13 +652,21 @@ String CommandProcessor::serverNetStats(ConnectionId connectionId, String const&
         ? workerStats.callbackTimeMicroseconds / workerStats.callbackGroupsProcessed
         : 0;
 
-    lines.append(strf("worker {}: owned={}, handled={}, scans={}, stale={}, packets={}, callbacks={}, avgCallbackUs={}, wakeups={}, waits={}, idleWaits={}",
+    lines.append(strf("worker {}: owned={}, handled={}, scans={}, stale={}, packets={}, queued={}/{}, eager={}/{}/{}, workerSend={}/{}/{}, callbacks={}, avgCallbackUs={}, wakeups={}, waits={}, idleWaits={}",
         i,
         workerStats.ownedConnections,
         workerStats.lastHandledConnections,
         workerStats.connectionScans,
         workerStats.staleConnectionScans,
         workerStats.packetsProcessed,
+        workerStats.queuedSendBatches,
+        workerStats.queuedSendPackets,
+        workerStats.eagerSendBatches,
+        workerStats.eagerSendPackets,
+        workerStats.eagerWriteTimeMicroseconds,
+        workerStats.workerSendBatches,
+        workerStats.workerSendPackets,
+        workerStats.workerWriteTimeMicroseconds,
         workerStats.callbackGroupsProcessed,
         averageCallbackMicroseconds,
         workerStats.wakeups,
@@ -641,8 +674,20 @@ String CommandProcessor::serverNetStats(ConnectionId connectionId, String const&
         workerStats.idleTimedWaits));
   }
 
-  lines.append(strf("totals: scans={}, packets={}, wakeups={}, waits={}, idleWaits={}",
-      totalScans, totalPackets, totalWakeups, totalTimedWaits, totalIdleTimedWaits));
+  lines.append(strf("totals: scans={}, packets={}, queued={}/{}, eager={}/{}/{}, workerSend={}/{}/{}, wakeups={}, waits={}, idleWaits={}",
+      totalScans,
+      totalPackets,
+      totalQueuedSendBatches,
+      totalQueuedSendPackets,
+      totalEagerSendBatches,
+      totalEagerSendPackets,
+      totalEagerWriteTimeMicroseconds,
+      totalWorkerSendBatches,
+      totalWorkerSendPackets,
+      totalWorkerWriteTimeMicroseconds,
+      totalWakeups,
+      totalTimedWaits,
+      totalIdleTimedWaits));
   return lines.join("\n");
 }
 

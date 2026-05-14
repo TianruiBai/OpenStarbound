@@ -136,9 +136,11 @@ UniverseServer::UniverseServer(String const& storageDir)
     m_persistenceWorkerPool.start(persistenceWorkerThreads);
 
   size_t networkWorkerThreads = universeConfig.optUInt("networkWorkerThreads").value(0);
+  bool queueOnlyConnectionSend = universeConfig.getBool("queueOnlyConnectionSend", false);
   m_connectionServer = make_shared<UniverseConnectionServer>(
     bind(&UniverseServer::packetsReceived, this, _1, _2, _3),
-    networkWorkerThreads);
+    networkWorkerThreads,
+    queueOnlyConnectionSend);
 
   m_pause = make_shared<atomic<bool>>(false);
 
@@ -484,10 +486,19 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
   }
 
   auto workerStats = connectionWorkerStats();
+  status.networkQueueOnlySends = m_connectionServer->queueOnlySends();
   status.networkWorkers = workerStats.size();
   for (auto const& worker : workerStats) {
     status.networkOwnedConnections += worker.ownedConnections;
     status.networkPacketsProcessed += worker.packetsProcessed;
+    status.networkQueuedSendBatches += worker.queuedSendBatches;
+    status.networkQueuedSendPackets += worker.queuedSendPackets;
+    status.networkEagerSendBatches += worker.eagerSendBatches;
+    status.networkEagerSendPackets += worker.eagerSendPackets;
+    status.networkEagerWriteTimeMicroseconds += worker.eagerWriteTimeMicroseconds;
+    status.networkWorkerSendBatches += worker.workerSendBatches;
+    status.networkWorkerSendPackets += worker.workerSendPackets;
+    status.networkWorkerWriteTimeMicroseconds += worker.workerWriteTimeMicroseconds;
     status.networkWakeups += worker.wakeups;
     status.networkIdleTimedWaits += worker.idleTimedWaits;
   }

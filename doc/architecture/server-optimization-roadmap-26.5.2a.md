@@ -27,7 +27,8 @@ Current checklist:
 4. Done: per-entity serialization counters for packet-prep cost attribution, with `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` diagnostics and focused ItemDrop coverage.
 5. Done: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests, including byte-equivalent but version-advancing first writes.
 6. Done: storage timing counters for world sync/readChunks phases, with byte-identical B-tree insert filtering to reduce repeated save spikes.
-7. Next: queue-only network send experiment behind measurement and fallback gates.
+7. Done: queue-only network send experiment behind a default-off config flag, with queued/eager/worker send counters and ordering coverage.
+8. Next: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline.
 
 ## 2. Current Bottleneck Statement
 
@@ -135,8 +136,8 @@ Goal: prepare the eventual readiness-driven network backend while keeping the cu
 
 Priority tickets:
 
-1. Move `UniverseConnectionServer::sendPackets()` toward queue-only behavior so socket writes are fully owned by the assigned network worker.
-2. Measure eager send/write versus queue-only send under high fan-out before changing the default.
+1. Done: move `UniverseConnectionServer::sendPackets()` toward queue-only behavior behind `queueOnlyConnectionSend`, so socket writes can be fully owned by the assigned network worker while the legacy eager-send path remains the default fallback.
+2. Done: measure eager send/write versus queue-only send with `queued`, `eager`, and `workerSend` counters in `/serverstatus` and `/servernetstats` before changing the default.
 3. Draft the narrow `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready connection handles.
 4. Keep the current condition-variable and timed fallback until Windows, Linux, and macOS paths have coverage.
 
@@ -201,7 +202,7 @@ Should ship if metrics justify it:
 - monitoring-region generation counters and owner-thread reuse: initial snapshot reuse slice done
 - liquid no-limit membership cache: done with bucketed candidate diagnostics
 - packet-prep worker expansion beyond sector prefill
-- queue-only network send experiment behind a config or diagnostic flag
+- queue-only network send experiment behind a config or diagnostic flag: done, default-off as `queueOnlyConnectionSend`
 
 Stretch only:
 

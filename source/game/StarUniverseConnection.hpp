@@ -80,6 +80,14 @@ public:
     uint64_t packetsProcessed = 0;
     uint64_t callbackGroupsProcessed = 0;
     uint64_t callbackTimeMicroseconds = 0;
+    uint64_t queuedSendBatches = 0;
+    uint64_t queuedSendPackets = 0;
+    uint64_t eagerSendBatches = 0;
+    uint64_t eagerSendPackets = 0;
+    uint64_t eagerWriteTimeMicroseconds = 0;
+    uint64_t workerSendBatches = 0;
+    uint64_t workerSendPackets = 0;
+    uint64_t workerWriteTimeMicroseconds = 0;
     uint64_t wakeups = 0;
     uint64_t timedWaits = 0;
     uint64_t idleTimedWaits = 0;
@@ -92,7 +100,7 @@ public:
   // that client is complete.
   typedef function<void(UniverseConnectionServer*, ConnectionId, List<PacketPtr>)> PacketReceiveCallback;
 
-  UniverseConnectionServer(PacketReceiveCallback packetReceiver, size_t numWorkerThreads = 0);
+  UniverseConnectionServer(PacketReceiveCallback packetReceiver, size_t numWorkerThreads = 0, bool queueOnlySends = false);
   ~UniverseConnectionServer();
 
   bool hasConnection(ConnectionId clientId) const;
@@ -110,6 +118,7 @@ public:
   uint64_t totalPacketsProcessed() const;
   // Get number of worker threads
   size_t numWorkerThreads() const;
+  bool queueOnlySends() const;
   List<NetworkWorkerStats> workerStats() const;
 
 private:
@@ -131,6 +140,14 @@ private:
     atomic<uint64_t> staleConnectionScans{0};
     atomic<uint64_t> callbackGroupsProcessed{0};
     atomic<uint64_t> callbackTimeMicroseconds{0};
+    atomic<uint64_t> queuedSendBatches{0};
+    atomic<uint64_t> queuedSendPackets{0};
+    atomic<uint64_t> eagerSendBatches{0};
+    atomic<uint64_t> eagerSendPackets{0};
+    atomic<uint64_t> eagerWriteTimeMicroseconds{0};
+    atomic<uint64_t> workerSendBatches{0};
+    atomic<uint64_t> workerSendPackets{0};
+    atomic<uint64_t> workerWriteTimeMicroseconds{0};
     atomic<uint64_t> wakeups{0};
     atomic<uint64_t> timedWaits{0};
     atomic<uint64_t> idleTimedWaits{0};
@@ -150,6 +167,14 @@ private:
         staleConnectionScans = other.staleConnectionScans.load();
         callbackGroupsProcessed = other.callbackGroupsProcessed.load();
         callbackTimeMicroseconds = other.callbackTimeMicroseconds.load();
+        queuedSendBatches = other.queuedSendBatches.load();
+        queuedSendPackets = other.queuedSendPackets.load();
+        eagerSendBatches = other.eagerSendBatches.load();
+        eagerSendPackets = other.eagerSendPackets.load();
+        eagerWriteTimeMicroseconds = other.eagerWriteTimeMicroseconds.load();
+        workerSendBatches = other.workerSendBatches.load();
+        workerSendPackets = other.workerSendPackets.load();
+        workerWriteTimeMicroseconds = other.workerWriteTimeMicroseconds.load();
         wakeups = other.wakeups.load();
         timedWaits = other.timedWaits.load();
         idleTimedWaits = other.idleTimedWaits.load();
@@ -178,6 +203,7 @@ private:
   List<WorkerStats> m_workerStats;
   atomic<bool> m_shutdown;
   size_t m_numWorkerThreads;
+  bool m_queueOnlySends;
 };
 
 }// namespace Star

@@ -235,6 +235,8 @@ TEST(ServerTest, WorldStatsCommandReportsDiagnostics) {
   EXPECT_TRUE(statusOutput.contains("liquidCache="));
   EXPECT_TRUE(statusOutput.contains("entitySerialize="));
   EXPECT_TRUE(statusOutput.contains("storageTiming="));
+  EXPECT_TRUE(statusOutput.contains("queueOnly="));
+  EXPECT_TRUE(statusOutput.contains("sends=q:"));
 }
 
 TEST(ServerTest, PendingHandshakeStateMachineAcceptsLocalClient) {

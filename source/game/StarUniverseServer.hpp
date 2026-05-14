@@ -145,9 +145,18 @@ public:
     uint64_t phase6LuaBaselineTicks;
     uint64_t phase6LuaScriptContexts;
     uint64_t phase6LuaScriptUpdates;
+    bool networkQueueOnlySends;
     size_t networkWorkers;
     size_t networkOwnedConnections;
     uint64_t networkPacketsProcessed;
+    uint64_t networkQueuedSendBatches;
+    uint64_t networkQueuedSendPackets;
+    uint64_t networkEagerSendBatches;
+    uint64_t networkEagerSendPackets;
+    uint64_t networkEagerWriteTimeMicroseconds;
+    uint64_t networkWorkerSendBatches;
+    uint64_t networkWorkerSendPackets;
+    uint64_t networkWorkerWriteTimeMicroseconds;
     uint64_t networkWakeups;
     uint64_t networkIdleTimedWaits;
     size_t persistenceBatchesPending;

@@ -49,6 +49,41 @@ uint64_t totalPacketsProcessed(List<UniverseConnectionServer::NetworkWorkerStats
   return total;
 }
 
+uint64_t totalQueuedSendBatches(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
+  uint64_t total = 0;
+  for (auto const& workerStats : stats)
+    total += workerStats.queuedSendBatches;
+  return total;
+}
+
+uint64_t totalEagerSendBatches(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
+  uint64_t total = 0;
+  for (auto const& workerStats : stats)
+    total += workerStats.eagerSendBatches;
+  return total;
+}
+
+uint64_t totalEagerSendPackets(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
+  uint64_t total = 0;
+  for (auto const& workerStats : stats)
+    total += workerStats.eagerSendPackets;
+  return total;
+}
+
+uint64_t totalWorkerSendBatches(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
+  uint64_t total = 0;
+  for (auto const& workerStats : stats)
+    total += workerStats.workerSendBatches;
+  return total;
+}
+
+uint64_t totalWorkerSendPackets(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
+  uint64_t total = 0;
+  for (auto const& workerStats : stats)
+    total += workerStats.workerSendPackets;
+  return total;
+}
+
 uint64_t totalWakeups(List<UniverseConnectionServer::NetworkWorkerStats> const& stats) {
   uint64_t total = 0;
   for (auto const& workerStats : stats)
@@ -245,6 +280,60 @@ TEST(UniverseConnectionServer, SendPacketsWakesIdleWorker) {
   EXPECT_GT(server.workerStats()[0].wakeups, beforeWakeups);
 }
 
+TEST(UniverseConnectionServer, EagerSendStatsRecordCallerThreadWrite) {
+  UniverseConnectionServer server([](UniverseConnectionServer*, ConnectionId, List<PacketPtr>) {}, 1);
+  EXPECT_FALSE(server.queueOnlySends());
+
+  auto pair = LocalPacketSocket::openPair();
+  server.addConnection(1, UniverseConnection(std::move(pair.first)));
+  UniverseConnection client(std::move(pair.second));
+
+  auto beforeStats = server.workerStats();
+  server.sendPackets(1, {make_shared<ProtocolRequestPacket>(77)});
+
+  shared_ptr<ProtocolRequestPacket> received;
+  ASSERT_TRUE(waitUntil([&]() {
+    client.receive();
+    if (auto packet = client.pullSingle())
+      received = as<ProtocolRequestPacket>(packet);
+    return (bool)received;
+  }));
+
+  auto afterStats = server.workerStats();
+  EXPECT_EQ(77, received->requestProtocolVersion);
+  EXPECT_EQ(totalQueuedSendBatches(beforeStats) + 1, totalQueuedSendBatches(afterStats));
+  EXPECT_EQ(totalEagerSendBatches(beforeStats) + 1, totalEagerSendBatches(afterStats));
+  EXPECT_EQ(totalEagerSendPackets(beforeStats) + 1, totalEagerSendPackets(afterStats));
+  EXPECT_EQ(totalWorkerSendBatches(beforeStats), totalWorkerSendBatches(afterStats));
+}
+
+TEST(UniverseConnectionServer, QueueOnlySendIsOwnedByWorker) {
+  UniverseConnectionServer server([](UniverseConnectionServer*, ConnectionId, List<PacketPtr>) {}, 1, true);
+  EXPECT_TRUE(server.queueOnlySends());
+
+  auto pair = LocalPacketSocket::openPair();
+  server.addConnection(1, UniverseConnection(std::move(pair.first)));
+  UniverseConnection client(std::move(pair.second));
+
+  auto beforeStats = server.workerStats();
+  server.sendPackets(1, {make_shared<ProtocolRequestPacket>(88)});
+
+  shared_ptr<ProtocolRequestPacket> received;
+  ASSERT_TRUE(waitUntil([&]() {
+    client.receive();
+    if (auto packet = client.pullSingle())
+      received = as<ProtocolRequestPacket>(packet);
+    return (bool)received;
+  }));
+
+  auto afterStats = server.workerStats();
+  EXPECT_EQ(88, received->requestProtocolVersion);
+  EXPECT_EQ(totalQueuedSendBatches(beforeStats) + 1, totalQueuedSendBatches(afterStats));
+  EXPECT_EQ(totalEagerSendBatches(beforeStats), totalEagerSendBatches(afterStats));
+  EXPECT_EQ(totalWorkerSendBatches(beforeStats) + 1, totalWorkerSendBatches(afterStats));
+  EXPECT_EQ(totalWorkerSendPackets(beforeStats) + 1, totalWorkerSendPackets(afterStats));
+}
+
 TEST(UniverseConnectionServer, ManyIdleConnectionsRemainSharded) {
   UniverseConnectionServer server([](UniverseConnectionServer* server, ConnectionId clientId, List<PacketPtr> packets) {
       server->sendPackets(clientId, std::move(packets));
@@ -334,6 +423,37 @@ TEST(UniverseConnectionServer, PacketOrderingAcrossWorkers) {
     EXPECT_EQ(i, receivedA[i]);
     EXPECT_EQ(1000 + i, receivedB[i]);
   }
+}
+
+TEST(UniverseConnectionServer, QueueOnlySendPreservesPacketOrdering) {
+  UniverseConnectionServer server([](UniverseConnectionServer* server, ConnectionId clientId, List<PacketPtr> packets) {
+      server->sendPackets(clientId, std::move(packets));
+    }, 1, true);
+
+  auto pair = LocalPacketSocket::openPair();
+  server.addConnection(1, UniverseConnection(std::move(pair.first)));
+  UniverseConnection client(std::move(pair.second));
+
+  unsigned const BurstCount = 32;
+  for (unsigned i = 0; i < BurstCount; ++i)
+    client.pushSingle(make_shared<ProtocolRequestPacket>(i));
+  EXPECT_TRUE(client.sendAll(SyncWaitMillis));
+
+  List<unsigned> received;
+  ASSERT_TRUE(waitUntil([&]() {
+    client.receive();
+    while (auto packet = client.pullSingle())
+      received.append(convert<ProtocolRequestPacket>(packet)->requestProtocolVersion);
+
+    return received.size() == BurstCount;
+  }));
+
+  for (unsigned i = 0; i < BurstCount; ++i)
+    EXPECT_EQ(i, received[i]);
+
+  auto stats = server.workerStats();
+  EXPECT_EQ(0, totalEagerSendBatches(stats));
+  EXPECT_GT(totalWorkerSendBatches(stats), 0);
 }
 
 TEST(UniverseConnectionServer, RemoveConnectionDuringCallback) {

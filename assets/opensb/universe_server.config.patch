@@ -26,6 +26,11 @@
   },
   {
     "op" : "add",
+    "path" : "/queueOnlyConnectionSend",
+    "value" : false
+  },
+  {
+    "op" : "add",
     "path" : "/usePendingConnectionStateMachine",
     "value" : true
   },
