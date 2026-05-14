@@ -1,6 +1,6 @@
 1 VERSIONINFO
-FILEVERSION     26,5,1,1
-PRODUCTVERSION  26,5,1,1
+FILEVERSION     26,5,2,1
+PRODUCTVERSION  26,5,2,1
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -8,12 +8,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Chucklefish LTD"
       VALUE "FileDescription", "OpenStarbound"
-      VALUE "FileVersion", "26.5.1a"
+      VALUE "FileVersion", "26.5.2a"
       VALUE "InternalName", "starbound"
       VALUE "LegalCopyright", "Chucklefish LTD"
       VALUE "OriginalFilename", "starbound.exe"
       VALUE "ProductName", "OpenStarbound"
-      VALUE "ProductVersion", "26.5.1a Ethereal Drake"
+      VALUE "ProductVersion", "26.5.2a Ethereal Drake"
     END
   END
 

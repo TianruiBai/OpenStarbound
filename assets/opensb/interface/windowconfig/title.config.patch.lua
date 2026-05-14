@@ -19,7 +19,7 @@ function patch(data)
     }
   }
   data.openStarboundRelease = {
-    version = "26.5.1a",
+    version = "26.5.2a",
     name = "Ethereal Drake"
   }
   data.scripts = jarray{"/interface/title/title.lua"}

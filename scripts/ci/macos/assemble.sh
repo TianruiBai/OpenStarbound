@@ -26,4 +26,23 @@ cp \
   scripts/steam_appid.txt \
   client_distribution/osx/
 
+mkdir server_distribution
+mkdir server_distribution/assets
+
+mkdir server_distribution/mods
+touch server_distribution/mods/mods_go_here
+
+./dist/asset_packer -c scripts/packing.config -s assets/opensb server_distribution/assets/opensb.pak
+
+mkdir server_distribution/osx
+cp \
+  dist/starbound_server \
+  dist/btree_repacker \
+  dist/*.dylib \
+  scripts/ci/macos/sbinit.config \
+  scripts/ci/macos/run-server.sh \
+  scripts/steam_appid.txt \
+  server_distribution/osx/
+
 tar -cvf client.tar client_distribution
+tar -cvf server.tar server_distribution

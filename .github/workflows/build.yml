@@ -1,6 +1,7 @@
-name: Build
+name: Build and Package
 permissions:
   actions: read
+  contents: read
 
   
 on:
@@ -17,15 +18,22 @@ on:
       windows:
         type: boolean
         description: Windows
-        default: false
+        default: true
       macOS:
         type: boolean
         description: macOS
-        default: false
+        default: true
 
   push:
     paths:
       - 'assets/**'
+      - '.github/workflows/build.yml'
+      - 'cmake/**'
+      - 'lib/**'
+      - 'scripts/ci/**'
+      - 'scripts/inno/**'
+      - 'scripts/packing.config'
+      - 'scripts/steam_appid.txt'
       - 'source/**'
       - 'toolchains/**'
       - 'triplets/**'
@@ -35,6 +43,13 @@ on:
   pull_request:
     paths:
       - 'assets/**'
+      - '.github/workflows/build.yml'
+      - 'cmake/**'
+      - 'lib/**'
+      - 'scripts/ci/**'
+      - 'scripts/inno/**'
+      - 'scripts/packing.config'
+      - 'scripts/steam_appid.txt'
       - 'source/**'
       - 'toolchains/**'
       - 'triplets/**'
@@ -592,6 +607,12 @@ jobs:
           name: OpenStarbound-macOS-Intel-Client
           path: client.tar
 
+      - name: Upload Server Files
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenStarbound-macOS-Intel-Server
+          path: server.tar
+
   build-mac-arm:
     name: Build OpenStarbound macOS arm64
     runs-on: macos-14
@@ -664,3 +685,9 @@ jobs:
         with:
           name: OpenStarbound-macOS-Silicon-Client
           path: client.tar
+
+      - name: Upload Server Files
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenStarbound-macOS-Silicon-Server
+          path: server.tar
