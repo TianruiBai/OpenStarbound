@@ -34,7 +34,8 @@ Current checklist:
 7. Done: queue-only network send experiment measured with in-process dummy clients, default-enabled as `queueOnlyConnectionSend=true`, with `queueOnlyConnectionSend=false` preserving the legacy eager-write fallback.
 8. Done: guarded empty `EntityUpdateSetPacket` suppression behind `skipEmptyEntityUpdateSets`, with default-off legacy behavior, packet-prep diagnostics, and focused coverage.
 9. Done: guarded empty `SystemWorldUpdatePacket` suppression behind `skipEmptyUpdatePackets`, with default-off legacy behavior, `/worldstats` packet diagnostics, and focused coverage.
-10. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The first repeatable self-workload capture is now available as `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`.
+10. Done: compatibility-sensitive entity/Lua attribution under `subsystemBaselineMetrics`, with entity copy/sort/update/metadata timings and bounded Lua script-context timing diagnostics.
+11. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
 
 ## 2. Current Bottleneck Statement
 
@@ -70,7 +71,7 @@ Tasks:
 1. Define the `26.5.2a` fixed workload set: crowded hub, high-fan-out replication, liquid-heavy region, wiring-heavy base, generation-heavy exploration, save/disconnect spike, login burst, and modpack smoke.
 2. Record baseline p50/p95/p99 for universe loop, world thread, world-update subphases, packet preparation, persistence queue, network worker wakeups, and Phase 6 worker helpers.
 3. Add or update command output notes for collecting `/serverstatus`, `/worldstats`, and `/servernetstats` during the workloads.
-4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, wire objects, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-14 with opt-in empty update-set suppression enabled in the harness: `packets=22305`, `tile=3116`, `liquid=16168`, `tileDamage=1008`, `falling=30/1216/1548/324`, `wiring=48/144/144/144/144`, `entityCreate=92`, `entityUpdate=780`, `entityUpdateDeltas=4796`, `updateSets=780/4796/0/180`, `sectorFanout=5100/20400/0`, `netStateCache=7926/7450`, `storage=1/64/64/64/66/65/1/65/6290`, `elapsedUs=199191`.
+4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, wire objects, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-14 with opt-in empty update-set suppression enabled in the harness: `packets=22621`, `tile=3116`, `liquid=16484`, `tileDamage=1008`, `falling=30/1216/1537/324`, `wiring=48/144/144/144/144`, `entityCreate=92`, `entityUpdate=780`, `entityUpdateDeltas=4800`, `updateSets=780/4800/0/180`, `sectorFanout=5179/20716/0`, `netStateCache=8127/7517`, `entity=240/3944/720/10/3944/3944/44/176/15791/646`, `lua=240/240/240/680/87`, `storage=1/64/64/64/66/65/1/65/6285`, `elapsedUs=189429`.
 5. Re-enable or document the `world_benchmark` utility target only if it can run without disturbing normal builds; otherwise keep it as a manual profiling harness.
 6. Store benchmark world setup notes with enough detail that future releases can rerun the same workload.
 
@@ -149,7 +150,7 @@ Priority tickets:
 
 1. Done: move `UniverseConnectionServer::sendPackets()` toward queue-only behavior behind `queueOnlyConnectionSend`, so socket writes can be fully owned by the assigned network worker while the legacy eager-send path remains available as `queueOnlyConnectionSend=false`.
 2. Done: measure eager send/write versus queue-only send with `queued`, `eager`, and `workerSend` counters in `/serverstatus` and `/servernetstats` before changing the default.
-3. Done: add `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison`, which runs 8 in-process dummy clients and compares eager versus queue-only server fan-out. Local result on 2026-05-13: eager `sent=128 queued=140 eager=140 worker=0 elapsedUs=7576`; queue-only `sent=128 queued=128 eager=0 worker=129 elapsedUs=411`.
+3. Done: add `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison`, which runs 8 in-process dummy clients and compares eager versus queue-only server fan-out with inter-round drains so the measurement does not turn local socket backlog into a flake. Latest local result on 2026-05-14: eager `sent=128 queued=128 eager=128 worker=0 elapsedUs=532`; queue-only `sent=128 queued=130 eager=0 worker=130 elapsedUs=5870`.
 4. Draft the narrow `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready connection handles.
 5. Keep the current condition-variable and timed fallback until Windows, Linux, and macOS paths have coverage.
 
@@ -189,7 +190,8 @@ Priority tickets:
 2. Falling-block dependency-region signatures for pending positions, processed positions, moved blocks, and newly added positions.
 3. Wiring component signatures for loaded networks, evaluated entities, output states, and topology changes.
 4. Region/component boundary stress tests for each subsystem.
-5. Per-subsystem gate reporting that explains why a requested mutation worker is blocked.
+5. Done: compatibility-sensitive entity/Lua attribution. `subsystemBaselineMetrics` now reports entity iteration copy/sort/update/metadata-refresh timing and bounded Lua script-context update timing while preserving the serial execution path.
+6. Per-subsystem gate reporting that explains why a requested mutation worker is blocked.
 
 Must-ship acceptance:
 
@@ -242,6 +244,8 @@ Minimum local validation before the release branch is considered healthy:
 6. Run storage write-failure, queue-pressure, shutdown-drain, and reload tests.
 7. Run fixed workload captures and compare p50/p95/p99 against the `26.5.1a` baseline.
 8. Run modpack smoke with default config and with every new optimization explicitly disabled.
+
+Latest local validation on 2026-05-14: `starbound`, `starbound_server`, and `game_tests` built from the VS 2022 developer environment; full `game_tests` passed 62/62; `core_tests.exe --gtest_filter=NetElements.*` passed 17/17; the disabled queue-only and game-mechanism captures passed with `--gtest_also_run_disabled_tests`.
 
 ## 13. Go/No-Go Rules
 

@@ -45,6 +45,8 @@ TEST(ItemTest, ItemComparison) {
   auto itemDatabase = Root::singleton().itemDatabase();
   ItemPtr testItem = itemDatabase->item(ItemDescriptor("perfectlygenericitem", 1));
   ItemPtr testItemParams = itemDatabase->item(ItemDescriptor("perfectlygenericitem", 1, JsonObject{{"testParameter", "testValue"}}));
+  ItemDescriptor testItemExactDescriptor = testItem->descriptor();
+  ItemDescriptor testItemParamsExactDescriptor = testItemParams->descriptor();
 
   List<ItemDescriptor> testItemDescriptors = List<ItemDescriptor>{
     ItemDescriptor("perfectlygenericitem", 1),
@@ -60,6 +62,18 @@ TEST(ItemTest, ItemComparison) {
   List<ItemDescriptor> testItemDescriptorsParams = List<ItemDescriptor>{
     ItemDescriptor(JsonArray{"perfectlygenericitem", 1, JsonObject{{"testParameter", "testValue"}}}),
     ItemDescriptor(JsonObject{{"name", "perfectlygenericitem"}, {"count", 1}, {"parameters", JsonObject{{"testParameter", "testValue"}}}})
+  };
+
+  List<ItemDescriptor> testItemExactDescriptors = List<ItemDescriptor>{
+    testItemExactDescriptor,
+    ItemDescriptor(JsonArray{"perfectlygenericitem", 1, testItemExactDescriptor.parameters()}),
+    ItemDescriptor(JsonObject{{"name", "perfectlygenericitem"}, {"count", 1}, {"parameters", testItemExactDescriptor.parameters()}})
+  };
+
+  List<ItemDescriptor> testItemParamsExactDescriptors = List<ItemDescriptor>{
+    testItemParamsExactDescriptor,
+    ItemDescriptor(JsonArray{"perfectlygenericitem", 1, testItemParamsExactDescriptor.parameters()}),
+    ItemDescriptor(JsonObject{{"name", "perfectlygenericitem"}, {"count", 1}, {"parameters", testItemParamsExactDescriptor.parameters()}})
   };
 
   // comparisons WITHOUT exactMatch
@@ -87,24 +101,37 @@ TEST(ItemTest, ItemComparison) {
   EXPECT_TRUE(testItemParams->matches(testItem));
 
   // comparisons WITH exactMatch
-    for (ItemDescriptor const& id : testItemDescriptors) {
-    EXPECT_TRUE(testItem->matches(id, true));
-    EXPECT_FALSE(testItemParams->matches(id, true));
-    EXPECT_TRUE(id.matches(testItem, true));
-    EXPECT_FALSE(id.matches(testItemParams, true));
+  for (ItemDescriptor const& id : testItemDescriptors) {
     for (ItemDescriptor const& id2 : testItemDescriptors)
       EXPECT_TRUE(id.matches(id2, true));
     for (ItemDescriptor const& id2 : testItemDescriptorsParams)
       EXPECT_FALSE(id.matches(id2, true));
   }
   for (ItemDescriptor const& id : testItemDescriptorsParams) {
+    for (ItemDescriptor const& id2 : testItemDescriptors)
+      EXPECT_FALSE(id.matches(id2, true));
+    for (ItemDescriptor const& id2 : testItemDescriptorsParams)
+      EXPECT_TRUE(id.matches(id2, true));
+  }
+
+  for (ItemDescriptor const& id : testItemExactDescriptors) {
+    EXPECT_TRUE(testItem->matches(id, true));
+    EXPECT_FALSE(testItemParams->matches(id, true));
+    EXPECT_TRUE(id.matches(testItem, true));
+    EXPECT_FALSE(id.matches(testItemParams, true));
+    for (ItemDescriptor const& id2 : testItemExactDescriptors)
+      EXPECT_TRUE(id.matches(id2, true));
+    for (ItemDescriptor const& id2 : testItemParamsExactDescriptors)
+      EXPECT_FALSE(id.matches(id2, true));
+  }
+  for (ItemDescriptor const& id : testItemParamsExactDescriptors) {
     EXPECT_FALSE(testItem->matches(id, true));
     EXPECT_TRUE(testItemParams->matches(id, true));
     EXPECT_FALSE(id.matches(testItem, true));
     EXPECT_TRUE(id.matches(testItemParams, true));
-    for (ItemDescriptor const& id2 : testItemDescriptors)
+    for (ItemDescriptor const& id2 : testItemExactDescriptors)
       EXPECT_FALSE(id.matches(id2, true));
-    for (ItemDescriptor const& id2 : testItemDescriptorsParams)
+    for (ItemDescriptor const& id2 : testItemParamsExactDescriptors)
       EXPECT_TRUE(id.matches(id2, true));
   }
   EXPECT_FALSE(testItem->matches(testItemParams, true));

@@ -1102,6 +1102,7 @@ void WorldServer::update(float dt) {
   timePhase(UpdateTimingPhase::Entities, [&]() {
     uint64_t updatedEntities = 0;
     uint64_t tileEntities = 0;
+    EntityMap::UpdateAllEntitiesStats entityUpdateStats;
     m_entityMap->updateAllEntities([&](EntityPtr const& entity) {
         updatedEntities += 1;
         entity->update(dt, m_currentStep);
@@ -1120,20 +1121,35 @@ void WorldServer::update(float dt) {
           toRemove.append(entity->entityId());
       }, [](EntityPtr const& a, EntityPtr const& b) {
         return a->entityType() < b->entityType();
-      });
+      }, m_phase6SubsystemBaselineMetricsEnabled ? &entityUpdateStats : nullptr);
 
     if (m_phase6SubsystemBaselineMetricsEnabled) {
       m_phase6WorldParallelismStats.entityBaselineTicks += 1;
       m_phase6WorldParallelismStats.entityUpdatedEntities += updatedEntities;
       m_phase6WorldParallelismStats.entityTileEntities += tileEntities;
       m_phase6WorldParallelismStats.entityDestroyedEntities += toRemove.size();
+      m_phase6WorldParallelismStats.entityIterationCopies += entityUpdateStats.entityCopies;
+      m_phase6WorldParallelismStats.entitySortedEntities += entityUpdateStats.sortedEntities;
+      m_phase6WorldParallelismStats.entityCopyMicroseconds += entityUpdateStats.copyMicroseconds;
+      m_phase6WorldParallelismStats.entitySortMicroseconds += entityUpdateStats.sortMicroseconds;
+      m_phase6WorldParallelismStats.entityUpdateMicroseconds += entityUpdateStats.callbackMicroseconds;
+      m_phase6WorldParallelismStats.entityMetadataRefreshMicroseconds += entityUpdateStats.metadataRefreshMicroseconds;
     }
   });
 
   timePhase(UpdateTimingPhase::Scripts, [&]() {
     uint64_t scriptUpdates = 0;
+    uint64_t scriptUpdateMicroseconds = 0;
+    uint64_t maxScriptUpdateMicroseconds = 0;
     for (auto& pair : m_scriptContexts) {
+      auto scriptStart = m_phase6SubsystemBaselineMetricsEnabled ? Time::monotonicMicroseconds() : 0;
       pair.second->update(pair.second->updateDt(dt));
+      if (m_phase6SubsystemBaselineMetricsEnabled) {
+        uint64_t elapsed = Time::monotonicMicroseconds() - scriptStart;
+        scriptUpdateMicroseconds += elapsed;
+        if (elapsed > maxScriptUpdateMicroseconds)
+          maxScriptUpdateMicroseconds = elapsed;
+      }
       scriptUpdates += 1;
     }
 
@@ -1141,6 +1157,9 @@ void WorldServer::update(float dt) {
       m_phase6WorldParallelismStats.luaBaselineTicks += 1;
       m_phase6WorldParallelismStats.luaScriptContexts += m_scriptContexts.size();
       m_phase6WorldParallelismStats.luaScriptUpdates += scriptUpdates;
+      m_phase6WorldParallelismStats.luaScriptUpdateMicroseconds += scriptUpdateMicroseconds;
+      if (maxScriptUpdateMicroseconds > m_phase6WorldParallelismStats.luaMaxScriptUpdateMicroseconds)
+        m_phase6WorldParallelismStats.luaMaxScriptUpdateMicroseconds = maxScriptUpdateMicroseconds;
     }
   });
 

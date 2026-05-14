@@ -156,9 +156,17 @@ public:
     uint64_t entityUpdatedEntities = 0;
     uint64_t entityTileEntities = 0;
     uint64_t entityDestroyedEntities = 0;
+    uint64_t entityIterationCopies = 0;
+    uint64_t entitySortedEntities = 0;
+    uint64_t entityCopyMicroseconds = 0;
+    uint64_t entitySortMicroseconds = 0;
+    uint64_t entityUpdateMicroseconds = 0;
+    uint64_t entityMetadataRefreshMicroseconds = 0;
     uint64_t luaBaselineTicks = 0;
     uint64_t luaScriptContexts = 0;
     uint64_t luaScriptUpdates = 0;
+    uint64_t luaScriptUpdateMicroseconds = 0;
+    uint64_t luaMaxScriptUpdateMicroseconds = 0;
   };
 
   // Create a new world with the given template, writing new storage file.

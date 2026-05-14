@@ -2,6 +2,7 @@
 #include "StarTileEntity.hpp"
 #include "StarInteractiveEntity.hpp"
 #include "StarProjectile.hpp"
+#include "StarTime.hpp"
 
 namespace Star {
 
@@ -89,7 +90,7 @@ List<EntityId> EntityMap::entityIds() const {
   return m_spatialMap.keys();
 }
 
-void EntityMap::updateAllEntities(EntityCallback const& callback, function<bool(EntityPtr const&, EntityPtr const&)> sortOrder) {
+void EntityMap::updateAllEntities(EntityCallback const& callback, function<bool(EntityPtr const&, EntityPtr const&)> sortOrder, UpdateAllEntitiesStats* stats) {
   auto updateEntityInfo = [&](SpatialMap::Entry const& entry) {
     auto const& entity = entry.value;
 
@@ -125,20 +126,37 @@ void EntityMap::updateAllEntities(EntityCallback const& callback, function<bool(
 
   // Even if there is no sort order, we still copy pointers to a temporary
   // list, so that it is safe to call addEntity from the callback.
+  auto copyStart = stats ? Time::monotonicMicroseconds() : 0;
   m_entrySortBuffer.clear();
   for (auto const& entry : m_spatialMap.entries())
     m_entrySortBuffer.append(&entry.second);
+  if (stats) {
+    stats->entityCopies += m_entrySortBuffer.size();
+    stats->copyMicroseconds += Time::monotonicMicroseconds() - copyStart;
+  }
 
   if (sortOrder) {
+    auto sortStart = stats ? Time::monotonicMicroseconds() : 0;
     m_entrySortBuffer.sort([&sortOrder](auto a, auto b) {
         return sortOrder(a->value, b->value);
       });
+    if (stats) {
+      stats->sortedEntities += m_entrySortBuffer.size();
+      stats->sortMicroseconds += Time::monotonicMicroseconds() - sortStart;
+    }
   }
 
   for (auto entry : m_entrySortBuffer) {
-    if (callback)
+    if (callback) {
+      auto callbackStart = stats ? Time::monotonicMicroseconds() : 0;
       callback(entry->value);
+      if (stats)
+        stats->callbackMicroseconds += Time::monotonicMicroseconds() - callbackStart;
+    }
+    auto metadataStart = stats ? Time::monotonicMicroseconds() : 0;
     updateEntityInfo(*entry);
+    if (stats)
+      stats->metadataRefreshMicroseconds += Time::monotonicMicroseconds() - metadataStart;
   }
 }
 

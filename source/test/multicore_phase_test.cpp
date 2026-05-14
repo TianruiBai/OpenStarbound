@@ -415,6 +415,7 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
   worldServer.setWorldId("self-workload-capture");
   worldServer.setFidelity(WorldServerFidelity::Minimum);
   worldServer.setSpawningEnabled(false);
+  worldServer.initLua(nullptr);
   worldServer.generateRegion(RectI::withSize(Vec2I(80, 24), Vec2I(96, 72)));
 
   for (size_t i = 0; i < ClientCount; ++i) {
@@ -589,8 +590,8 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
             << " liquidCache=" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuilds << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRegions << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuckets << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheLookups << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheCandidates << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheHits
             << " falling=" << capture.phase6Stats.fallingBlocksBaselineTicks << "/" << capture.phase6Stats.fallingBlocksPendingPositions << "/" << capture.phase6Stats.fallingBlocksProcessedPositions << "/" << capture.phase6Stats.fallingBlocksMovedBlocks
             << " wiring=" << capture.phase6Stats.wiringBaselineTicks << "/" << capture.phase6Stats.wiringInitialEntities << "/" << capture.phase6Stats.wiringLoadedEntities << "/" << capture.phase6Stats.wiringNetworkLoads << "/" << capture.phase6Stats.wiringEvaluatedEntities
-            << " entity=" << capture.phase6Stats.entityBaselineTicks << "/" << capture.phase6Stats.entityUpdatedEntities << "/" << capture.phase6Stats.entityTileEntities << "/" << capture.phase6Stats.entityDestroyedEntities
-            << " lua=" << capture.phase6Stats.luaBaselineTicks << "/" << capture.phase6Stats.luaScriptContexts << "/" << capture.phase6Stats.luaScriptUpdates
+            << " entity=" << capture.phase6Stats.entityBaselineTicks << "/" << capture.phase6Stats.entityUpdatedEntities << "/" << capture.phase6Stats.entityTileEntities << "/" << capture.phase6Stats.entityDestroyedEntities << "/" << capture.phase6Stats.entityIterationCopies << "/" << capture.phase6Stats.entitySortedEntities << "/" << capture.phase6Stats.entityCopyMicroseconds << "/" << capture.phase6Stats.entitySortMicroseconds << "/" << capture.phase6Stats.entityUpdateMicroseconds << "/" << capture.phase6Stats.entityMetadataRefreshMicroseconds
+            << " lua=" << capture.phase6Stats.luaBaselineTicks << "/" << capture.phase6Stats.luaScriptContexts << "/" << capture.phase6Stats.luaScriptUpdates << "/" << capture.phase6Stats.luaScriptUpdateMicroseconds << "/" << capture.phase6Stats.luaMaxScriptUpdateMicroseconds
             << " storage=" << capture.storageTimingStats.syncs << "/" << capture.storageTimingStats.syncedSectors << "/" << capture.storageTimingStats.tileStoreSectors << "/" << capture.storageTimingStats.entityStoreSectors << "/" << capture.storageTimingStats.btreeInserts << "/" << capture.storageTimingStats.btreeInsertSkips << "/" << capture.storageTimingStats.fullSnapshotExports << "/" << capture.storageTimingStats.fullSnapshotChunks << "/" << capture.storageTimingStats.fullSnapshotBytes
             << " chunks=" << capture.chunks
             << " elapsedUs=" << capture.elapsedMicroseconds
@@ -652,12 +653,18 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
   worldServer.setFidelity(WorldServerFidelity::Minimum);
   worldServer.setSpawningEnabled(false);
+  worldServer.initLua(nullptr);
 
   if (!worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true)) {
     ADD_FAILURE() << "Could not add baseline metrics test client";
     return {};
   }
   acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(32, 32), Vec2F(), Vec2F(), true);
+  EXPECT_TRUE(itemDrop);
+  if (itemDrop)
+    worldServer.addEntity(itemDrop, 100);
 
   auto liquidId = firstTestLiquidId();
   EXPECT_NE(liquidId, EmptyLiquidId);
@@ -684,11 +691,18 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   EXPECT_GT(stats.fallingBlocksBaselineTicks, 0u);
   EXPECT_GT(stats.wiringBaselineTicks, 0u);
   EXPECT_GT(stats.entityBaselineTicks, 0u);
+  EXPECT_GT(stats.entityIterationCopies, 0u);
+  EXPECT_GT(stats.entitySortedEntities, 0u);
   EXPECT_GT(stats.luaBaselineTicks, 0u);
+  EXPECT_GT(stats.luaScriptContexts, 0u);
+  EXPECT_GT(stats.luaScriptUpdates, 0u);
   EXPECT_GE(stats.fallingBlocksProcessedPositions, stats.fallingBlocksMovedBlocks);
   EXPECT_GE(stats.wiringLoadedEntities, stats.wiringEvaluatedEntities);
   EXPECT_GE(stats.entityUpdatedEntities, stats.entityTileEntities);
+  EXPECT_GE(stats.entityIterationCopies, stats.entityUpdatedEntities);
+  EXPECT_GE(stats.entitySortedEntities, stats.entityUpdatedEntities);
   EXPECT_GE(stats.luaScriptUpdates, stats.luaScriptContexts);
+  EXPECT_GE(stats.luaScriptUpdateMicroseconds, stats.luaMaxScriptUpdateMicroseconds);
 
   return List<uint64_t>{
       stats.liquidBaselineTicks,
@@ -714,6 +728,8 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.entityUpdatedEntities,
       stats.entityTileEntities,
       stats.entityDestroyedEntities,
+      stats.entityIterationCopies,
+      stats.entitySortedEntities,
       stats.luaBaselineTicks,
       stats.luaScriptContexts,
       stats.luaScriptUpdates};
@@ -1129,7 +1145,13 @@ TEST(ServerMeasurement, DISABLED_GameMechanismSelfWorkloadCapture) {
   EXPECT_GT(capture.phase6Stats.wiringEvaluatedEntities, 0u);
   EXPECT_GT(capture.phase6Stats.entityBaselineTicks, 0u);
   EXPECT_GT(capture.phase6Stats.entityUpdatedEntities, 0u);
+  EXPECT_GT(capture.phase6Stats.entityIterationCopies, 0u);
+  EXPECT_GT(capture.phase6Stats.entitySortedEntities, 0u);
+  EXPECT_GT(capture.phase6Stats.entityUpdateMicroseconds, 0u);
   EXPECT_GT(capture.phase6Stats.luaBaselineTicks, 0u);
+  EXPECT_GT(capture.phase6Stats.luaScriptContexts, 0u);
+  EXPECT_GT(capture.phase6Stats.luaScriptUpdates, 0u);
+  EXPECT_GE(capture.phase6Stats.luaScriptUpdateMicroseconds, capture.phase6Stats.luaMaxScriptUpdateMicroseconds);
   EXPECT_GT(capture.storageTimingStats.syncs, 0u);
   EXPECT_GT(capture.storageTimingStats.syncedSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.fullSnapshotExports, 0u);

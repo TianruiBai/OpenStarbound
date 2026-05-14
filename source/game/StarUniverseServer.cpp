@@ -447,9 +447,17 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6EntityUpdatedEntities += phase6Stats.entityUpdatedEntities;
           status.phase6EntityTileEntities += phase6Stats.entityTileEntities;
           status.phase6EntityDestroyedEntities += phase6Stats.entityDestroyedEntities;
+          status.phase6EntityIterationCopies += phase6Stats.entityIterationCopies;
+          status.phase6EntitySortedEntities += phase6Stats.entitySortedEntities;
+          status.phase6EntityCopyMicroseconds += phase6Stats.entityCopyMicroseconds;
+          status.phase6EntitySortMicroseconds += phase6Stats.entitySortMicroseconds;
+          status.phase6EntityUpdateMicroseconds += phase6Stats.entityUpdateMicroseconds;
+          status.phase6EntityMetadataRefreshMicroseconds += phase6Stats.entityMetadataRefreshMicroseconds;
           status.phase6LuaBaselineTicks += phase6Stats.luaBaselineTicks;
           status.phase6LuaScriptContexts += phase6Stats.luaScriptContexts;
           status.phase6LuaScriptUpdates += phase6Stats.luaScriptUpdates;
+          status.phase6LuaScriptUpdateMicroseconds += phase6Stats.luaScriptUpdateMicroseconds;
+          status.phase6LuaMaxScriptUpdateMicroseconds = max(status.phase6LuaMaxScriptUpdateMicroseconds, phase6Stats.luaMaxScriptUpdateMicroseconds);
 
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);

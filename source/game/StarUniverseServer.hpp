@@ -147,9 +147,17 @@ public:
     uint64_t phase6EntityUpdatedEntities;
     uint64_t phase6EntityTileEntities;
     uint64_t phase6EntityDestroyedEntities;
+    uint64_t phase6EntityIterationCopies;
+    uint64_t phase6EntitySortedEntities;
+    uint64_t phase6EntityCopyMicroseconds;
+    uint64_t phase6EntitySortMicroseconds;
+    uint64_t phase6EntityUpdateMicroseconds;
+    uint64_t phase6EntityMetadataRefreshMicroseconds;
     uint64_t phase6LuaBaselineTicks;
     uint64_t phase6LuaScriptContexts;
     uint64_t phase6LuaScriptUpdates;
+    uint64_t phase6LuaScriptUpdateMicroseconds;
+    uint64_t phase6LuaMaxScriptUpdateMicroseconds;
     bool networkQueueOnlySends;
     size_t networkWorkers;
     size_t networkOwnedConnections;

@@ -21,6 +21,15 @@ STAR_EXCEPTION(EntityMapException, StarException);
 // entities is never safe to do from any callback function.
 class EntityMap {
 public:
+  struct UpdateAllEntitiesStats {
+    uint64_t entityCopies = 0;
+    uint64_t sortedEntities = 0;
+    uint64_t copyMicroseconds = 0;
+    uint64_t sortMicroseconds = 0;
+    uint64_t callbackMicroseconds = 0;
+    uint64_t metadataRefreshMicroseconds = 0;
+  };
+
   static float const SpatialHashSectorSize;
   static int const MaximumEntityBoundBox;
 
@@ -44,7 +53,7 @@ public:
 
   // Iterates through the entity map optionally in the given order, updating
   // the spatial information for each entity along the way.
-  void updateAllEntities(EntityCallback const& callback = {}, function<bool(EntityPtr const&, EntityPtr const&)> sortOrder = {});
+  void updateAllEntities(EntityCallback const& callback = {}, function<bool(EntityPtr const&, EntityPtr const&)> sortOrder = {}, UpdateAllEntitiesStats* stats = nullptr);
 
   // If the given unique entity is in this map, then return its entity id
   EntityId uniqueEntityId(String const& uniqueId) const;

@@ -267,14 +267,17 @@ QueueSendMeasurement runQueueSendMeasurement(bool queueOnly) {
   auto sendStart = Time::monotonicMicroseconds();
 
   size_t packetsSent = 0;
+  size_t packetsReceived = 0;
   for (size_t round = 0; round < Rounds; ++round) {
     for (auto clientId : clientIds) {
       EXPECT_TRUE(server.sendPacket(clientId, make_shared<PausePacket>((round % 2) == 0, 1.0f)));
       packetsSent += 1;
     }
+    packetsReceived += drainAvailablePackets(connections);
   }
 
-  auto packetsReceived = waitForReceivedPackets(connections, packetsSent);
+  if (packetsReceived < packetsSent)
+    packetsReceived += waitForReceivedPackets(connections, packetsSent - packetsReceived);
   auto afterStatus = waitForServerStatus(server, [&](UniverseServer::ServerStatus const& status) {
     auto queuedDelta = counterDelta(status.networkQueuedSendPackets, beforeStatus.networkQueuedSendPackets);
     auto eagerDelta = counterDelta(status.networkEagerSendPackets, beforeStatus.networkEagerSendPackets);
