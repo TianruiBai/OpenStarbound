@@ -443,6 +443,13 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6WiringLoadedEntities += phase6Stats.wiringLoadedEntities;
           status.phase6WiringNetworkLoads += phase6Stats.wiringNetworkLoads;
           status.phase6WiringEvaluatedEntities += phase6Stats.wiringEvaluatedEntities;
+          status.phase6WiringNetworkSignatureChecks += phase6Stats.wiringNetworkSignatureChecks;
+          status.phase6WiringCleanNetworkSignatures += phase6Stats.wiringCleanNetworkSignatures;
+          status.phase6WiringDirtyNetworkSignatures += phase6Stats.wiringDirtyNetworkSignatures;
+          status.phase6WiringTopologyDirtyNetworkSignatures += phase6Stats.wiringTopologyDirtyNetworkSignatures;
+          status.phase6WiringOutputDirtyNetworkSignatures += phase6Stats.wiringOutputDirtyNetworkSignatures;
+          status.phase6WiringCleanNetworkEntities += phase6Stats.wiringCleanNetworkEntities;
+          status.phase6WiringDirtyNetworkEntities += phase6Stats.wiringDirtyNetworkEntities;
           status.phase6EntityBaselineTicks += phase6Stats.entityBaselineTicks;
           status.phase6EntityUpdatedEntities += phase6Stats.entityUpdatedEntities;
           status.phase6EntityTileEntities += phase6Stats.entityTileEntities;

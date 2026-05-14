@@ -590,6 +590,7 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
             << " liquidCache=" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuilds << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRegions << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuckets << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheLookups << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheCandidates << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheHits
             << " falling=" << capture.phase6Stats.fallingBlocksBaselineTicks << "/" << capture.phase6Stats.fallingBlocksPendingPositions << "/" << capture.phase6Stats.fallingBlocksProcessedPositions << "/" << capture.phase6Stats.fallingBlocksMovedBlocks
             << " wiring=" << capture.phase6Stats.wiringBaselineTicks << "/" << capture.phase6Stats.wiringInitialEntities << "/" << capture.phase6Stats.wiringLoadedEntities << "/" << capture.phase6Stats.wiringNetworkLoads << "/" << capture.phase6Stats.wiringEvaluatedEntities
+            << " wiringDirty=" << capture.phase6Stats.wiringNetworkSignatureChecks << "/" << capture.phase6Stats.wiringCleanNetworkSignatures << "/" << capture.phase6Stats.wiringDirtyNetworkSignatures << "/" << capture.phase6Stats.wiringTopologyDirtyNetworkSignatures << "/" << capture.phase6Stats.wiringOutputDirtyNetworkSignatures << "/" << capture.phase6Stats.wiringCleanNetworkEntities << "/" << capture.phase6Stats.wiringDirtyNetworkEntities
             << " entity=" << capture.phase6Stats.entityBaselineTicks << "/" << capture.phase6Stats.entityUpdatedEntities << "/" << capture.phase6Stats.entityTileEntities << "/" << capture.phase6Stats.entityDestroyedEntities << "/" << capture.phase6Stats.entityIterationCopies << "/" << capture.phase6Stats.entitySortedEntities << "/" << capture.phase6Stats.entityCopyMicroseconds << "/" << capture.phase6Stats.entitySortMicroseconds << "/" << capture.phase6Stats.entityUpdateMicroseconds << "/" << capture.phase6Stats.entityMetadataRefreshMicroseconds
             << " lua=" << capture.phase6Stats.luaBaselineTicks << "/" << capture.phase6Stats.luaScriptContexts << "/" << capture.phase6Stats.luaScriptUpdates << "/" << capture.phase6Stats.luaScriptUpdateMicroseconds << "/" << capture.phase6Stats.luaMaxScriptUpdateMicroseconds
             << " storage=" << capture.storageTimingStats.syncs << "/" << capture.storageTimingStats.syncedSectors << "/" << capture.storageTimingStats.tileStoreSectors << "/" << capture.storageTimingStats.entityStoreSectors << "/" << capture.storageTimingStats.btreeInserts << "/" << capture.storageTimingStats.btreeInsertSkips << "/" << capture.storageTimingStats.fullSnapshotExports << "/" << capture.storageTimingStats.fullSnapshotChunks << "/" << capture.storageTimingStats.fullSnapshotBytes
@@ -724,6 +725,13 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.wiringLoadedEntities,
       stats.wiringNetworkLoads,
       stats.wiringEvaluatedEntities,
+      stats.wiringNetworkSignatureChecks,
+      stats.wiringCleanNetworkSignatures,
+      stats.wiringDirtyNetworkSignatures,
+      stats.wiringTopologyDirtyNetworkSignatures,
+      stats.wiringOutputDirtyNetworkSignatures,
+      stats.wiringCleanNetworkEntities,
+      stats.wiringDirtyNetworkEntities,
       stats.entityBaselineTicks,
       stats.entityUpdatedEntities,
       stats.entityTileEntities,
@@ -1371,4 +1379,47 @@ TEST(MulticorePhaseTest, Phase6SubsystemBaselineMetricsAreGuardedAndStable) {
   auto secondSignature = phase6SubsystemBaselineSignature();
 
   EXPECT_EQ(firstSignature, secondSignature);
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationWiringDirtySignaturesTrackStableNetworks) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{{"subsystemBaselineMetrics", true}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.initLua(nullptr);
+  worldServer.generateRegion(RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  auto wireObjectName = firstTestObjectName();
+  ASSERT_TRUE((bool)wireObjectName);
+
+  Vec2I sourcePosition(30, 32);
+  Vec2I relayPosition(32, 32);
+  Vec2I sinkPosition(34, 32);
+  ASSERT_TRUE(setSelfWorkloadForegroundMaterial(worldServer, sourcePosition, EmptyMaterialId));
+  ASSERT_TRUE(setSelfWorkloadForegroundMaterial(worldServer, relayPosition, EmptyMaterialId));
+  ASSERT_TRUE(setSelfWorkloadForegroundMaterial(worldServer, sinkPosition, EmptyMaterialId));
+
+  worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, sourcePosition, false, true), 7000);
+  worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, relayPosition, true, true), 7001);
+  worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, sinkPosition, true, false), 7002);
+  worldServer.wire(sourcePosition, 0, relayPosition, 0);
+  worldServer.wire(relayPosition, 0, sinkPosition, 0);
+
+  WorldServer::Phase6WorldParallelismStats stats;
+  for (size_t i = 0; i < 180; ++i) {
+    worldServer.update(1.0f / 60.0f);
+    stats = worldServer.phase6WorldParallelismStats();
+    if (stats.wiringDirtyNetworkSignatures > 0 && stats.wiringCleanNetworkSignatures > 0)
+      break;
+  }
+
+  EXPECT_GT(stats.wiringBaselineTicks, 0u);
+  EXPECT_GT(stats.wiringNetworkSignatureChecks, 0u);
+  EXPECT_GT(stats.wiringDirtyNetworkSignatures, 0u);
+  EXPECT_GT(stats.wiringCleanNetworkSignatures, 0u);
+  EXPECT_GT(stats.wiringTopologyDirtyNetworkSignatures, 0u);
+  EXPECT_GT(stats.wiringOutputDirtyNetworkSignatures, 0u);
+  EXPECT_EQ(stats.wiringNetworkSignatureChecks, stats.wiringDirtyNetworkSignatures + stats.wiringCleanNetworkSignatures);
+  EXPECT_EQ(stats.wiringLoadedEntities, stats.wiringDirtyNetworkEntities + stats.wiringCleanNetworkEntities);
 }

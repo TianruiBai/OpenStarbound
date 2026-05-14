@@ -40,21 +40,21 @@ The fixture intentionally stays in-process. It avoids UI automation and keeps th
 2026-05-14 local result with `skipEmptyEntityUpdateSets=true` in the capture fixture:
 
 ```text
-GameMechanismCapture clients=4 ticks=240 packets=22769 step=960 tileArray=100 tile=3116 liquid=16628 tileDamage=1008 entityCreate=92 entityUpdate=784 entityUpdateDeltas=4808 emptyEntityUpdate=0 entityDestroy=40 giveItem=1 failures=0 packetPrepTicks=240 regions=960/960/960/2160 sectorCache=100/0 entityStoreCache=69/23 netStateCache=8013/7479 updateSets=784/4808/0/176 sectorFanout=5215/20860/0 liquidCache=12/48/48/320/4900/19600/4900 falling=30/1216/1540/324 wiring=48/144/144/144/144 entity=240/3906/720/10/3906/3906/55/207/20491/1004 lua=240/240/240/837/51 storage=1/64/64/64/66/65/1/65/6274 chunks=65 elapsedUs=197387
+GameMechanismCapture clients=4 ticks=240 packets=23025 step=960 tileArray=100 tile=3116 liquid=16888 tileDamage=1008 entityCreate=92 entityUpdate=784 entityUpdateDeltas=4800 emptyEntityUpdate=0 entityDestroy=36 giveItem=1 failures=0 packetPrepTicks=240 regions=960/960/960/2160 sectorCache=100/0 entityStoreCache=69/23 netStateCache=8094/7506 updateSets=784/4800/0/176 sectorFanout=5280/21120/0 liquidCache=12/48/48/320/5016/20064/5016 falling=30/1216/1540/324 wiring=48/144/144/144/144 wiringDirty=144/141/3/3/3/141/3 entity=240/3932/720/9/3932/3932/45/148/13735/541 lua=240/240/240/530/15 storage=1/64/64/64/66/65/1/65/6284 chunks=65 elapsedUs=174874
 ```
 
 Important reads:
 
-- Liquid fan-out remains the largest packet class in this synthetic capture: `16628` liquid update packets and `sectorFanout=5215/20860/0`.
+- Liquid fan-out remains the largest packet class in this synthetic capture: `16888` liquid update packets and `sectorFanout=5280/21120/0`.
 - The liquid cache rebuild-skip optimization is active under stable monitoring windows: `liquidCache=12/48/...`.
 - Tile-update, tile-damage, and falling-block paths are now nonzero: `tile=3116`, `tileDamage=1008`, `falling=30/1216/1540/324`.
-- The minimal wire-object chain gives wiring a real baseline: `wiring=48/144/144/144/144`.
+- The minimal wire-object chain gives wiring a real baseline: `wiring=48/144/144/144/144`; `wiringDirty=144/141/3/3/3/141/3` means signature checks/clean networks/dirty networks/topology-dirty networks/output-dirty networks/clean entities/dirty entities, with the full serial scan still running.
 - Entity create-store sharing works across clients: `entityStoreCache=69/23`.
-- Empty entity update-set suppression is measured but still opt-in: the capture emitted `784` update sets, carried `4808` deltas, emitted `0` empty update sets, and skipped `176` empty update sets. The immediately preceding legacy-compatible run emitted `960` update sets with the same `4808` deltas and `176` empty update-set packets.
-- Delta net-state cache now shows both reuse and misses: `netStateCache=8013/7479`. This should still be investigated, but not by blindly caching first-observation bytes.
-- Entity compatibility-layer attribution is now nonzero: `entity=240/3906/720/10/3906/3906/55/207/20491/1004` means ticks/updated/tile/destroyed/copied/sorted/copyUs/sortUs/updateUs/metadataUs.
-- Lua compatibility-layer attribution is now nonzero for the OpenStarbound world script context: `lua=240/240/240/837/51` means ticks/contexts/updates/updateUs/maxSingleUpdateUs.
-- Storage remains measurable: `storage=1/64/64/64/66/65/1/65/6274`, including a full snapshot export.
+- Empty entity update-set suppression is measured but still opt-in: the capture emitted `784` update sets, carried `4800` deltas, emitted `0` empty update sets, and skipped `176` empty update sets. An earlier legacy-compatible run emitted `960` update sets with `4808` deltas and `176` empty update-set packets.
+- Delta net-state cache now shows both reuse and misses: `netStateCache=8094/7506`. This should still be investigated, but not by blindly caching first-observation bytes.
+- Entity compatibility-layer attribution is now nonzero: `entity=240/3932/720/9/3932/3932/45/148/13735/541` means ticks/updated/tile/destroyed/copied/sorted/copyUs/sortUs/updateUs/metadataUs.
+- Lua compatibility-layer attribution is now nonzero for the OpenStarbound world script context: `lua=240/240/240/530/15` means ticks/contexts/updates/updateUs/maxSingleUpdateUs.
+- Storage remains measurable: `storage=1/64/64/64/66/65/1/65/6284`, including a full snapshot export.
 
 ## Compatibility-Sensitive Prep
 

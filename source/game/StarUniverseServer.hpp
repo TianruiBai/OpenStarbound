@@ -143,6 +143,13 @@ public:
     uint64_t phase6WiringLoadedEntities;
     uint64_t phase6WiringNetworkLoads;
     uint64_t phase6WiringEvaluatedEntities;
+    uint64_t phase6WiringNetworkSignatureChecks;
+    uint64_t phase6WiringCleanNetworkSignatures;
+    uint64_t phase6WiringDirtyNetworkSignatures;
+    uint64_t phase6WiringTopologyDirtyNetworkSignatures;
+    uint64_t phase6WiringOutputDirtyNetworkSignatures;
+    uint64_t phase6WiringCleanNetworkEntities;
+    uint64_t phase6WiringDirtyNetworkEntities;
     uint64_t phase6EntityBaselineTicks;
     uint64_t phase6EntityUpdatedEntities;
     uint64_t phase6EntityTileEntities;

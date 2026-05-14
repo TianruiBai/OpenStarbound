@@ -1176,6 +1176,13 @@ void WorldServer::update(float dt) {
         m_phase6WorldParallelismStats.wiringLoadedEntities += wiringStats.loadedEntities;
         m_phase6WorldParallelismStats.wiringNetworkLoads += wiringStats.networkLoads;
         m_phase6WorldParallelismStats.wiringEvaluatedEntities += wiringStats.evaluatedEntities;
+        m_phase6WorldParallelismStats.wiringNetworkSignatureChecks += wiringStats.networkSignatureChecks;
+        m_phase6WorldParallelismStats.wiringCleanNetworkSignatures += wiringStats.cleanNetworkSignatures;
+        m_phase6WorldParallelismStats.wiringDirtyNetworkSignatures += wiringStats.dirtyNetworkSignatures;
+        m_phase6WorldParallelismStats.wiringTopologyDirtyNetworkSignatures += wiringStats.topologyDirtyNetworkSignatures;
+        m_phase6WorldParallelismStats.wiringOutputDirtyNetworkSignatures += wiringStats.outputDirtyNetworkSignatures;
+        m_phase6WorldParallelismStats.wiringCleanNetworkEntities += wiringStats.cleanNetworkEntities;
+        m_phase6WorldParallelismStats.wiringDirtyNetworkEntities += wiringStats.dirtyNetworkEntities;
       }
     }
   });

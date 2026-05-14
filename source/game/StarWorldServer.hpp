@@ -165,6 +165,13 @@ public:
     uint64_t wiringLoadedEntities = 0;
     uint64_t wiringNetworkLoads = 0;
     uint64_t wiringEvaluatedEntities = 0;
+    uint64_t wiringNetworkSignatureChecks = 0;
+    uint64_t wiringCleanNetworkSignatures = 0;
+    uint64_t wiringDirtyNetworkSignatures = 0;
+    uint64_t wiringTopologyDirtyNetworkSignatures = 0;
+    uint64_t wiringOutputDirtyNetworkSignatures = 0;
+    uint64_t wiringCleanNetworkEntities = 0;
+    uint64_t wiringDirtyNetworkEntities = 0;
     uint64_t entityBaselineTicks = 0;
     uint64_t entityUpdatedEntities = 0;
     uint64_t entityTileEntities = 0;

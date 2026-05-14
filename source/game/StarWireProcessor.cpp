@@ -2,6 +2,7 @@
 #include "StarWorldStorage.hpp"
 #include "StarEntityMap.hpp"
 #include "StarWireEntity.hpp"
+#include "StarHash.hpp"
 #include "StarLogging.hpp"
 
 namespace Star {
@@ -12,6 +13,7 @@ WireProcessor::WireProcessor(WorldStoragePtr worldStorage) {
 
 WireProcessor::ProcessStats WireProcessor::process() {
   ProcessStats stats;
+  StableHashMap<Vec2I, WireNetworkSignature> nextNetworkSignatures;
 
   // First, populate all the working entities that are already live
   m_worldStorage->entityMap()->forAllEntities([&](EntityPtr const& entity) {
@@ -32,7 +34,7 @@ WireProcessor::ProcessStats WireProcessor::process() {
     for (auto const& p : m_workingWireEntities.keys()) {
       if (!m_workingWireEntities.get(p).networkLoaded) {
         stats.networkLoads += 1;
-        loadNetwork(p);
+        recordNetworkSignature(stats, loadNetwork(p), nextNetworkSignatures);
       }
     }
     if (m_workingWireEntities.size() == oldWorkingSize)
@@ -45,6 +47,7 @@ WireProcessor::ProcessStats WireProcessor::process() {
     p.second.wireEntity->evaluate(this);
 
   m_workingWireEntities.clear();
+  m_previousNetworkSignatures = std::move(nextNetworkSignatures);
   return stats;
 }
 
@@ -69,9 +72,10 @@ void WireProcessor::populateWorking(WireEntity* wireEntity) {
     wes.outputStates[i] = wes.wireEntity->nodeState({WireDirection::Output, i});
 }
 
-void WireProcessor::loadNetwork(Vec2I tilePosition) {
+List<Vec2I> WireProcessor::loadNetwork(Vec2I tilePosition) {
   HashSet<WorldStorage::Sector> networkSectors;
   Maybe<float> highestTtl;
+  List<Vec2I> networkPositions;
 
   // Recursively load a given WireEntity at the given position.  Returns true
   // if that wire entity was found.
@@ -104,6 +108,7 @@ void WireProcessor::loadNetwork(Vec2I tilePosition) {
       return true;
 
     wes->networkLoaded = true;
+    networkPositions.append(pos);
     networkSectors.add(*sector);
 
     // Recursively descend into all the inbound and outbound nodes, and if we
@@ -135,6 +140,70 @@ void WireProcessor::loadNetwork(Vec2I tilePosition) {
     for (auto const& sector : networkSectors)
       m_worldStorage->setSectorTimeToLive(sector, *highestTtl);
   }
+
+  return networkPositions;
+}
+
+void WireProcessor::recordNetworkSignature(ProcessStats& stats, List<Vec2I> networkPositions, StableHashMap<Vec2I, WireNetworkSignature>& nextNetworkSignatures) const {
+  if (networkPositions.empty())
+    return;
+
+  networkPositions.sort([](Vec2I const& lhs, Vec2I const& rhs) {
+      return tie(lhs[0], lhs[1]) < tie(rhs[0], rhs[1]);
+    });
+
+  auto rootPosition = networkPositions.first();
+  auto signature = buildNetworkSignature(networkPositions);
+  nextNetworkSignatures.set(rootPosition, signature);
+  stats.networkSignatureChecks += 1;
+
+  bool topologyDirty = true;
+  bool outputDirty = true;
+  if (auto previousSignature = m_previousNetworkSignatures.ptr(rootPosition)) {
+    topologyDirty = previousSignature->topologyHash != signature.topologyHash || previousSignature->entityCount != signature.entityCount;
+    outputDirty = previousSignature->outputHash != signature.outputHash;
+  }
+
+  if (topologyDirty || outputDirty) {
+    stats.dirtyNetworkSignatures += 1;
+    stats.dirtyNetworkEntities += signature.entityCount;
+    if (topologyDirty)
+      stats.topologyDirtyNetworkSignatures += 1;
+    if (outputDirty)
+      stats.outputDirtyNetworkSignatures += 1;
+  } else {
+    stats.cleanNetworkSignatures += 1;
+    stats.cleanNetworkEntities += signature.entityCount;
+  }
+}
+
+WireProcessor::WireNetworkSignature WireProcessor::buildNetworkSignature(List<Vec2I> const& networkPositions) const {
+  WireNetworkSignature signature{0, 0, networkPositions.size()};
+
+  for (auto const& position : networkPositions) {
+    auto const& wireEntityState = m_workingWireEntities.get(position);
+    hashCombine(signature.topologyHash, hashOf(position));
+    hashCombine(signature.outputHash, hashOf(position));
+
+    for (auto direction : {WireDirection::Input, WireDirection::Output}) {
+      auto nodeCount = wireEntityState.wireEntity->nodeCount(direction);
+      hashCombine(signature.topologyHash, hashOf(direction, nodeCount));
+      for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
+        auto connections = wireEntityState.wireEntity->connectionsForNode({direction, nodeIndex});
+        connections.sort([](WireConnection const& lhs, WireConnection const& rhs) {
+            return tie(lhs.entityLocation[0], lhs.entityLocation[1], lhs.nodeIndex) < tie(rhs.entityLocation[0], rhs.entityLocation[1], rhs.nodeIndex);
+          });
+        hashCombine(signature.topologyHash, hashOf(direction, nodeIndex, connections.size()));
+        for (auto const& connection : connections)
+          hashCombine(signature.topologyHash, hashOf(direction, nodeIndex, connection.entityLocation, connection.nodeIndex));
+      }
+    }
+
+    for (size_t nodeIndex = 0; nodeIndex < wireEntityState.outputStates.size(); ++nodeIndex)
+      hashCombine(signature.outputHash, hashOf(nodeIndex, wireEntityState.outputStates[nodeIndex]));
+  }
+
+  return signature;
 }
 
 }
