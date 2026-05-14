@@ -485,6 +485,14 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6MutationParallelismBlockedByDependencyGateSubsystems |= phase6Stats.mutationParallelismBlockedByDependencyGateSubsystems;
           status.phase6MutationParallelismBlockedByModVisibilityGateSubsystems |= phase6Stats.mutationParallelismBlockedByModVisibilityGateSubsystems;
           status.phase6MutationParallelismBlockedByImplementationGateSubsystems |= phase6Stats.mutationParallelismBlockedByImplementationGateSubsystems;
+          status.phase6MutationParallelismWorkerSubsystems |= phase6Stats.mutationParallelismWorkerSubsystems;
+          status.phase6MutationWorkerTicks += phase6Stats.mutationWorkerTicks;
+          status.phase6MutationWorkerJobs += phase6Stats.mutationWorkerJobs;
+          status.phase6MutationWorkerMicroseconds += phase6Stats.mutationWorkerMicroseconds;
+          status.phase6MutationWorkerMergeMicroseconds += phase6Stats.mutationWorkerMergeMicroseconds;
+          status.phase6MutationWorkerDifferentialChecks += phase6Stats.mutationWorkerDifferentialChecks;
+          status.phase6MutationWorkerDivergences += phase6Stats.mutationWorkerDivergences;
+          status.phase6MutationWorkerFallbacks += phase6Stats.mutationWorkerFallbacks;
 
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);

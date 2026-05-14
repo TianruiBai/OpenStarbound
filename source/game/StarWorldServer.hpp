@@ -147,6 +147,14 @@ public:
     uint32_t mutationParallelismBlockedByDependencyGateSubsystems = 0;
     uint32_t mutationParallelismBlockedByModVisibilityGateSubsystems = 0;
     uint32_t mutationParallelismBlockedByImplementationGateSubsystems = 0;
+    uint32_t mutationParallelismWorkerSubsystems = 0;
+    uint64_t mutationWorkerTicks = 0;
+    uint64_t mutationWorkerJobs = 0;
+    uint64_t mutationWorkerMicroseconds = 0;
+    uint64_t mutationWorkerMergeMicroseconds = 0;
+    uint64_t mutationWorkerDifferentialChecks = 0;
+    uint64_t mutationWorkerDivergences = 0;
+    uint64_t mutationWorkerFallbacks = 0;
     uint64_t liquidBaselineTicks = 0;
     uint64_t liquidActiveCells = 0;
     uint64_t liquidMonitoringRegions = 0;
@@ -638,6 +646,8 @@ private:
   bool m_phase6PacketPreparationSectorPrefillDifferentialCheck;
   bool m_phase6SubsystemBaselineMetricsEnabled;
   bool m_phase6MutationFixedSeedSignaturesEnabled;
+  size_t m_phase6MutationParallelismWorkerThreads;
+  uint32_t m_phase6MutationWorkerSubsystems;
   bool m_skipEmptyEntityUpdateSets;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
   HashMap<ServerTileSectorArray::Sector, HashSet<ConnectionId>> m_sectorClientSubscriptions;

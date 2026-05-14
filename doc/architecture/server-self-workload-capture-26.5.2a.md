@@ -116,7 +116,7 @@ Entry points:
 
 Preparation rule: keep mutation order serial. The current liquid cache skip is safe because unchanged monitoring regions rebuild an equivalent bucket map. Any future per-cell dirty or mutation experiment needs fixed-seed signatures over active cells, boundary cells, liquid interactions, pending falling positions, processed positions, and moved blocks.
 
-Current preflight slice: `mutationParallelismFixedSeedSignatures=true` now enables deterministic preflight seeds for liquid and falling-block random sources and records serial liquid active-cell/region signatures plus falling pending, processed, moved, and next-pending signatures. This is diagnostic coverage only; boundary/interactions/final-flow signatures and dependency-region classification are still required before worker mutation can graduate.
+Current preflight slice: `mutationParallelismFixedSeedSignatures=true` now enables deterministic preflight seeds for liquid and falling-block random sources and records serial liquid active-cell/region signatures plus falling pending, processed, moved, and next-pending signatures. If liquid, falling-block, or wiring mutation flags are also requested and the dependency-analysis and mod-visibility gates are explicitly enabled, Phase 6 now runs immutable shadow-worker signature jobs and compares them with the owner-thread serial signature. This validates worker scheduling and divergence/fallback counters, not live off-thread mutation. Boundary/interactions/final-flow signatures and dependency-region classification are still required before worker mutation can graduate.
 
 ### Entity And Lua Mutation
 
@@ -127,7 +127,41 @@ Entry points:
 - `WorldServer` script context update loop
 - `LuaUpdatableComponent`
 
-Preparation rule: entity and Lua mutation remain blocked by the existing fixed-seed, dependency-analysis, mod-visibility, and implementation gates. The current safe step is attribution, not parallel mutation: entity phase metrics now split pointer-copy, sort, update callback, and metadata-refresh costs; Lua metrics now record total script-context update time and the maximum single context update time without exposing unbounded per-context names.
+Preparation rule: entity and Lua mutation remain blocked by the implementation gate. The current safe step is attribution, not parallel mutation: entity phase metrics now split pointer-copy, sort, update callback, and metadata-refresh costs; Lua metrics now record total script-context update time and the maximum single context update time without exposing unbounded per-context names.
+
+Research path for entity/Lua optimization:
+
+1. Keep the legacy entity and Lua update phases serial and exact-order by default.
+2. Add bounded per-entity-type and per-script-context attribution before any behavior change, so mod-heavy worlds can identify whether AI, objects, status effects, or global scripts are dominant.
+3. Define mechanism-compatible script capabilities for snapshot reads, batched queries, and phase-boundary deferred writes. Legacy APIs continue to see immediate owner-thread behavior.
+4. Allow worker execution only for pure read/snapshot work or explicit deferred command buffers, with serial owner-thread merge and fallback when a legacy-sensitive API is used.
+5. Treat any Lua API that exposes immediate mutation order, entity iteration order, random-source behavior, or world callbacks as a mod-visibility blocker until an opt-in compatibility contract exists.
+
+### Asset And Mod Loading
+
+Entry points:
+
+- `Assets::Assets`
+- `Assets::queueAssets`
+- `Assets::workerMain`
+- `Assets::applyJsonPatches`
+- `Assets::applyImagePatches`
+
+Research finding: the asset system already starts worker threads for queued asset loads and post-processing after source registration and preload setup. The higher-risk startup work is deterministic source registration, patch-source ordering, `onLoad` and `postLoad` Lua scripts, Lua patch contexts, and cache invalidation after load scripts. Mods can depend on source priority, patch order, and Lua-generated memory assets, so startup parallelism must merge results in the same source order and keep load scripts serial unless a future mod contract says otherwise.
+
+Safe candidates:
+
+- enumerate directory/packed source asset paths in parallel, then merge by configured source order
+- parse independent JSON patch files or frame specifications into immutable intermediate data, then apply patches in existing order
+- increase or tune queued asset preload breadth for images/audio/bytes where `Assets::workerMain` already owns the load/post-process queue
+- add startup diagnostics for source scan time, patch parse time, load-script time, preload queue depth, worker load/post counts, and Lua patch lock time
+
+Keep serial until a stronger contract exists:
+
+- `onLoad` and `postLoad` Lua scripts that call `assets.add`, `assets.patch`, or `assets.erase`
+- patch application order for `.patch`, `.patchlist`, numbered patches, and `.patch.lua`
+- mutation of `m_files`, `m_filesByExtension`, memory asset sources, and Lua patch context caches
+- any loading path that calls into Lua callbacks sharing the current `LuaEngine` and `m_luaMutex`
 
 ## Next Harness Extensions
 
@@ -136,6 +170,7 @@ Preparation rule: entity and Lua mutation remain blocked by the existing fixed-s
 3. Expand the falling-material fixture into a taller or cascading stress case before changing falling-block behavior.
 4. Add a save/disconnect-style workload that captures repeated `sync()` plus `readChunks()` under dirty and unchanged sectors.
 5. Add an A/B variant for default queue-only networking versus `queueOnlyConnectionSend=false` once the mechanism workload is lifted into a full `UniverseServer` dummy-client path.
+6. Add an asset/mod startup capture that records source enumeration, patch parse/application, load-script, preload, and queued worker timings for a vanilla asset set and at least one modpack smoke set.
 
 ## Go/No-Go For Compatibility-Sensitive Work
 

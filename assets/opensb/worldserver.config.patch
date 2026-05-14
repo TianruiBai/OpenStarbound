@@ -17,6 +17,7 @@
     "entityMutationParallelism" : false,
     "luaMutationParallelism" : false,
     "mutationParallelismFixedSeedSignatures" : false,
+    "mutationParallelismWorkerThreads" : 2,
     "mutationParallelismDependencyAnalysis" : false,
     "mutationParallelismModVisibilityContract" : false
   }

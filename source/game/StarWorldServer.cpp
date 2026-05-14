@@ -35,6 +35,32 @@ namespace {
 uint64_t const Phase6LiquidFixedSeed = 0x2652A11A51A7E5D1ULL;
 uint64_t const Phase6FallingBlocksFixedSeed = 0x2652FA11B10C5EEDULL;
 
+struct Phase6MutationSignatureWorkItem {
+  uint32_t subsystem;
+  uint64_t workCount;
+  uint64_t signatureA;
+  uint64_t signatureB;
+  uint64_t signatureC;
+  uint64_t signatureD;
+};
+
+struct Phase6MutationSignatureWorkerResult {
+  uint32_t subsystem;
+  uint64_t serialSignature;
+  uint64_t workerSignature;
+  uint64_t workerMicroseconds;
+};
+
+uint64_t phase6MutationSignature(Phase6MutationSignatureWorkItem const& item) {
+  size_t hash = item.subsystem;
+  hashCombine(hash, static_cast<size_t>(item.workCount));
+  hashCombine(hash, static_cast<size_t>(item.signatureA));
+  hashCombine(hash, static_cast<size_t>(item.signatureB));
+  hashCombine(hash, static_cast<size_t>(item.signatureC));
+  hashCombine(hash, static_cast<size_t>(item.signatureD));
+  return hash;
+}
+
 Json readWorldServerConfig() {
   auto& root = Root::singleton();
   auto worldServerConfig = root.assets()->json("/worldserver.config");
@@ -1083,6 +1109,42 @@ void WorldServer::update(float dt) {
   List<WorldAction> triggeredActions;
   List<EntityId> toRemove;
   WorldTickSnapshot tickSnapshot;
+  List<WorkerPoolPromise<Phase6MutationSignatureWorkerResult>> mutationSignatureWorkerPromises;
+
+  auto queueMutationSignatureWorker = [&](Phase6MutationSignatureWorkItem workItem) {
+    if (!(m_phase6MutationWorkerSubsystems & workItem.subsystem) || m_phase6WorkerPool.getWorkerCount() <= 1)
+      return;
+
+    auto serialSignature = phase6MutationSignature(workItem);
+    mutationSignatureWorkerPromises.append(m_phase6WorkerPool.addProducer<Phase6MutationSignatureWorkerResult>([workItem, serialSignature]() {
+        auto workerStart = Time::monotonicMicroseconds();
+        auto workerSignature = phase6MutationSignature(workItem);
+        return Phase6MutationSignatureWorkerResult{workItem.subsystem, serialSignature, workerSignature, static_cast<uint64_t>(Time::monotonicMicroseconds() - workerStart)};
+      }));
+    m_phase6WorldParallelismStats.mutationWorkerJobs += 1;
+  };
+
+  auto collectMutationSignatureWorkers = [&]() {
+    if (mutationSignatureWorkerPromises.empty())
+      return;
+
+    auto mergeStart = Time::monotonicMicroseconds();
+    m_phase6WorldParallelismStats.mutationWorkerTicks += 1;
+    for (auto& promise : mutationSignatureWorkerPromises) {
+      try {
+        auto const& result = promise.get();
+        m_phase6WorldParallelismStats.mutationWorkerMicroseconds += result.workerMicroseconds;
+        m_phase6WorldParallelismStats.mutationWorkerDifferentialChecks += 1;
+        if (result.serialSignature != result.workerSignature) {
+          m_phase6WorldParallelismStats.mutationWorkerDivergences += 1;
+          m_phase6WorldParallelismStats.mutationWorkerFallbacks += 1;
+        }
+      } catch (std::exception const&) {
+        m_phase6WorldParallelismStats.mutationWorkerFallbacks += 1;
+      }
+    }
+    m_phase6WorldParallelismStats.mutationWorkerMergeMicroseconds += Time::monotonicMicroseconds() - mergeStart;
+  };
 
   timePhase(UpdateTimingPhase::FrameStart, [&]() {
     m_currentTime += dt;
@@ -1184,6 +1246,12 @@ void WorldServer::update(float dt) {
         m_phase6WorldParallelismStats.wiringSignatureTicks += 1;
         recordPhase6Signature(m_phase6WorldParallelismStats.wiringTopologySignatureHash, wiringStats.topologySignatureHash);
         recordPhase6Signature(m_phase6WorldParallelismStats.wiringOutputSignatureHash, wiringStats.outputSignatureHash);
+        queueMutationSignatureWorker(Phase6MutationSignatureWorkItem{WiringMutationParallelismSubsystem,
+            wiringStats.networkSignatureChecks,
+            wiringStats.topologySignatureHash,
+            wiringStats.outputSignatureHash,
+            wiringStats.cleanNetworkSignatures,
+            wiringStats.dirtyNetworkSignatures});
       }
       if (m_phase6SubsystemBaselineMetricsEnabled) {
         m_phase6WorldParallelismStats.wiringBaselineTicks += 1;
@@ -1230,6 +1298,12 @@ void WorldServer::update(float dt) {
         m_phase6WorldParallelismStats.liquidSignatureActiveCells += liquidSignature.activeCellCount;
         recordPhase6Signature(m_phase6WorldParallelismStats.liquidSignatureActiveCellHash, liquidSignature.activeCellHash);
         recordPhase6Signature(m_phase6WorldParallelismStats.liquidSignatureRegionHash, liquidSignature.noProcessingLimitRegionHash);
+        queueMutationSignatureWorker(Phase6MutationSignatureWorkItem{LiquidMutationParallelismSubsystem,
+            liquidSignature.activeCellCount,
+            liquidSignature.activeCellHash,
+            liquidSignature.noProcessingLimitRegionHash,
+            static_cast<uint64_t>(tickSnapshot.monitoringRegions.size()),
+            static_cast<uint64_t>(m_liquidEngine->activeCells())});
       }
       if (m_phase6SubsystemBaselineMetricsEnabled) {
         auto liquidRegionCacheStatsAfter = m_liquidEngine->noProcessingLimitRegionCacheStats();
@@ -1256,6 +1330,12 @@ void WorldServer::update(float dt) {
         recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksProcessedPositionSignature, fallingBlocksStats.processedPositionSignature);
         recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksMovedBlockSignature, fallingBlocksStats.movedBlockSignature);
         recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksNextPendingPositionSignature, fallingBlocksStats.nextPendingPositionSignature);
+        queueMutationSignatureWorker(Phase6MutationSignatureWorkItem{FallingBlockMutationParallelismSubsystem,
+            fallingBlocksStats.processedPositions,
+            fallingBlocksStats.pendingPositionSignature,
+            fallingBlocksStats.processedPositionSignature,
+            fallingBlocksStats.movedBlockSignature,
+            fallingBlocksStats.nextPendingPositionSignature});
       }
       if (m_phase6SubsystemBaselineMetricsEnabled || m_phase6MutationFixedSeedSignaturesEnabled)
         m_phase6WorldParallelismStats.fallingBlocksNextPendingPositions += fallingBlocksStats.nextPendingPositions;
@@ -1267,6 +1347,8 @@ void WorldServer::update(float dt) {
       }
     }
   });
+
+  collectMutationSignatureWorkers();
 
   timePhase(UpdateTimingPhase::BlockDamage, [&]() {
     if (auto delta = shouldRunThisStep("blockDamageUpdate"))
@@ -2078,6 +2160,7 @@ void WorldServer::init(bool firstTime) {
   m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
   m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
   m_phase6MutationFixedSeedSignaturesEnabled = phase6Config.getBool("mutationParallelismFixedSeedSignatures", false);
+  m_phase6MutationParallelismWorkerThreads = phase6Config.getUInt("mutationParallelismWorkerThreads", 2);
   m_skipEmptyEntityUpdateSets = m_serverConfig.getBool("skipEmptyEntityUpdateSets", false);
   uint32_t mutationParallelismRequestedSubsystems = 0;
   if (phase6Config.getBool("liquidMutationParallelism", false))
@@ -2094,6 +2177,12 @@ void WorldServer::init(bool firstTime) {
   bool mutationFixedSeedGate = m_phase6MutationFixedSeedSignaturesEnabled;
   bool mutationDependencyGate = phase6Config.getBool("mutationParallelismDependencyAnalysis", false);
   bool mutationModVisibilityGate = phase6Config.getBool("mutationParallelismModVisibilityContract", false);
+  uint32_t mutationWorkerEligibleSubsystems = LiquidMutationParallelismSubsystem | FallingBlockMutationParallelismSubsystem | WiringMutationParallelismSubsystem;
+  if (mutationFixedSeedGate && mutationDependencyGate && mutationModVisibilityGate)
+    m_phase6MutationWorkerSubsystems = mutationParallelismRequestedSubsystems & mutationWorkerEligibleSubsystems;
+  else
+    m_phase6MutationWorkerSubsystems = 0;
+  uint32_t mutationImplementationBlockedSubsystems = mutationParallelismRequestedSubsystems & ~m_phase6MutationWorkerSubsystems;
   m_phase6WorldParallelismStats.storageGenerationPlanningEnabled = m_phase6StorageGenerationPlanningEnabled;
   m_phase6WorldParallelismStats.storageGenerationPlanningDifferentialCheckEnabled = m_phase6StorageGenerationPlanningDifferentialCheck;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillEnabled = m_phase6PacketPreparationSectorPrefillEnabled;
@@ -2104,17 +2193,20 @@ void WorldServer::init(bool firstTime) {
   m_phase6WorldParallelismStats.mutationParallelismBlockedByFixedSeedGate = mutationParallelismRequested && !mutationFixedSeedGate;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByDependencyGate = mutationParallelismRequested && !mutationDependencyGate;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByModVisibilityGate = mutationParallelismRequested && !mutationModVisibilityGate;
-  m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGate = mutationParallelismRequested;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGate = mutationImplementationBlockedSubsystems != 0;
   m_phase6WorldParallelismStats.mutationParallelismRequestedSubsystems = mutationParallelismRequestedSubsystems;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByFixedSeedGateSubsystems = mutationFixedSeedGate ? 0 : mutationParallelismRequestedSubsystems;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByDependencyGateSubsystems = mutationDependencyGate ? 0 : mutationParallelismRequestedSubsystems;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByModVisibilityGateSubsystems = mutationModVisibilityGate ? 0 : mutationParallelismRequestedSubsystems;
-  m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGateSubsystems = mutationParallelismRequestedSubsystems;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGateSubsystems = mutationImplementationBlockedSubsystems;
+  m_phase6WorldParallelismStats.mutationParallelismWorkerSubsystems = m_phase6MutationWorkerSubsystems;
   size_t phase6WorkerThreads = 0;
   if (m_phase6StorageGenerationPlanningEnabled)
     phase6WorkerThreads = max(phase6WorkerThreads, m_phase6StorageGenerationPlanningWorkerThreads);
   if (m_phase6PacketPreparationSectorPrefillEnabled)
     phase6WorkerThreads = max(phase6WorkerThreads, m_phase6PacketPreparationSectorPrefillWorkerThreads);
+  if (m_phase6MutationWorkerSubsystems != 0)
+    phase6WorkerThreads = max(phase6WorkerThreads, m_phase6MutationParallelismWorkerThreads);
   if (phase6WorkerThreads > 1)
     m_phase6WorkerPool.start(phase6WorkerThreads);
   else

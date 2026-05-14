@@ -39,7 +39,8 @@ Current checklist:
 12. Done: narrow core `SocketPoller` API seed for readable/writable interests, unregister, wake, timed waits, and ready socket handles, with focused loopback TCP coverage and no runtime network-worker integration yet.
 13. Done: dirty wiring-network signature prototype under the existing serial full-scan fallback, reporting clean versus dirty topology/output signatures and clean/dirty entity counts for future skip eligibility.
 14. Done: first opt-in fixed-seed mutation-signature preflight for liquid, falling blocks, and wiring under `mutationParallelismFixedSeedSignatures`, including deterministic random seeds for that preflight mode, serial signature diagnostics, and focused stability coverage. This is still a gate artifact, not mutation parallelism.
-15. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
+15. Done: first opt-in mutation shadow-worker slice for liquid, falling blocks, and wiring. When the subsystem flag, fixed-seed signature gate, dependency-analysis gate, and mod-visibility gate are all explicitly enabled, the Phase 6 worker pool now runs immutable signature jobs and compares them against the serial owner-thread signature with visible worker/check/divergence/fallback counters. Entity and Lua requests remain implementation-blocked.
+16. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
 
 ## 2. Current Bottleneck Statement
 
@@ -48,7 +49,7 @@ The remaining jam is a hot authoritative world thread:
 - one `WorldServerThread` still owns one `WorldServer::update()` sequence
 - entity updates, Lua/script contexts, damage, wiring, liquid, falling blocks, storage tick/generation, entity removal, and packet ordering decisions remain serial
 - Phase 0-6 has relieved surrounding pressure, especially handshakes, async persistence, connection-worker ownership, packet-sector prefill, storage-generation planning, and diagnostics
-- Phase 6 mutation-parallelism flags are correctly blocked until fixed-seed signatures, dependency analysis, mod-visibility contracts, and differential checks exist
+- Phase 6 mutation-parallelism flags now either remain blocked by explicit gates or, for liquid/falling/wiring only, run shadow-worker signature checks after fixed-seed, dependency-analysis, and mod-visibility gates are all enabled
 
 The practical goal for `26.5.2a` is therefore not full single-world multicore scaling. The goal is to reduce the serial work that does not need to be serial, then prepare the data contracts needed for later subsystem experiments.
 
@@ -193,15 +194,17 @@ Priority tickets:
 1. Started: liquid fixed-seed signature preflight now records active-cell count/hash and no-processing-limit region hash under the existing serial update path when `mutationParallelismFixedSeedSignatures=true`. Boundary/interactions/final-flow signatures remain future expansion before any liquid worker can graduate.
 2. Started: falling-block fixed-seed signature preflight now records pending-position, processed-position, moved-block, and next-pending signatures under the existing serial update path when `mutationParallelismFixedSeedSignatures=true`. Dependency-region classification remains future expansion before any falling-block worker can graduate.
 3. Started: wiring signature preflight now exposes aggregate loaded-network topology and output hashes in addition to the existing clean/dirty network counters. Dirty-component skip or worker evaluation still requires differential output checks and fallback behavior.
-4. Region/component boundary stress tests for each subsystem.
-5. Done: compatibility-sensitive entity/Lua attribution. `subsystemBaselineMetrics` now reports entity iteration copy/sort/update/metadata-refresh timing and bounded Lua script-context update timing while preserving the serial execution path.
-6. Done: per-subsystem gate reporting. `/serverstatus` and `/worldstats` now render requested mutation experiments and fixed-seed, dependency-analysis, mod-visibility, and implementation blockers as subsystem names, e.g. `liquid|entity`, instead of only coarse booleans.
+4. Started: opt-in mutation shadow workers now run immutable signature jobs for liquid, falling blocks, and wiring when all explicit gates are enabled. This proves worker-pool wiring, diagnostics, and serial comparison behavior; it does not move live subsystem mutation off the world owner thread yet.
+5. Region/component boundary stress tests for each subsystem.
+6. Done: compatibility-sensitive entity/Lua attribution. `subsystemBaselineMetrics` now reports entity iteration copy/sort/update/metadata-refresh timing and bounded Lua script-context update timing while preserving the serial execution path.
+7. Done: per-subsystem gate reporting. `/serverstatus` and `/worldstats` now render requested mutation experiments, active shadow-worker subsystems, fixed-seed/dependency/mod-visibility blockers, implementation blockers, and worker/check/divergence/fallback counters.
 
 Must-ship acceptance:
 
 - mutation parallelism remains default-disabled
 - serial baseline metrics remain default-enabled
 - every experiment can fall back to serial on divergence or unsupported mod/API use
+- worker jobs consume immutable signatures or snapshots only; live liquid, falling-block, wiring, entity, Lua, or storage state stays on the owner thread
 - entity and Lua mutation stay research-only
 
 ## 11. Release Tiers

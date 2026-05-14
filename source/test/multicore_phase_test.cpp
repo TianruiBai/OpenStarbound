@@ -1433,6 +1433,7 @@ TEST(MulticorePhaseTest, Phase6MutationParallelismRequiresExplicitGates) {
     EXPECT_EQ(stats.mutationParallelismBlockedByDependencyGateSubsystems, expectedSubsystems);
     EXPECT_EQ(stats.mutationParallelismBlockedByModVisibilityGateSubsystems, expectedSubsystems);
     EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismWorkerSubsystems, 0u);
   }
 
   {
@@ -1452,6 +1453,8 @@ TEST(MulticorePhaseTest, Phase6MutationParallelismRequiresExplicitGates) {
     WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
     uint32_t expectedSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::FallingBlockMutationParallelismSubsystem | WorldServer::WiringMutationParallelismSubsystem | WorldServer::EntityMutationParallelismSubsystem | WorldServer::LuaMutationParallelismSubsystem;
+    uint32_t expectedWorkerSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::FallingBlockMutationParallelismSubsystem | WorldServer::WiringMutationParallelismSubsystem;
+    uint32_t expectedBlockedSubsystems = WorldServer::EntityMutationParallelismSubsystem | WorldServer::LuaMutationParallelismSubsystem;
     EXPECT_TRUE(stats.mutationParallelismRequested);
     EXPECT_FALSE(stats.mutationParallelismBlockedByFixedSeedGate);
     EXPECT_FALSE(stats.mutationParallelismBlockedByDependencyGate);
@@ -1461,8 +1464,45 @@ TEST(MulticorePhaseTest, Phase6MutationParallelismRequiresExplicitGates) {
     EXPECT_EQ(stats.mutationParallelismBlockedByFixedSeedGateSubsystems, 0u);
     EXPECT_EQ(stats.mutationParallelismBlockedByDependencyGateSubsystems, 0u);
     EXPECT_EQ(stats.mutationParallelismBlockedByModVisibilityGateSubsystems, 0u);
-    EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, expectedBlockedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismWorkerSubsystems, expectedWorkerSubsystems);
   }
+}
+
+TEST(MulticorePhaseTest, Phase6MutationWorkersRunAfterExplicitGates) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"packetPreparationSectorPrefill", false},
+      {"subsystemBaselineMetrics", false},
+      {"liquidMutationParallelism", true},
+      {"fallingBlockMutationParallelism", true},
+      {"wiringMutationParallelism", true},
+      {"mutationParallelismFixedSeedSignatures", true},
+      {"mutationParallelismWorkerThreads", 2},
+      {"mutationParallelismDependencyAnalysis", true},
+      {"mutationParallelismModVisibilityContract", true}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.initLua(nullptr);
+  worldServer.generateRegion(RectI::withSize(Vec2I(20, 20), Vec2I(24, 24)));
+
+  WorldServer::Phase6WorldParallelismStats stats;
+  for (size_t i = 0; i < 120; ++i) {
+    worldServer.update(1.0f / 60.0f);
+    stats = worldServer.phase6WorldParallelismStats();
+  }
+
+  uint32_t expectedWorkerSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::FallingBlockMutationParallelismSubsystem | WorldServer::WiringMutationParallelismSubsystem;
+  EXPECT_EQ(stats.mutationParallelismWorkerSubsystems, expectedWorkerSubsystems);
+  EXPECT_FALSE(stats.mutationParallelismBlockedByImplementationGate);
+  EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, 0u);
+  EXPECT_GT(stats.mutationWorkerTicks, 0u);
+  EXPECT_GT(stats.mutationWorkerJobs, 0u);
+  EXPECT_EQ(stats.mutationWorkerDifferentialChecks, stats.mutationWorkerJobs);
+  EXPECT_EQ(stats.mutationWorkerDivergences, 0u);
+  EXPECT_EQ(stats.mutationWorkerFallbacks, 0u);
 }
 
 TEST(MulticorePhaseTest, Phase6PacketSectorPrefillIsGuarded) {

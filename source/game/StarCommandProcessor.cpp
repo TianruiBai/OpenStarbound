@@ -528,6 +528,15 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       mutationSubsystemSummary(status.phase6MutationParallelismBlockedByDependencyGateSubsystems),
       mutationSubsystemSummary(status.phase6MutationParallelismBlockedByModVisibilityGateSubsystems),
       mutationSubsystemSummary(status.phase6MutationParallelismBlockedByImplementationGateSubsystems)));
+  lines.append(strf("Phase 6 mutation workers: subsystems={}, ticks={}, jobs={}, workerUs={}, mergeUs={}, checks={}, divergences={}, fallbacks={}",
+      mutationSubsystemSummary(status.phase6MutationParallelismWorkerSubsystems),
+      status.phase6MutationWorkerTicks,
+      status.phase6MutationWorkerJobs,
+      status.phase6MutationWorkerMicroseconds,
+      status.phase6MutationWorkerMergeMicroseconds,
+      status.phase6MutationWorkerDifferentialChecks,
+      status.phase6MutationWorkerDivergences,
+      status.phase6MutationWorkerFallbacks));
   lines.append(strf("Persistence: asyncEnabled={}, pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceAsyncEnabled,
       status.persistenceBatchesPending,
@@ -579,7 +588,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} entityUpdateSets:{}/{}/{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{}/{}/{}/{}/{} dirty:{}/{}/{}/{}/{}/{}/{} entity:{}/{}/{}/{}/{}/{}/{}/{}/{}/{} lua:{}/{}/{}/{}/{} signatures:liquid:{}/{}/{}/{} falling:{}/{}/{}/{}/{} wiring:{}/{}/{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} entityUpdateSets:{}/{}/{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{}/{}/{}/{}/{} dirty:{}/{}/{}/{}/{}/{}/{} entity:{}/{}/{}/{}/{}/{}/{}/{}/{}/{} lua:{}/{}/{}/{}/{} signatures:liquid:{}/{}/{}/{} falling:{}/{}/{}/{}/{} wiring:{}/{}/{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{} worker:{} ticks:{} jobs:{} us:{}/{} checks:{} divergences:{} fallbacks:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -673,7 +682,15 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         mutationSubsystemSummary(phase6.mutationParallelismBlockedByFixedSeedGateSubsystems),
         mutationSubsystemSummary(phase6.mutationParallelismBlockedByDependencyGateSubsystems),
         mutationSubsystemSummary(phase6.mutationParallelismBlockedByModVisibilityGateSubsystems),
-        mutationSubsystemSummary(phase6.mutationParallelismBlockedByImplementationGateSubsystems)));
+        mutationSubsystemSummary(phase6.mutationParallelismBlockedByImplementationGateSubsystems),
+        mutationSubsystemSummary(phase6.mutationParallelismWorkerSubsystems),
+        phase6.mutationWorkerTicks,
+        phase6.mutationWorkerJobs,
+        phase6.mutationWorkerMicroseconds,
+        phase6.mutationWorkerMergeMicroseconds,
+        phase6.mutationWorkerDifferentialChecks,
+        phase6.mutationWorkerDivergences,
+        phase6.mutationWorkerFallbacks));
 
     StringList threadTimingParts;
     for (auto const& timing : world.threadTimings) {

@@ -184,6 +184,14 @@ public:
     uint32_t phase6MutationParallelismBlockedByDependencyGateSubsystems;
     uint32_t phase6MutationParallelismBlockedByModVisibilityGateSubsystems;
     uint32_t phase6MutationParallelismBlockedByImplementationGateSubsystems;
+    uint32_t phase6MutationParallelismWorkerSubsystems;
+    uint64_t phase6MutationWorkerTicks;
+    uint64_t phase6MutationWorkerJobs;
+    uint64_t phase6MutationWorkerMicroseconds;
+    uint64_t phase6MutationWorkerMergeMicroseconds;
+    uint64_t phase6MutationWorkerDifferentialChecks;
+    uint64_t phase6MutationWorkerDivergences;
+    uint64_t phase6MutationWorkerFallbacks;
     bool networkQueueOnlySends;
     size_t networkWorkers;
     size_t networkOwnedConnections;
