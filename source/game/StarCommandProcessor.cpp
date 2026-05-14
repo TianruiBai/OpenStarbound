@@ -443,12 +443,13 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6PacketPreparationSectorPrefillDifferentialChecks,
       status.phase6PacketPreparationSectorPrefillDifferentialMicroseconds,
       status.phase6PacketPreparationSectorPrefillDivergences));
-  lines.append(strf("Phase 6 subsystem baselines: enabledWorlds={}, liquidTicks={}, liquidActiveCells={}, liquidRegions={}, liquidCache={}/{}/{}/{}/{}/{}, fallingTicks={}, fallingPending={}, fallingProcessed={}, fallingMoved={}, wiringTicks={}, wiringInitial={}, wiringLoaded={}, wiringNetworkLoads={}, wiringEvaluated={}, entityTicks={}, entityUpdated={}, entityTile={}, entityDestroyed={}, luaTicks={}, luaContexts={}, luaUpdates={}",
+    lines.append(strf("Phase 6 subsystem baselines: enabledWorlds={}, liquidTicks={}, liquidActiveCells={}, liquidRegions={}, liquidCache={}/{}/{}/{}/{}/{}/{}, fallingTicks={}, fallingPending={}, fallingProcessed={}, fallingMoved={}, wiringTicks={}, wiringInitial={}, wiringLoaded={}, wiringNetworkLoads={}, wiringEvaluated={}, entityTicks={}, entityUpdated={}, entityTile={}, entityDestroyed={}, luaTicks={}, luaContexts={}, luaUpdates={}",
       status.phase6SubsystemBaselineMetricsEnabledWorlds,
       status.phase6LiquidBaselineTicks,
       status.phase6LiquidActiveCells,
       status.phase6LiquidMonitoringRegions,
       status.phase6LiquidNoProcessingLimitRegionCacheBuilds,
+      status.phase6LiquidNoProcessingLimitRegionCacheRebuildSkips,
       status.phase6LiquidNoProcessingLimitRegionCacheRegions,
       status.phase6LiquidNoProcessingLimitRegionCacheBuckets,
       status.phase6LiquidNoProcessingLimitRegionCacheLookups,
@@ -521,7 +522,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -561,6 +562,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         phase6.packetPreparationSectorPrefillDivergences,
         phase6.liquidBaselineTicks,
         phase6.liquidNoProcessingLimitRegionCacheBuilds,
+        phase6.liquidNoProcessingLimitRegionCacheRebuildSkips,
         phase6.liquidNoProcessingLimitRegionCacheRegions,
         phase6.liquidNoProcessingLimitRegionCacheBuckets,
         phase6.liquidNoProcessingLimitRegionCacheLookups,

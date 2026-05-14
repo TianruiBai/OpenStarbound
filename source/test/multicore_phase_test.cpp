@@ -4,6 +4,7 @@
 #include "StarFile.hpp"
 #include "StarItemDrop.hpp"
 #include "StarLiquidsDatabase.hpp"
+#include "StarMaterialDatabase.hpp"
 #include "StarNetPackets.hpp"
 #include "StarRoot.hpp"
 #include "StarTime.hpp"
@@ -14,6 +15,8 @@
 #include "StarWorldServerThread.hpp"
 
 #include "gtest/gtest.h"
+
+#include <iostream>
 
 using namespace Star;
 
@@ -221,6 +224,273 @@ size_t packetTypeCount(List<PacketPtr> const& packets, PacketType packetType) {
   return count;
 }
 
+struct PacketCaptureCounts {
+  uint64_t total = 0;
+  uint64_t stepUpdates = 0;
+  uint64_t tileArrays = 0;
+  uint64_t tileUpdates = 0;
+  uint64_t liquidUpdates = 0;
+  uint64_t tileDamageUpdates = 0;
+  uint64_t entityCreates = 0;
+  uint64_t entityUpdates = 0;
+  uint64_t entityDestroys = 0;
+  uint64_t giveItems = 0;
+  uint64_t modificationFailures = 0;
+};
+
+LiquidId firstTestLiquidId();
+Maybe<MaterialId> firstTestMaterialId();
+Maybe<MaterialId> firstTestFallingMaterialId();
+
+void addPacketCaptureCounts(PacketCaptureCounts& counts, List<PacketPtr> const& packets) {
+  counts.total += packets.size();
+  for (auto const& packet : packets) {
+    switch (packet->type()) {
+      case PacketType::StepUpdate:
+        counts.stepUpdates += 1;
+        break;
+      case PacketType::TileArrayUpdate:
+        counts.tileArrays += 1;
+        break;
+      case PacketType::TileUpdate:
+        counts.tileUpdates += 1;
+        break;
+      case PacketType::TileLiquidUpdate:
+        counts.liquidUpdates += 1;
+        break;
+      case PacketType::TileDamageUpdate:
+        counts.tileDamageUpdates += 1;
+        break;
+      case PacketType::EntityCreate:
+        counts.entityCreates += 1;
+        break;
+      case PacketType::EntityUpdateSet:
+        counts.entityUpdates += 1;
+        break;
+      case PacketType::EntityDestroy:
+        counts.entityDestroys += 1;
+        break;
+      case PacketType::GiveItem:
+        counts.giveItems += 1;
+        break;
+      case PacketType::TileModificationFailure:
+        counts.modificationFailures += 1;
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+struct GameMechanismWorkloadCapture {
+  size_t clients = 0;
+  size_t ticks = 0;
+  size_t chunks = 0;
+  int64_t elapsedMicroseconds = 0;
+  PacketCaptureCounts packets;
+  WorldServer::PacketPreparationStats packetPreparationStats;
+  WorldServer::Phase6WorldParallelismStats phase6Stats;
+  WorldStorageTimingStats storageTimingStats;
+};
+
+bool setSelfWorkloadForegroundMaterial(WorldServer& worldServer, Vec2I const& position, MaterialId materialId) {
+  auto tile = worldServer.modifyServerTile(position, true);
+  if (!tile)
+    return false;
+
+  tile->foreground = materialId;
+  tile->foregroundMod = NoModId;
+  tile->foregroundHueShift = 0;
+  tile->foregroundColorVariant = DefaultMaterialColorVariant;
+  tile->dungeonId = ConstructionDungeonId;
+
+  if (materialId == EmptyMaterialId)
+    tile->updateCollision(CollisionKind::None);
+  else
+    tile->updateCollision(Root::singleton().materialDatabase()->materialCollisionKind(materialId));
+
+  return true;
+}
+
+GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
+  size_t const ClientCount = 4;
+  size_t const Ticks = 240;
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", true},
+      {"storageGenerationPlanningWorkerThreads", 2},
+      {"storageGenerationPlanningMinimumSectors", 0},
+      {"storageGenerationPlanningDifferentialCheck", true},
+      {"packetPreparationSectorPrefill", true},
+      {"packetPreparationSectorPrefillWorkerThreads", 2},
+      {"packetPreparationSectorPrefillMinimumSectors", 0},
+      {"packetPreparationSectorPrefillDifferentialCheck", true},
+      {"subsystemBaselineMetrics", true}}}});
+
+  WorldServer worldServer(Vec2U(256, 128), File::ephemeralFile());
+  worldServer.setWorldId("self-workload-capture");
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.generateRegion(RectI::withSize(Vec2I(80, 24), Vec2I(96, 72)));
+
+  for (size_t i = 0; i < ClientCount; ++i) {
+    ConnectionId clientId = static_cast<ConnectionId>(i + 1);
+    if (!worldServer.addClient(clientId, SpawnTargetPosition(Vec2F(112 + static_cast<float>(i * 8), 48)), true)) {
+      ADD_FAILURE() << "Could not add self-workload capture client";
+      return {};
+    }
+    acknowledgeClientWindow(worldServer, clientId, RectI::withSize(Vec2I(88 + static_cast<int>(i * 8), 32), Vec2I(40, 32)));
+  }
+
+  auto liquidId = firstTestLiquidId();
+  EXPECT_NE(liquidId, EmptyLiquidId);
+  if (liquidId != EmptyLiquidId) {
+    for (int x = 104; x < 120; ++x) {
+      for (int y = 48; y < 54; ++y)
+        worldServer.modifyLiquid(Vec2I(x, y), liquidId, 1.0f);
+    }
+  }
+
+  auto supportMaterialId = firstTestMaterialId();
+  EXPECT_TRUE((bool)supportMaterialId);
+  if (supportMaterialId) {
+    for (int x = 96; x < 116; ++x) {
+      if (!setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, 44), *supportMaterialId)) {
+        ADD_FAILURE() << "Could not seed self-workload capture damage material";
+        return {};
+      }
+    }
+  }
+
+  auto fallingMaterialId = firstTestFallingMaterialId();
+  EXPECT_TRUE((bool)fallingMaterialId);
+  if (supportMaterialId && fallingMaterialId) {
+    for (int x = 124; x < 136; ++x) {
+      for (int y = 38; y < 45; ++y) {
+        if (!setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, y), EmptyMaterialId)) {
+          ADD_FAILURE() << "Could not clear self-workload capture falling shaft";
+          return {};
+        }
+      }
+
+      if (!setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, 44), *supportMaterialId)
+          || !setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, 45), *fallingMaterialId)) {
+        ADD_FAILURE() << "Could not seed self-workload capture falling block column";
+        return {};
+      }
+    }
+  }
+
+  for (size_t i = 0; i < 16; ++i) {
+    auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(108 + static_cast<float>(i), 52), Vec2F(), Vec2F(), true);
+    if (!itemDrop) {
+      ADD_FAILURE() << "Could not create self-workload capture item drop";
+      return {};
+    }
+    worldServer.addEntity(itemDrop, static_cast<EntityId>(1000 + i));
+  }
+
+  PacketCaptureCounts packetCounts;
+  auto start = Time::monotonicMicroseconds();
+  for (size_t tick = 0; tick < Ticks; ++tick) {
+    if (tick % 20 == 0) {
+      for (size_t i = 0; i < ClientCount; ++i) {
+        ConnectionId clientId = static_cast<ConnectionId>(i + 1);
+        int offset = static_cast<int>((tick / 20 + i) % 6) * 4;
+        WorldClientState clientState;
+        clientState.setWindow(RectI::withSize(Vec2I(84 + offset + static_cast<int>(i * 6), 30), Vec2I(48, 36)));
+        worldServer.handleIncomingPackets(clientId, {make_shared<WorldClientStateUpdatePacket>(clientState.writeDelta())});
+      }
+    }
+
+    if (liquidId != EmptyLiquidId && tick % 15 == 0) {
+      ConnectionId clientId = static_cast<ConnectionId>((tick / 15) % ClientCount + 1);
+      Vec2I position(104 + static_cast<int>((tick / 15) % 16), 54 + static_cast<int>((tick / 30) % 4));
+      worldServer.handleIncomingPackets(clientId, {
+          make_shared<ModifyTileListPacket>(TileModificationList{{position, PlaceLiquid{liquidId, 0.75f}}}, true)});
+    }
+
+    if (liquidId != EmptyLiquidId && tick % 40 == 10) {
+      ConnectionId clientId = static_cast<ConnectionId>((tick / 40) % ClientCount + 1);
+      List<Vec2I> positions;
+      for (int i = 0; i < 4; ++i)
+        positions.append(Vec2I(104 + i, 49 + static_cast<int>((tick / 40) % 4)));
+      worldServer.handleIncomingPackets(clientId, {make_shared<CollectLiquidPacket>(std::move(positions), liquidId)});
+    }
+
+    if (tick % 45 == 15) {
+      ConnectionId clientId = static_cast<ConnectionId>((tick / 45) % ClientCount + 1);
+      List<Vec2I> damagePositions;
+      for (int i = 0; i < 3; ++i)
+        damagePositions.append(Vec2I(96 + static_cast<int>((tick / 45) * 2) + i, 44));
+      worldServer.damageTiles(damagePositions, TileLayer::Foreground, Vec2F(112, 52), TileDamage(TileDamageType::Blockish, 0.05f, 1));
+      worldServer.handleIncomingPackets(clientId, {
+          make_shared<DamageTileGroupPacket>(std::move(damagePositions), TileLayer::Foreground, Vec2F(112, 52), TileDamage(TileDamageType::Blockish, 0.25f, 1), Maybe<EntityId>())});
+    }
+
+    if (supportMaterialId && fallingMaterialId && tick == 25) {
+      for (int x = 124; x < 136; ++x)
+        worldServer.destroyBlock(TileLayer::Foreground, Vec2I(x, 44), false, true);
+    }
+
+    if (tick % 60 == 30) {
+      auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(110 + static_cast<float>((tick / 60) * 3), 53), Vec2F(), Vec2F(), true);
+      if (!itemDrop) {
+        ADD_FAILURE() << "Could not create self-workload capture dynamic item drop";
+        return {};
+      }
+      worldServer.addEntity(itemDrop, static_cast<EntityId>(2000 + tick));
+    }
+
+    worldServer.update(1.0f / 60.0f);
+    for (size_t i = 0; i < ClientCount; ++i)
+      addPacketCaptureCounts(packetCounts, worldServer.getOutgoingPackets(static_cast<ConnectionId>(i + 1)));
+  }
+
+  worldServer.sync();
+  auto chunks = worldServer.readChunks();
+
+  GameMechanismWorkloadCapture capture;
+  capture.clients = ClientCount;
+  capture.ticks = Ticks;
+  capture.chunks = chunks.size();
+  capture.elapsedMicroseconds = Time::monotonicMicroseconds() - start;
+  capture.packets = packetCounts;
+  capture.packetPreparationStats = worldServer.packetPreparationStats();
+  capture.phase6Stats = worldServer.phase6WorldParallelismStats();
+  capture.storageTimingStats = worldServer.storageTimingStats();
+
+  std::cout << "GameMechanismCapture clients=" << capture.clients
+            << " ticks=" << capture.ticks
+            << " packets=" << capture.packets.total
+            << " step=" << capture.packets.stepUpdates
+            << " tileArray=" << capture.packets.tileArrays
+            << " tile=" << capture.packets.tileUpdates
+            << " liquid=" << capture.packets.liquidUpdates
+            << " tileDamage=" << capture.packets.tileDamageUpdates
+            << " entityCreate=" << capture.packets.entityCreates
+            << " entityUpdate=" << capture.packets.entityUpdates
+            << " entityDestroy=" << capture.packets.entityDestroys
+            << " giveItem=" << capture.packets.giveItems
+            << " failures=" << capture.packets.modificationFailures
+            << " packetPrepTicks=" << capture.packetPreparationStats.ticks
+            << " regions=" << capture.packetPreparationStats.monitoringRegionBuilds << "/" << capture.packetPreparationStats.monitoringRegionRects << "/" << capture.packetPreparationStats.monitoringRegionSplitRects << "/" << capture.packetPreparationStats.monitoringRegionReuses
+            << " sectorCache=" << capture.packetPreparationStats.sectorPacketCacheHits << "/" << capture.packetPreparationStats.sectorPacketCacheMisses
+            << " entityStoreCache=" << capture.packetPreparationStats.entityStoreCacheHits << "/" << capture.packetPreparationStats.entityStoreCacheMisses
+            << " netStateCache=" << capture.packetPreparationStats.entityNetStateCacheHits << "/" << capture.packetPreparationStats.entityNetStateCacheMisses
+            << " sectorFanout=" << capture.packetPreparationStats.sectorClientFanoutLookups << "/" << capture.packetPreparationStats.sectorClientFanoutRecipients << "/" << capture.packetPreparationStats.sectorClientFanoutMisses
+            << " liquidCache=" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuilds << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRegions << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuckets << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheLookups << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheCandidates << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheHits
+            << " falling=" << capture.phase6Stats.fallingBlocksBaselineTicks << "/" << capture.phase6Stats.fallingBlocksPendingPositions << "/" << capture.phase6Stats.fallingBlocksProcessedPositions << "/" << capture.phase6Stats.fallingBlocksMovedBlocks
+            << " wiring=" << capture.phase6Stats.wiringBaselineTicks << "/" << capture.phase6Stats.wiringInitialEntities << "/" << capture.phase6Stats.wiringLoadedEntities << "/" << capture.phase6Stats.wiringNetworkLoads << "/" << capture.phase6Stats.wiringEvaluatedEntities
+            << " entity=" << capture.phase6Stats.entityBaselineTicks << "/" << capture.phase6Stats.entityUpdatedEntities << "/" << capture.phase6Stats.entityTileEntities << "/" << capture.phase6Stats.entityDestroyedEntities
+            << " lua=" << capture.phase6Stats.luaBaselineTicks << "/" << capture.phase6Stats.luaScriptContexts << "/" << capture.phase6Stats.luaScriptUpdates
+            << " storage=" << capture.storageTimingStats.syncs << "/" << capture.storageTimingStats.syncedSectors << "/" << capture.storageTimingStats.tileStoreSectors << "/" << capture.storageTimingStats.entityStoreSectors << "/" << capture.storageTimingStats.btreeInserts << "/" << capture.storageTimingStats.btreeInsertSkips << "/" << capture.storageTimingStats.fullSnapshotExports << "/" << capture.storageTimingStats.fullSnapshotChunks << "/" << capture.storageTimingStats.fullSnapshotBytes
+            << " chunks=" << capture.chunks
+            << " elapsedUs=" << capture.elapsedMicroseconds
+            << std::endl;
+
+  return capture;
+}
+
 LiquidId firstTestLiquidId() {
   auto liquidsDatabase = Root::singleton().liquidsDatabase();
   for (auto const& liquidName : liquidsDatabase->liquidNames()) {
@@ -228,6 +498,27 @@ LiquidId firstTestLiquidId() {
       return liquidsDatabase->liquidId(liquidName);
   }
   return EmptyLiquidId;
+}
+
+Maybe<MaterialId> firstTestMaterialId() {
+  auto materialDatabase = Root::singleton().materialDatabase();
+  for (auto const& materialName : materialDatabase->materialNames()) {
+    auto materialId = materialDatabase->materialId(materialName);
+    if (materialId != EmptyMaterialId && materialDatabase->canPlaceInLayer(materialId, TileLayer::Foreground))
+      return materialId;
+  }
+  return {};
+}
+
+Maybe<MaterialId> firstTestFallingMaterialId() {
+  auto materialDatabase = Root::singleton().materialDatabase();
+  for (auto const& materialName : materialDatabase->materialNames()) {
+    auto materialId = materialDatabase->materialId(materialName);
+    if (materialId != EmptyMaterialId && materialDatabase->canPlaceInLayer(materialId, TileLayer::Foreground)
+        && (materialDatabase->isFallingMaterial(materialId) || materialDatabase->isCascadingFallingMaterial(materialId)))
+      return materialId;
+  }
+  return {};
 }
 
 List<uint64_t> phase6SubsystemBaselineSignature() {
@@ -267,6 +558,7 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   EXPECT_GT(stats.liquidActiveCells, 0u);
   EXPECT_GT(stats.liquidMonitoringRegions, 0u);
   EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheBuilds, 0u);
+  EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheRebuildSkips, 0u);
   EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheRegions, 0u);
   EXPECT_GT(stats.liquidNoProcessingLimitRegionCacheBuckets, 0u);
   EXPECT_GT(stats.fallingBlocksBaselineTicks, 0u);
@@ -283,6 +575,7 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.liquidActiveCells,
       stats.liquidMonitoringRegions,
       stats.liquidNoProcessingLimitRegionCacheBuilds,
+      stats.liquidNoProcessingLimitRegionCacheRebuildSkips,
       stats.liquidNoProcessingLimitRegionCacheRegions,
       stats.liquidNoProcessingLimitRegionCacheBuckets,
       stats.liquidNoProcessingLimitRegionCacheLookups,
@@ -558,8 +851,19 @@ TEST(MulticorePhaseTest, ServerOptimizationLiquidNoProcessingLimitCacheUsesBucke
 
   auto builtStats = liquidEngine.noProcessingLimitRegionCacheStats();
   EXPECT_EQ(builtStats.builds, 1u);
+  EXPECT_EQ(builtStats.rebuildSkips, 0u);
   EXPECT_EQ(builtStats.regions, 3u);
   EXPECT_GT(builtStats.buckets, 0u);
+
+  liquidEngine.setNoProcessingLimitRegions({
+      RectI::withSize(Vec2I(-40, -8), Vec2I(16, 16)),
+      RectI::withSize(Vec2I(96, -8), Vec2I(16, 16)),
+      RectI::withSize(Vec2I(256, -8), Vec2I(16, 16))});
+
+  auto skippedStats = liquidEngine.noProcessingLimitRegionCacheStats();
+  EXPECT_EQ(skippedStats.builds, 1u);
+  EXPECT_EQ(skippedStats.rebuildSkips, 1u);
+  EXPECT_EQ(skippedStats.regions, 3u);
 
   liquidEngine.update();
   auto lookupStats = liquidEngine.noProcessingLimitRegionCacheStats();
@@ -648,6 +952,40 @@ TEST(MulticorePhaseTest, ServerOptimizationWorldStorageTimingStatsTrackSyncAndSk
   EXPECT_EQ(snapshotStats.fullSnapshotExports, secondSyncStats.fullSnapshotExports + 1);
   EXPECT_GE(snapshotStats.fullSnapshotChunks, chunks.size());
   EXPECT_GT(snapshotStats.fullSnapshotBytes, 0u);
+}
+
+TEST(ServerMeasurement, DISABLED_GameMechanismSelfWorkloadCapture) {
+  auto capture = runGameMechanismSelfWorkloadCapture();
+
+  EXPECT_EQ(capture.clients, 4u);
+  EXPECT_EQ(capture.ticks, 240u);
+  EXPECT_GT(capture.packets.total, 0u);
+  EXPECT_GT(capture.packets.stepUpdates, 0u);
+  EXPECT_GT(capture.packets.tileArrays, 0u);
+  EXPECT_GT(capture.packets.tileDamageUpdates, 0u);
+  EXPECT_GT(capture.packets.entityCreates, 0u);
+  EXPECT_GT(capture.packetPreparationStats.ticks, 0u);
+  EXPECT_GT(capture.packetPreparationStats.monitoringRegionBuilds, 0u);
+  EXPECT_GT(capture.packetPreparationStats.sectorPacketCacheHits + capture.packetPreparationStats.sectorPacketCacheMisses, 0u);
+  EXPECT_GT(capture.packetPreparationStats.entityStoreCacheMisses, 0u);
+  EXPECT_GT(capture.phase6Stats.liquidBaselineTicks, 0u);
+  EXPECT_GT(capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips, 0u);
+  EXPECT_GT(capture.phase6Stats.fallingBlocksMovedBlocks, 0u);
+  EXPECT_GT(capture.phase6Stats.entityBaselineTicks, 0u);
+  EXPECT_GT(capture.phase6Stats.entityUpdatedEntities, 0u);
+  EXPECT_GT(capture.phase6Stats.luaBaselineTicks, 0u);
+  EXPECT_GT(capture.storageTimingStats.syncs, 0u);
+  EXPECT_GT(capture.storageTimingStats.syncedSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.fullSnapshotExports, 0u);
+  EXPECT_GT(capture.storageTimingStats.fullSnapshotBytes, 0u);
+  EXPECT_EQ(capture.phase6Stats.storageGenerationPlanningDivergences, 0u);
+  EXPECT_EQ(capture.phase6Stats.packetPreparationSectorPrefillDivergences, 0u);
+
+  RecordProperty("packets", static_cast<int64_t>(capture.packets.total));
+  RecordProperty("elapsedUs", capture.elapsedMicroseconds);
+  RecordProperty("entityUpdated", static_cast<int64_t>(capture.phase6Stats.entityUpdatedEntities));
+  RecordProperty("liquidCacheRebuildSkips", static_cast<int64_t>(capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips));
+  RecordProperty("snapshotBytes", static_cast<int64_t>(capture.storageTimingStats.fullSnapshotBytes));
 }
 
 TEST(MulticorePhaseTest, Phase6EntityInitialNetStateWritesAdvancePerClientVersions) {

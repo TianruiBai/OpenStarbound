@@ -10,6 +10,10 @@ Vulkan and broader graphics backend modernization are intentionally out of scope
 
 The expected outcome is a visibly cooler hot world thread under packet-heavy, liquid-heavy, wiring-heavy, generation-heavy, and save-heavy workloads. The release should be judged by measured workload deltas, not by thread count.
 
+Post-pass review: [server-performance-followup-review-26.5.2a.md](server-performance-followup-review-26.5.2a.md) summarizes the current code state after Phase 0-6 and the extra `26.5.2a` server optimization passes, with ranked follow-up paths for fixed workload captures, queue-only send defaulting, storage spike reduction, and subsystem bookkeeping.
+
+Self-workload capture: [server-self-workload-capture-26.5.2a.md](server-self-workload-capture-26.5.2a.md) records the first repeatable in-process game-mechanism capture and the compatibility-sensitive gates for packet prep, storage, wiring, liquid/falling blocks, entity, and Lua paths.
+
 ## Implementation Progress
 
 This roadmap is now being tracked as an implementation checklist. Status values are:
@@ -23,12 +27,12 @@ Current checklist:
 
 1. Done: sector-to-client fan-out index for tile, tile-damage, and liquid update queueing, with `sectorFanout` diagnostics and focused coverage.
 2. Done: first monitoring-region snapshot reuse slice, with precomputed player-active signal regions and `regions=builds/rects/splits/reuses` diagnostics for liquid and packet-prep consumers.
-3. Done: liquid no-limit membership cache using bucketed region candidates, with `liquidCache=builds/regions/buckets/lookups/candidates/hits` diagnostics and focused engine coverage.
+3. Done: liquid no-limit membership cache using bucketed region candidates and unchanged-region rebuild skips, with `liquidCache=builds/skips/regions/buckets/lookups/candidates/hits` diagnostics and focused engine coverage.
 4. Done: per-entity serialization counters for packet-prep cost attribution, with `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` diagnostics and focused ItemDrop coverage.
 5. Done: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests, including byte-equivalent but version-advancing first writes.
 6. Done: storage timing counters for world sync/readChunks phases, with byte-identical B-tree insert filtering to reduce repeated save spikes.
-7. Done: queue-only network send experiment behind a default-off config flag, with queued/eager/worker send counters and ordering coverage.
-8. Next: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline.
+7. Done: queue-only network send experiment measured with in-process dummy clients, default-enabled as `queueOnlyConnectionSend=true`, with `queueOnlyConnectionSend=false` preserving the legacy eager-write fallback.
+8. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The first repeatable self-workload capture is now available as `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`.
 
 ## 2. Current Bottleneck Statement
 
@@ -64,8 +68,9 @@ Tasks:
 1. Define the `26.5.2a` fixed workload set: crowded hub, high-fan-out replication, liquid-heavy region, wiring-heavy base, generation-heavy exploration, save/disconnect spike, login burst, and modpack smoke.
 2. Record baseline p50/p95/p99 for universe loop, world thread, world-update subphases, packet preparation, persistence queue, network worker wakeups, and Phase 6 worker helpers.
 3. Add or update command output notes for collecting `/serverstatus`, `/worldstats`, and `/servernetstats` during the workloads.
-4. Re-enable or document the `world_benchmark` utility target only if it can run without disturbing normal builds; otherwise keep it as a manual profiling harness.
-5. Store benchmark world setup notes with enough detail that future releases can rerun the same workload.
+4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-13: `packets=22689`, `tile=3104`, `liquid=16400`, `tileDamage=1008`, `falling=30/1216/1545/324`, `entityCreate=80`, `entityUpdate=960`, `sectorFanout=5155/20620/0`, `netStateCache=5919/6761`, `storage=1/64/64/64/66/65/1/65/5973`, `elapsedUs=168667`.
+5. Re-enable or document the `world_benchmark` utility target only if it can run without disturbing normal builds; otherwise keep it as a manual profiling harness.
+6. Store benchmark world setup notes with enough detail that future releases can rerun the same workload.
 
 Must-ship acceptance:
 
@@ -81,7 +86,7 @@ Priority tickets:
 
 1. Done: sector-to-client fan-out index for tile, tile-damage, and liquid update queueing. Replaced repeated per-tile full-client scans with sector-local subscriber lookup while preserving per-client packet order. Diagnostics: `sectorFanout=lookups/recipients/misses` in `LogMap`, `/serverstatus`, and `/worldstats`.
 2. Done: first monitoring-region generation/reuse slice. `WorldTickSnapshot` now carries precomputed player-active signal regions, counts downstream monitoring-region reuse, and exposes `regions=builds/rects/splits/reuses` through `LogMap`, `/serverstatus`, and `/worldstats`. Further liquid-cell membership pruning belongs to the liquid no-limit cache ticket.
-3. Done: liquid no-limit membership cache. Replaced the per-active-cell full `m_noProcessingLimitRegions` scan under a processing limit with bucketed region candidates that are still confirmed with exact `RectI::contains` checks. Diagnostics: `liquidCache=builds/regions/buckets/lookups/candidates/hits` in Phase 6 subsystem output, `/serverstatus`, and `/worldstats`.
+3. Done: liquid no-limit membership cache. Replaced the per-active-cell full `m_noProcessingLimitRegions` scan under a processing limit with bucketed region candidates that are still confirmed with exact `RectI::contains` checks, and skip rebuilding the bucket map when monitoring regions are unchanged. Diagnostics: `liquidCache=builds/skips/regions/buckets/lookups/candidates/hits` in Phase 6 subsystem output, `/serverstatus`, and `/worldstats`.
 4. Pending: dirty wiring-network prototype. Keep the full scan as fallback, but start tracking dirty topology/output state so unchanged disconnected networks can be skipped or measured.
 5. Done: per-entity serialization counters. Packet preparation now attributes create-store serialization, first-observation `writeNetState(0)`, and later delta `writeNetState(version)` calls/bytes by `EntityType`. Diagnostics: `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` in `/serverstatus` and `/worldstats`.
 
@@ -136,10 +141,11 @@ Goal: prepare the eventual readiness-driven network backend while keeping the cu
 
 Priority tickets:
 
-1. Done: move `UniverseConnectionServer::sendPackets()` toward queue-only behavior behind `queueOnlyConnectionSend`, so socket writes can be fully owned by the assigned network worker while the legacy eager-send path remains the default fallback.
+1. Done: move `UniverseConnectionServer::sendPackets()` toward queue-only behavior behind `queueOnlyConnectionSend`, so socket writes can be fully owned by the assigned network worker while the legacy eager-send path remains available as `queueOnlyConnectionSend=false`.
 2. Done: measure eager send/write versus queue-only send with `queued`, `eager`, and `workerSend` counters in `/serverstatus` and `/servernetstats` before changing the default.
-3. Draft the narrow `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready connection handles.
-4. Keep the current condition-variable and timed fallback until Windows, Linux, and macOS paths have coverage.
+3. Done: add `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison`, which runs 8 in-process dummy clients and compares eager versus queue-only server fan-out. Local result on 2026-05-13: eager `sent=128 queued=140 eager=140 worker=0 elapsedUs=7576`; queue-only `sent=128 queued=128 eager=0 worker=129 elapsedUs=411`.
+4. Draft the narrow `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready connection handles.
+5. Keep the current condition-variable and timed fallback until Windows, Linux, and macOS paths have coverage.
 
 Must-ship acceptance:
 
@@ -202,7 +208,7 @@ Should ship if metrics justify it:
 - monitoring-region generation counters and owner-thread reuse: initial snapshot reuse slice done
 - liquid no-limit membership cache: done with bucketed candidate diagnostics
 - packet-prep worker expansion beyond sector prefill
-- queue-only network send experiment behind a config or diagnostic flag: done, default-off as `queueOnlyConnectionSend`
+- queue-only network send experiment behind a config or diagnostic flag: done, default-on as `queueOnlyConnectionSend=true`, legacy eager fallback available with `queueOnlyConnectionSend=false`
 
 Stretch only:
 
@@ -226,9 +232,10 @@ Minimum local validation before the release branch is considered healthy:
 2. Build `starbound`, `starbound_server`, and `game_tests` from the VS 2022 developer environment.
 3. Run the focused multicore/server/network suite: `game_tests.exe --gtest_filter=MulticorePhaseTest.*:ServerTest.*:UniverseConnections.*:UniverseConnectionServer.*`
 4. Run the new or refreshed packet-prep equivalence tests.
-5. Run storage write-failure, queue-pressure, shutdown-drain, and reload tests.
-6. Run fixed workload captures and compare p50/p95/p99 against the `26.5.1a` baseline.
-7. Run modpack smoke with default config and with every new optimization explicitly disabled.
+5. Run the disabled measurement captures when evaluating performance changes: `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison` and `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture` with `--gtest_also_run_disabled_tests`.
+6. Run storage write-failure, queue-pressure, shutdown-drain, and reload tests.
+7. Run fixed workload captures and compare p50/p95/p99 against the `26.5.1a` baseline.
+8. Run modpack smoke with default config and with every new optimization explicitly disabled.
 
 ## 13. Go/No-Go Rules
 

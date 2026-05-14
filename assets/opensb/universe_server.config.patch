@@ -27,7 +27,7 @@
   {
     "op" : "add",
     "path" : "/queueOnlyConnectionSend",
-    "value" : false
+    "value" : true
   },
   {
     "op" : "add",

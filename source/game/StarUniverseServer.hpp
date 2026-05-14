@@ -124,6 +124,7 @@ public:
     uint64_t phase6LiquidActiveCells;
     uint64_t phase6LiquidMonitoringRegions;
     uint64_t phase6LiquidNoProcessingLimitRegionCacheBuilds;
+    uint64_t phase6LiquidNoProcessingLimitRegionCacheRebuildSkips;
     uint64_t phase6LiquidNoProcessingLimitRegionCacheRegions;
     uint64_t phase6LiquidNoProcessingLimitRegionCacheBuckets;
     uint64_t phase6LiquidNoProcessingLimitRegionCacheLookups;

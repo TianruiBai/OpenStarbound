@@ -1185,6 +1185,7 @@ void WorldServer::update(float dt) {
         m_phase6WorldParallelismStats.liquidActiveCells += m_liquidEngine->activeCells();
         m_phase6WorldParallelismStats.liquidMonitoringRegions += tickSnapshot.monitoringRegions.size();
         m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheBuilds += liquidRegionCacheStatsAfter.builds - liquidRegionCacheStatsBefore.builds;
+        m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheRebuildSkips += liquidRegionCacheStatsAfter.rebuildSkips - liquidRegionCacheStatsBefore.rebuildSkips;
         m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheRegions += liquidRegionCacheStatsAfter.regions - liquidRegionCacheStatsBefore.regions;
         m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheBuckets += liquidRegionCacheStatsAfter.buckets - liquidRegionCacheStatsBefore.buckets;
         m_phase6WorldParallelismStats.liquidNoProcessingLimitRegionCacheLookups += liquidRegionCacheStatsAfter.lookups - liquidRegionCacheStatsBefore.lookups;

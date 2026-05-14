@@ -424,6 +424,7 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6LiquidActiveCells += phase6Stats.liquidActiveCells;
           status.phase6LiquidMonitoringRegions += phase6Stats.liquidMonitoringRegions;
           status.phase6LiquidNoProcessingLimitRegionCacheBuilds += phase6Stats.liquidNoProcessingLimitRegionCacheBuilds;
+          status.phase6LiquidNoProcessingLimitRegionCacheRebuildSkips += phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips;
           status.phase6LiquidNoProcessingLimitRegionCacheRegions += phase6Stats.liquidNoProcessingLimitRegionCacheRegions;
           status.phase6LiquidNoProcessingLimitRegionCacheBuckets += phase6Stats.liquidNoProcessingLimitRegionCacheBuckets;
           status.phase6LiquidNoProcessingLimitRegionCacheLookups += phase6Stats.liquidNoProcessingLimitRegionCacheLookups;

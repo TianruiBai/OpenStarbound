@@ -2,6 +2,7 @@
 #include "StarConfiguration.hpp"
 #include "StarFile.hpp"
 #include "StarHostAddress.hpp"
+#include "StarLogging.hpp"
 #include "StarNetPackets.hpp"
 #include "StarPlayer.hpp"
 #include "StarPlayerFactory.hpp"
@@ -13,6 +14,8 @@
 
 #include "gtest/gtest.h"
 #include "gtest/gtest-spi.h"
+
+#include <iostream>
 
 using namespace Star;
 
@@ -181,6 +184,144 @@ RemoteConnectResult connectRemoteClient(UniverseServer& server, PlayerPtr const&
   return {std::move(connection), packet};
 }
 
+size_t drainAvailablePackets(List<UniverseConnection>& connections) {
+  size_t received = 0;
+  for (auto& connection : connections) {
+    connection.receive();
+    while (connection.pullSingle())
+      ++received;
+  }
+  return received;
+}
+
+void drainPacketBursts(List<UniverseConnection>& connections, unsigned quietMillis = 20) {
+  auto quietDeadline = Time::monotonicMilliseconds() + quietMillis;
+  while (Time::monotonicMilliseconds() < quietDeadline) {
+    if (drainAvailablePackets(connections) != 0)
+      quietDeadline = Time::monotonicMilliseconds() + quietMillis;
+    else
+      Thread::sleep(1);
+  }
+}
+
+size_t waitForReceivedPackets(List<UniverseConnection>& connections, size_t expectedPackets, unsigned timeoutMillis = 10000) {
+  size_t received = 0;
+  EXPECT_TRUE(waitUntil([&]() {
+    received += drainAvailablePackets(connections);
+    return received >= expectedPackets;
+  }, timeoutMillis));
+  return received;
+}
+
+uint64_t counterDelta(uint64_t after, uint64_t before) {
+  return after >= before ? after - before : 0;
+}
+
+struct QueueSendMeasurement {
+  bool queueOnly = false;
+  size_t clients = 0;
+  size_t packetsSent = 0;
+  size_t packetsReceived = 0;
+  uint64_t queuedPackets = 0;
+  uint64_t eagerPackets = 0;
+  uint64_t workerPackets = 0;
+  uint64_t wakeups = 0;
+  uint64_t idleTimedWaits = 0;
+  int64_t elapsedMicroseconds = 0;
+};
+
+QueueSendMeasurement runQueueSendMeasurement(bool queueOnly) {
+  size_t const ClientCount = 8;
+  size_t const Rounds = 16;
+
+  ConfigurationValueGuard serverConfigGuard("universeServerConfigOverrides", JsonObject{
+      {"usePendingConnectionStateMachine", true},
+      {"networkWorkerThreads", 2},
+      {"queueOnlyConnectionSend", queueOnly}});
+  ConfigurationValueGuard maxPlayersGuard("maxPlayers", static_cast<unsigned>(ClientCount + 4));
+  ConfigurationValueGuard anonymousGuard("allowAnonymousConnections", true);
+  ConfigurationValueGuard anonymousAdminGuard("anonymousConnectionsAreAdmin", false);
+
+  TemporaryUniverseStorage storage;
+  UniverseServer server(storage.universe);
+  server.start();
+
+  List<UniverseConnection> connections;
+  List<ConnectionId> clientIds;
+  for (size_t i = 0; i < ClientCount; ++i) {
+    auto result = connectRemoteClient(server, makeTestPlayer(strf("measure-{}", i)));
+    auto successPacket = as<ConnectSuccessPacket>(result.packet);
+    EXPECT_TRUE(successPacket);
+    if (successPacket)
+      clientIds.append(successPacket->clientId);
+    connections.append(std::move(result.connection));
+  }
+
+  EXPECT_EQ(clientIds.size(), ClientCount);
+  waitForServerStatus(server, [expectedClients = clientIds.size()](UniverseServer::ServerStatus const& status) {
+    return status.clients == expectedClients && status.networkOwnedConnections == expectedClients && status.pendingHandshakes == 0;
+  }, 10000);
+  drainPacketBursts(connections);
+
+  auto beforeStatus = server.serverStatus();
+  auto sendStart = Time::monotonicMicroseconds();
+
+  size_t packetsSent = 0;
+  for (size_t round = 0; round < Rounds; ++round) {
+    for (auto clientId : clientIds) {
+      EXPECT_TRUE(server.sendPacket(clientId, make_shared<PausePacket>((round % 2) == 0, 1.0f)));
+      packetsSent += 1;
+    }
+  }
+
+  auto packetsReceived = waitForReceivedPackets(connections, packetsSent);
+  auto afterStatus = waitForServerStatus(server, [&](UniverseServer::ServerStatus const& status) {
+    auto queuedDelta = counterDelta(status.networkQueuedSendPackets, beforeStatus.networkQueuedSendPackets);
+    auto eagerDelta = counterDelta(status.networkEagerSendPackets, beforeStatus.networkEagerSendPackets);
+    auto workerDelta = counterDelta(status.networkWorkerSendPackets, beforeStatus.networkWorkerSendPackets);
+    return queuedDelta >= packetsSent && (queueOnly ? workerDelta >= packetsSent : eagerDelta >= packetsSent);
+  }, 10000);
+
+  QueueSendMeasurement measurement;
+  measurement.queueOnly = queueOnly;
+  measurement.clients = ClientCount;
+  measurement.packetsSent = packetsSent;
+  measurement.packetsReceived = packetsReceived;
+  measurement.queuedPackets = counterDelta(afterStatus.networkQueuedSendPackets, beforeStatus.networkQueuedSendPackets);
+  measurement.eagerPackets = counterDelta(afterStatus.networkEagerSendPackets, beforeStatus.networkEagerSendPackets);
+  measurement.workerPackets = counterDelta(afterStatus.networkWorkerSendPackets, beforeStatus.networkWorkerSendPackets);
+  measurement.wakeups = counterDelta(afterStatus.networkWakeups, beforeStatus.networkWakeups);
+  measurement.idleTimedWaits = counterDelta(afterStatus.networkIdleTimedWaits, beforeStatus.networkIdleTimedWaits);
+  measurement.elapsedMicroseconds = Time::monotonicMicroseconds() - sendStart;
+
+  Logger::info("ServerMeasurement queueOnly={} clients={} sent={} received={} queuedPackets={} eagerPackets={} workerPackets={} wakeups={} idleTimedWaits={} elapsedUs={}",
+      measurement.queueOnly,
+      measurement.clients,
+      measurement.packetsSent,
+      measurement.packetsReceived,
+      measurement.queuedPackets,
+      measurement.eagerPackets,
+      measurement.workerPackets,
+      measurement.wakeups,
+      measurement.idleTimedWaits,
+      measurement.elapsedMicroseconds);
+  std::cout << "ServerMeasurement queueOnly=" << measurement.queueOnly
+            << " clients=" << measurement.clients
+            << " sent=" << measurement.packetsSent
+            << " received=" << measurement.packetsReceived
+            << " queuedPackets=" << measurement.queuedPackets
+            << " eagerPackets=" << measurement.eagerPackets
+            << " workerPackets=" << measurement.workerPackets
+            << " wakeups=" << measurement.wakeups
+            << " idleTimedWaits=" << measurement.idleTimedWaits
+            << " elapsedUs=" << measurement.elapsedMicroseconds
+            << std::endl;
+
+  server.stop();
+  server.join();
+  return measurement;
+}
+
 }
 
 TEST(ServerTest, Run) {
@@ -237,6 +378,25 @@ TEST(ServerTest, WorldStatsCommandReportsDiagnostics) {
   EXPECT_TRUE(statusOutput.contains("storageTiming="));
   EXPECT_TRUE(statusOutput.contains("queueOnly="));
   EXPECT_TRUE(statusOutput.contains("sends=q:"));
+}
+
+TEST(ServerMeasurement, DISABLED_QueueOnlySendFanoutComparison) {
+  auto eager = runQueueSendMeasurement(false);
+  auto queueOnly = runQueueSendMeasurement(true);
+
+  EXPECT_EQ(eager.clients, queueOnly.clients);
+  EXPECT_EQ(eager.packetsSent, queueOnly.packetsSent);
+  EXPECT_GE(eager.queuedPackets, eager.packetsSent);
+  EXPECT_GE(eager.eagerPackets, eager.packetsSent);
+  EXPECT_EQ(eager.workerPackets, 0u);
+  EXPECT_GE(queueOnly.queuedPackets, queueOnly.packetsSent);
+  EXPECT_EQ(queueOnly.eagerPackets, 0u);
+  EXPECT_GE(queueOnly.workerPackets, queueOnly.packetsSent);
+
+  RecordProperty("eagerElapsedUs", static_cast<int64_t>(eager.elapsedMicroseconds));
+  RecordProperty("queueOnlyElapsedUs", static_cast<int64_t>(queueOnly.elapsedMicroseconds));
+  RecordProperty("eagerIdleTimedWaits", static_cast<int64_t>(eager.idleTimedWaits));
+  RecordProperty("queueOnlyIdleTimedWaits", static_cast<int64_t>(queueOnly.idleTimedWaits));
 }
 
 TEST(ServerTest, PendingHandshakeStateMachineAcceptsLocalClient) {

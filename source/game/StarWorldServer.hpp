@@ -133,6 +133,7 @@ public:
     uint64_t liquidActiveCells = 0;
     uint64_t liquidMonitoringRegions = 0;
     uint64_t liquidNoProcessingLimitRegionCacheBuilds = 0;
+    uint64_t liquidNoProcessingLimitRegionCacheRebuildSkips = 0;
     uint64_t liquidNoProcessingLimitRegionCacheRegions = 0;
     uint64_t liquidNoProcessingLimitRegionCacheBuckets = 0;
     uint64_t liquidNoProcessingLimitRegionCacheLookups = 0;

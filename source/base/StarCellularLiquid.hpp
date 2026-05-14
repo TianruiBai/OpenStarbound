@@ -75,6 +75,7 @@ public:
 
   struct NoProcessingLimitRegionCacheStats {
     uint64_t builds = 0;
+    uint64_t rebuildSkips = 0;
     uint64_t regions = 0;
     uint64_t buckets = 0;
     uint64_t lookups = 0;
@@ -219,6 +220,11 @@ List<RectI> LiquidCellEngine<LiquidId>::noProcessingLimitRegions() const {
 
 template <typename LiquidId>
 void LiquidCellEngine<LiquidId>::setNoProcessingLimitRegions(List<RectI> noProcessingLimitRegions) {
+  if (m_noProcessingLimitRegions == noProcessingLimitRegions) {
+    m_noProcessingLimitRegionCacheStats.rebuildSkips += 1;
+    return;
+  }
+
   m_noProcessingLimitRegions = std::move(noProcessingLimitRegions);
   rebuildNoProcessingLimitRegionCache();
 }
