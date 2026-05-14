@@ -112,6 +112,7 @@ SET (star_core_HEADERS
     StarShellParser.hpp
     StarSignalHandler.hpp
     StarSocket.hpp
+    StarSocketPoller.hpp
     StarSpatialHash2D.hpp
     StarSpline.hpp
     StarStaticRandom.hpp
@@ -186,6 +187,7 @@ SET (star_core_SOURCES
     StarSha256.cpp
     StarShellParser.cpp
     StarSocket.cpp
+    StarSocketPoller.cpp
     StarString.cpp
     StarStringView.cpp
     StarTcp.cpp

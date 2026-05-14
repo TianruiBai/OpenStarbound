@@ -36,7 +36,8 @@ Current checklist:
 9. Done: guarded empty `SystemWorldUpdatePacket` suppression behind `skipEmptyUpdatePackets`, with default-off legacy behavior, `/worldstats` packet diagnostics, and focused coverage.
 10. Done: compatibility-sensitive entity/Lua attribution under `subsystemBaselineMetrics`, with entity copy/sort/update/metadata timings and bounded Lua script-context timing diagnostics.
 11. Done: per-subsystem mutation gate reporting for requested liquid/falling/wiring/entity/Lua experiments, including fixed-seed, dependency-analysis, mod-visibility, and implementation blockers.
-12. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
+12. Done: narrow core `SocketPoller` API seed for readable/writable interests, unregister, wake, timed waits, and ready socket handles, with focused loopback TCP coverage and no runtime network-worker integration yet.
+13. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
 
 ## 2. Current Bottleneck Statement
 
@@ -152,7 +153,7 @@ Priority tickets:
 1. Done: move `UniverseConnectionServer::sendPackets()` toward queue-only behavior behind `queueOnlyConnectionSend`, so socket writes can be fully owned by the assigned network worker while the legacy eager-send path remains available as `queueOnlyConnectionSend=false`.
 2. Done: measure eager send/write versus queue-only send with `queued`, `eager`, and `workerSend` counters in `/serverstatus` and `/servernetstats` before changing the default.
 3. Done: add `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison`, which runs 8 direct `UniverseConnectionServer` local-socket clients and compares eager versus queue-only transport fan-out with inter-round drains so the measurement does not turn `UniverseServer` inactivity reaping or local socket backlog into a flake. Latest local result on 2026-05-14: eager `sent=128 received=128 queued=128 eager=128 worker=0 wakeups=128 idleTimedWaits=32 elapsedUs=247373`; queue-only `sent=128 received=128 queued=128 eager=0 worker=128 wakeups=128 idleTimedWaits=9 elapsedUs=252290`.
-4. Draft the narrow `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready connection handles.
+4. Done: draft the narrow core `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready socket handles. The seed wraps the existing portable `Socket::poll` path and is covered by `SocketPollerTest`; it is not wired into `UniverseConnectionServer` yet.
 5. Keep the current condition-variable and timed fallback until Windows, Linux, and macOS paths have coverage.
 
 Must-ship acceptance:
