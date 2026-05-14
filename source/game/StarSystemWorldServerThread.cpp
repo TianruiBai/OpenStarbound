@@ -226,6 +226,11 @@ SystemWorldServerThread::CommandStats SystemWorldServerThread::commandStats() co
   return stats;
 }
 
+SystemWorldServer::PacketStats SystemWorldServerThread::packetStats() {
+  ReadLocker locker(m_mutex);
+  return m_systemWorld->packetStats();
+}
+
 void SystemWorldServerThread::setClientDestination(ConnectionId clientId, SystemLocation const& destination) {
   WriteLocker locker(m_queueMutex);
   m_clientShipDestinations.set(clientId, destination);

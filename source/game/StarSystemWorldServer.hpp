@@ -11,6 +11,14 @@ STAR_STRUCT(Packet);
 
 class SystemWorldServer : public SystemWorld {
 public:
+  struct PacketStats {
+    uint64_t updatePackets = 0;
+    uint64_t objectUpdateDeltas = 0;
+    uint64_t shipUpdateDeltas = 0;
+    uint64_t emptyUpdatePackets = 0;
+    uint64_t emptyUpdateSkips = 0;
+  };
+
   // create new system world server
   SystemWorldServer(Vec3I location, ClockConstPtr universeClock, CelestialDatabasePtr celestialDatabase);
   // load system world server from storage
@@ -47,6 +55,8 @@ public:
   void handleIncomingPacket(ConnectionId clientId, PacketPtr packet);
   List<PacketPtr> pullOutgoingPackets(ConnectionId clientId);
 
+  PacketStats packetStats() const;
+
   bool triggeredStorage();
   Json diskStore();
 
@@ -68,6 +78,8 @@ private:
 
   // setting this to true asynchronously triggers storage from the server thread
   bool m_triggerStorage;
+  bool m_skipEmptyUpdatePackets;
+  PacketStats m_packetStats;
   
   double m_lastSpawn;
   double m_objectSpawnTime;

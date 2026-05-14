@@ -32,7 +32,9 @@ Current checklist:
 5. Done: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests, including byte-equivalent but version-advancing first writes.
 6. Done: storage timing counters for world sync/readChunks phases, with byte-identical B-tree insert filtering to reduce repeated save spikes.
 7. Done: queue-only network send experiment measured with in-process dummy clients, default-enabled as `queueOnlyConnectionSend=true`, with `queueOnlyConnectionSend=false` preserving the legacy eager-write fallback.
-8. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The first repeatable self-workload capture is now available as `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`.
+8. Done: guarded empty `EntityUpdateSetPacket` suppression behind `skipEmptyEntityUpdateSets`, with default-off legacy behavior, packet-prep diagnostics, and focused coverage.
+9. Done: guarded empty `SystemWorldUpdatePacket` suppression behind `skipEmptyUpdatePackets`, with default-off legacy behavior, `/worldstats` packet diagnostics, and focused coverage.
+10. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The first repeatable self-workload capture is now available as `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`.
 
 ## 2. Current Bottleneck Statement
 
@@ -68,7 +70,7 @@ Tasks:
 1. Define the `26.5.2a` fixed workload set: crowded hub, high-fan-out replication, liquid-heavy region, wiring-heavy base, generation-heavy exploration, save/disconnect spike, login burst, and modpack smoke.
 2. Record baseline p50/p95/p99 for universe loop, world thread, world-update subphases, packet preparation, persistence queue, network worker wakeups, and Phase 6 worker helpers.
 3. Add or update command output notes for collecting `/serverstatus`, `/worldstats`, and `/servernetstats` during the workloads.
-4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-13: `packets=22689`, `tile=3104`, `liquid=16400`, `tileDamage=1008`, `falling=30/1216/1545/324`, `entityCreate=80`, `entityUpdate=960`, `sectorFanout=5155/20620/0`, `netStateCache=5919/6761`, `storage=1/64/64/64/66/65/1/65/5973`, `elapsedUs=168667`.
+4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, wire objects, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-14 with opt-in empty update-set suppression enabled in the harness: `packets=22305`, `tile=3116`, `liquid=16168`, `tileDamage=1008`, `falling=30/1216/1548/324`, `wiring=48/144/144/144/144`, `entityCreate=92`, `entityUpdate=780`, `entityUpdateDeltas=4796`, `updateSets=780/4796/0/180`, `sectorFanout=5100/20400/0`, `netStateCache=7926/7450`, `storage=1/64/64/64/66/65/1/65/6290`, `elapsedUs=199191`.
 5. Re-enable or document the `world_benchmark` utility target only if it can run without disturbing normal builds; otherwise keep it as a manual profiling harness.
 6. Store benchmark world setup notes with enough detail that future releases can rerun the same workload.
 
@@ -89,6 +91,8 @@ Priority tickets:
 3. Done: liquid no-limit membership cache. Replaced the per-active-cell full `m_noProcessingLimitRegions` scan under a processing limit with bucketed region candidates that are still confirmed with exact `RectI::contains` checks, and skip rebuilding the bucket map when monitoring regions are unchanged. Diagnostics: `liquidCache=builds/skips/regions/buckets/lookups/candidates/hits` in Phase 6 subsystem output, `/serverstatus`, and `/worldstats`.
 4. Pending: dirty wiring-network prototype. Keep the full scan as fallback, but start tracking dirty topology/output state so unchanged disconnected networks can be skipped or measured.
 5. Done: per-entity serialization counters. Packet preparation now attributes create-store serialization, first-observation `writeNetState(0)`, and later delta `writeNetState(version)` calls/bytes by `EntityType`. Diagnostics: `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` in `/serverstatus` and `/worldstats`.
+6. Done: opt-in empty entity update-set suppression. `skipEmptyEntityUpdateSets=false` preserves legacy default packet behavior; enabling it suppresses only empty `EntityUpdateSetPacket`s and reports `entityUpdateSets=emitted/deltas/empty/skipped` diagnostics.
+7. Done: opt-in empty system-world update suppression. `skipEmptyUpdatePackets=false` preserves legacy default packet behavior; enabling it suppresses only `SystemWorldUpdatePacket`s with no object or ship deltas and reports `packets=updates:emitted/objectDeltas/shipDeltas/empty/skipped` in `/worldstats`.
 
 Must-ship acceptance:
 
@@ -104,9 +108,11 @@ Priority tickets:
 
 1. Done: finish immutable net-state input research for first-observation and later-delta paths. `writeNetState(0)` full writes are byte-equivalent for unchanged state but still advance the top-level net version, so create-store bytes can be shared from `EntityCreateSnapshot`, while first-observation net-state writes must remain per-client owner-thread work until byte generation is separated from version advancement.
 2. Done: add deeper `writeNetState(0)` equivalence tests, including cases where first writes advance entity net versions.
-3. Next: separate byte generation from owner-thread version advancement where possible, or explicitly document why a path must remain serial.
-4. Extend workerized packet preparation from sector tile-array prefill toward entity create/update payload preparation only when the worker consumes immutable inputs and the owner thread performs the visible merge.
-5. Keep default-enabled serial-versus-worker differential checks and divergence counters for every expanded packet-prep worker path.
+3. Done: measure and gate empty update-set packet suppression. The self-workload capture found `180` empty update-set packets out of `960`; the opt-in path suppresses them while preserving the default legacy stream.
+4. Done: measure and gate empty system-world update packet suppression. A direct `SystemWorldServer` fixture proves the default still emits empty no-op updates, while the opt-in path skips only packets whose object and ship update maps are both empty after an initial ship delta.
+5. Next: separate byte generation from owner-thread version advancement where possible, or explicitly document why a path must remain serial.
+6. Extend workerized packet preparation from sector tile-array prefill toward entity create/update payload preparation only when the worker consumes immutable inputs and the owner thread performs the visible merge.
+7. Keep default-enabled serial-versus-worker differential checks and divergence counters for every expanded packet-prep worker path.
 
 Must-ship acceptance:
 

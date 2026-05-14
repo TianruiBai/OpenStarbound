@@ -398,7 +398,7 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldCommandsDirect,
       status.worldCommandsFailed,
       status.worldCommandWaitMicroseconds));
-  lines.append(strf("World packet prep: ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, sectorFanout={}/{}/{}, entitySerialize={}",
+  lines.append(strf("World packet prep: ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, entityUpdateSets={}/{}/{}/{}, sectorFanout={}/{}/{}, entitySerialize={}",
       status.worldPacketPrepTicks,
       status.worldPacketPrepMonitoringRegionBuilds,
       status.worldPacketPrepMonitoringRegionRects,
@@ -410,6 +410,10 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldPacketPrepEntityStoreCacheMisses,
       status.worldPacketPrepNetStateCacheHits,
       status.worldPacketPrepNetStateCacheMisses,
+      status.worldPacketPrepEntityUpdateSetPackets,
+      status.worldPacketPrepEntityUpdateSetDeltas,
+      status.worldPacketPrepEmptyEntityUpdateSetPackets,
+      status.worldPacketPrepEmptyEntityUpdateSetSkips,
       status.worldPacketPrepSectorClientFanoutLookups,
       status.worldPacketPrepSectorClientFanoutRecipients,
       status.worldPacketPrepSectorClientFanoutMisses,
@@ -522,7 +526,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} entityUpdateSets:{}/{}/{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -543,6 +547,10 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         packetPrep.entityStoreCacheMisses,
         packetPrep.entityNetStateCacheHits,
         packetPrep.entityNetStateCacheMisses,
+        packetPrep.entityUpdateSetPackets,
+        packetPrep.entityUpdateSetDeltas,
+        packetPrep.emptyEntityUpdateSetPackets,
+        packetPrep.emptyEntityUpdateSetSkips,
         packetPrep.sectorClientFanoutLookups,
         packetPrep.sectorClientFanoutRecipients,
         packetPrep.sectorClientFanoutMisses,
@@ -597,7 +605,8 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
 
   for (auto const& systemWorld : summary.systemWorlds) {
     auto const& commands = systemWorld.commandStats;
-    lines.append(strf("system {}: clients={}, activeInstances={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}",
+    auto const& packets = systemWorld.packetStats;
+    lines.append(strf("system {}: clients={}, activeInstances={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packets=updates:{}/{}/{}/{}/{}",
         systemWorld.location,
         systemWorld.clients,
         systemWorld.activeInstanceWorlds,
@@ -606,7 +615,12 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         commands.processed,
         commands.direct,
         commands.failed,
-        commands.waitMicroseconds));
+        commands.waitMicroseconds,
+        packets.updatePackets,
+        packets.objectUpdateDeltas,
+        packets.shipUpdateDeltas,
+        packets.emptyUpdatePackets,
+        packets.emptyUpdateSkips));
   }
 
   return lines.join("\n");

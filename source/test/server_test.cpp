@@ -373,6 +373,7 @@ TEST(ServerTest, WorldStatsCommandReportsDiagnostics) {
   auto statusOutput = server.adminCommand("serverstatus");
   EXPECT_TRUE(statusOutput.contains("regions="));
   EXPECT_TRUE(statusOutput.contains("sectorFanout="));
+  EXPECT_TRUE(statusOutput.contains("entityUpdateSets="));
   EXPECT_TRUE(statusOutput.contains("liquidCache="));
   EXPECT_TRUE(statusOutput.contains("entitySerialize="));
   EXPECT_TRUE(statusOutput.contains("storageTiming="));

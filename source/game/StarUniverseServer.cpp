@@ -379,6 +379,10 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.worldPacketPrepEntityStoreCacheMisses += packetPreparationStats.entityStoreCacheMisses;
           status.worldPacketPrepNetStateCacheHits += packetPreparationStats.entityNetStateCacheHits;
           status.worldPacketPrepNetStateCacheMisses += packetPreparationStats.entityNetStateCacheMisses;
+          status.worldPacketPrepEntityUpdateSetPackets += packetPreparationStats.entityUpdateSetPackets;
+          status.worldPacketPrepEntityUpdateSetDeltas += packetPreparationStats.entityUpdateSetDeltas;
+          status.worldPacketPrepEmptyEntityUpdateSetPackets += packetPreparationStats.emptyEntityUpdateSetPackets;
+          status.worldPacketPrepEmptyEntityUpdateSetSkips += packetPreparationStats.emptyEntityUpdateSetSkips;
           status.worldPacketPrepSectorClientFanoutLookups += packetPreparationStats.sectorClientFanoutLookups;
           status.worldPacketPrepSectorClientFanoutRecipients += packetPreparationStats.sectorClientFanoutRecipients;
           status.worldPacketPrepSectorClientFanoutMisses += packetPreparationStats.sectorClientFanoutMisses;
@@ -551,6 +555,7 @@ UniverseServer::WorldStatsSummary UniverseServer::worldStats() const {
       stats.clients = systemWorld->clients().size();
       stats.activeInstanceWorlds = systemWorld->activeInstanceWorlds().size();
       stats.commandStats = systemWorld->commandStats();
+      stats.packetStats = systemWorld->packetStats();
     }
     summary.systemWorlds.append(std::move(stats));
   }

@@ -37,6 +37,7 @@ public:
 
   void update();
   CommandStats commandStats() const;
+  SystemWorldServer::PacketStats packetStats();
 
   void setClientDestination(ConnectionId clientId, SystemLocation const& location);
   void executeClientShipAction(ConnectionId clientId, ClientShipAction action);

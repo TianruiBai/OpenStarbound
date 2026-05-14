@@ -87,6 +87,10 @@ public:
     uint64_t worldPacketPrepEntityStoreCacheMisses;
     uint64_t worldPacketPrepNetStateCacheHits;
     uint64_t worldPacketPrepNetStateCacheMisses;
+    uint64_t worldPacketPrepEntityUpdateSetPackets;
+    uint64_t worldPacketPrepEntityUpdateSetDeltas;
+    uint64_t worldPacketPrepEmptyEntityUpdateSetPackets;
+    uint64_t worldPacketPrepEmptyEntityUpdateSetSkips;
     uint64_t worldPacketPrepSectorClientFanoutLookups;
     uint64_t worldPacketPrepSectorClientFanoutRecipients;
     uint64_t worldPacketPrepSectorClientFanoutMisses;
@@ -197,6 +201,7 @@ public:
     size_t clients = 0;
     size_t activeInstanceWorlds = 0;
     SystemWorldServerThread::CommandStats commandStats{};
+    SystemWorldServer::PacketStats packetStats{};
   };
 
   struct WorldStatsSummary {

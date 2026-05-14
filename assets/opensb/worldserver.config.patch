@@ -1,5 +1,6 @@
 {
   "scriptContexts" : { "OpenStarbound" : ["/scripts/opensb/worldserver/worldserver.lua"] },
+  "skipEmptyEntityUpdateSets" : false,
   "phase6WorldParallelism" : {
     "storageGenerationPlanning" : true,
     "storageGenerationPlanningWorkerThreads" : 2,

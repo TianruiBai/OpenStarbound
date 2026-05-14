@@ -1,12 +1,17 @@
 #include "StarCellularLiquid.hpp"
+#include "StarCelestialDatabase.hpp"
 #include "StarConfiguration.hpp"
 #include "StarDataStreamDevices.hpp"
 #include "StarFile.hpp"
+#include "StarGameTypes.hpp"
 #include "StarItemDrop.hpp"
 #include "StarLiquidsDatabase.hpp"
 #include "StarMaterialDatabase.hpp"
 #include "StarNetPackets.hpp"
+#include "StarObject.hpp"
+#include "StarObjectDatabase.hpp"
 #include "StarRoot.hpp"
+#include "StarSystemWorldServer.hpp"
 #include "StarTime.hpp"
 #include "StarUniverseConnection.hpp"
 #include "StarUniverseServer.hpp"
@@ -224,6 +229,65 @@ size_t packetTypeCount(List<PacketPtr> const& packets, PacketType packetType) {
   return count;
 }
 
+struct EmptyEntityUpdateSetRun {
+  size_t outgoingUpdateSets = 0;
+  WorldServer::PacketPreparationStats packetPreparationStats;
+};
+
+struct EmptySystemWorldUpdateRun {
+  size_t outgoingUpdates = 0;
+  size_t emptyOutgoingUpdates = 0;
+  SystemWorldServer::PacketStats packetStats;
+};
+
+EmptyEntityUpdateSetRun runEmptyEntityUpdateSetSuppressionFixture(bool skipEmptyEntityUpdateSets) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"skipEmptyEntityUpdateSets", skipEmptyEntityUpdateSets}, {"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  if (!worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true)) {
+    ADD_FAILURE() << "Could not add empty entity update-set test client";
+    return {};
+  }
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  worldServer.update(1.0f / 60.0f);
+  auto packets = worldServer.getOutgoingPackets(1);
+  return EmptyEntityUpdateSetRun{packetTypeCount(packets, PacketType::EntityUpdateSet), worldServer.packetPreparationStats()};
+}
+
+EmptySystemWorldUpdateRun runEmptySystemWorldUpdateSuppressionFixture(bool skipEmptyUpdatePackets) {
+  ConfigurationValueGuard configGuard("systemWorldConfigOverrides", JsonObject{{"skipEmptyUpdatePackets", skipEmptyUpdatePackets}});
+
+  JsonObject diskStore{{"location", jsonFromVec3I(Vec3I())}, {"objects", JsonArray()}, {"lastSpawn", 0.0}, {"objectSpawnTime", 1000000.0}};
+  SystemWorldServer systemWorld(diskStore, make_shared<Clock>(), make_shared<CelestialMasterDatabase>());
+  systemWorld.addClientShip(1, Uuid(), 0.0f, Vec2F());
+  systemWorld.pullOutgoingPackets(1);
+
+  systemWorld.update(SystemWorldTimestep);
+  systemWorld.pullOutgoingPackets(1);
+
+  systemWorld.update(SystemWorldTimestep);
+  auto packets = systemWorld.pullOutgoingPackets(1);
+
+  EmptySystemWorldUpdateRun run;
+  run.outgoingUpdates = packetTypeCount(packets, PacketType::SystemWorldUpdate);
+  for (auto const& packet : packets) {
+    if (auto update = as<SystemWorldUpdatePacket>(packet)) {
+      if (update->objectUpdates.empty() && update->shipUpdates.empty())
+        run.emptyOutgoingUpdates += 1;
+    }
+  }
+  run.packetStats = systemWorld.packetStats();
+  return run;
+}
+
 struct PacketCaptureCounts {
   uint64_t total = 0;
   uint64_t stepUpdates = 0;
@@ -233,6 +297,8 @@ struct PacketCaptureCounts {
   uint64_t tileDamageUpdates = 0;
   uint64_t entityCreates = 0;
   uint64_t entityUpdates = 0;
+  uint64_t entityUpdateDeltas = 0;
+  uint64_t emptyEntityUpdates = 0;
   uint64_t entityDestroys = 0;
   uint64_t giveItems = 0;
   uint64_t modificationFailures = 0;
@@ -241,6 +307,7 @@ struct PacketCaptureCounts {
 LiquidId firstTestLiquidId();
 Maybe<MaterialId> firstTestMaterialId();
 Maybe<MaterialId> firstTestFallingMaterialId();
+Maybe<String> firstTestObjectName();
 
 void addPacketCaptureCounts(PacketCaptureCounts& counts, List<PacketPtr> const& packets) {
   counts.total += packets.size();
@@ -266,6 +333,11 @@ void addPacketCaptureCounts(PacketCaptureCounts& counts, List<PacketPtr> const& 
         break;
       case PacketType::EntityUpdateSet:
         counts.entityUpdates += 1;
+        if (auto updateSet = as<EntityUpdateSetPacket>(packet)) {
+          counts.entityUpdateDeltas += updateSet->deltas.size();
+          if (updateSet->deltas.empty())
+            counts.emptyEntityUpdates += 1;
+        }
         break;
       case PacketType::EntityDestroy:
         counts.entityDestroys += 1;
@@ -312,10 +384,23 @@ bool setSelfWorkloadForegroundMaterial(WorldServer& worldServer, Vec2I const& po
   return true;
 }
 
+ObjectPtr createSelfWorkloadWireObject(String const& objectName, Vec2I const& position, bool inputNode, bool outputNode) {
+  JsonObject orientationOverride{{"anchors", JsonArray()}, {"bgAnchors", JsonArray()}, {"fgAnchors", JsonArray()}, {"spaces", JsonArray{jsonFromVec2I(Vec2I())}}, {"collision", "none"}};
+  JsonObject parameters{{"customOrientations", JsonArray{orientationOverride}}, {"scripts", JsonArray()}, {"scriptDelta", 1}, {"keepAlive", true}, {"unbreakable", true}};
+  if (inputNode)
+    parameters["inputNodes"] = JsonArray{jsonFromVec2I(Vec2I())};
+  if (outputNode)
+    parameters["outputNodes"] = JsonArray{jsonFromVec2I(Vec2I())};
+
+  auto object = Root::singleton().objectDatabase()->createObject(objectName, parameters);
+  object->setTilePosition(position);
+  return object;
+}
+
 GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
   size_t const ClientCount = 4;
   size_t const Ticks = 240;
-  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"skipEmptyEntityUpdateSets", true}, {"phase6WorldParallelism", JsonObject{
       {"storageGenerationPlanning", true},
       {"storageGenerationPlanningWorkerThreads", 2},
       {"storageGenerationPlanningMinimumSectors", 0},
@@ -387,6 +472,26 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
       return {};
     }
     worldServer.addEntity(itemDrop, static_cast<EntityId>(1000 + i));
+  }
+
+  auto wireObjectName = firstTestObjectName();
+  EXPECT_TRUE((bool)wireObjectName);
+  if (wireObjectName) {
+    Vec2I sourcePosition(140, 46);
+    Vec2I relayPosition(142, 46);
+    Vec2I sinkPosition(144, 46);
+    for (auto position : {sourcePosition, relayPosition, sinkPosition}) {
+      if (!setSelfWorkloadForegroundMaterial(worldServer, position, EmptyMaterialId)) {
+        ADD_FAILURE() << "Could not clear self-workload capture wire object position";
+        return {};
+      }
+    }
+
+    worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, sourcePosition, false, true), 3000);
+    worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, relayPosition, true, true), 3001);
+    worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, sinkPosition, true, false), 3002);
+    worldServer.wire(sourcePosition, 0, relayPosition, 0);
+    worldServer.wire(relayPosition, 0, sinkPosition, 0);
   }
 
   PacketCaptureCounts packetCounts;
@@ -469,6 +574,8 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
             << " tileDamage=" << capture.packets.tileDamageUpdates
             << " entityCreate=" << capture.packets.entityCreates
             << " entityUpdate=" << capture.packets.entityUpdates
+            << " entityUpdateDeltas=" << capture.packets.entityUpdateDeltas
+            << " emptyEntityUpdate=" << capture.packets.emptyEntityUpdates
             << " entityDestroy=" << capture.packets.entityDestroys
             << " giveItem=" << capture.packets.giveItems
             << " failures=" << capture.packets.modificationFailures
@@ -477,6 +584,7 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
             << " sectorCache=" << capture.packetPreparationStats.sectorPacketCacheHits << "/" << capture.packetPreparationStats.sectorPacketCacheMisses
             << " entityStoreCache=" << capture.packetPreparationStats.entityStoreCacheHits << "/" << capture.packetPreparationStats.entityStoreCacheMisses
             << " netStateCache=" << capture.packetPreparationStats.entityNetStateCacheHits << "/" << capture.packetPreparationStats.entityNetStateCacheMisses
+            << " updateSets=" << capture.packetPreparationStats.entityUpdateSetPackets << "/" << capture.packetPreparationStats.entityUpdateSetDeltas << "/" << capture.packetPreparationStats.emptyEntityUpdateSetPackets << "/" << capture.packetPreparationStats.emptyEntityUpdateSetSkips
             << " sectorFanout=" << capture.packetPreparationStats.sectorClientFanoutLookups << "/" << capture.packetPreparationStats.sectorClientFanoutRecipients << "/" << capture.packetPreparationStats.sectorClientFanoutMisses
             << " liquidCache=" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuilds << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheRegions << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheBuckets << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheLookups << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheCandidates << "/" << capture.phase6Stats.liquidNoProcessingLimitRegionCacheHits
             << " falling=" << capture.phase6Stats.fallingBlocksBaselineTicks << "/" << capture.phase6Stats.fallingBlocksPendingPositions << "/" << capture.phase6Stats.fallingBlocksProcessedPositions << "/" << capture.phase6Stats.fallingBlocksMovedBlocks
@@ -517,6 +625,18 @@ Maybe<MaterialId> firstTestFallingMaterialId() {
     if (materialId != EmptyMaterialId && materialDatabase->canPlaceInLayer(materialId, TileLayer::Foreground)
         && (materialDatabase->isFallingMaterial(materialId) || materialDatabase->isCascadingFallingMaterial(materialId)))
       return materialId;
+  }
+  return {};
+}
+
+Maybe<String> firstTestObjectName() {
+  auto objectDatabase = Root::singleton().objectDatabase();
+  for (auto const& objectName : objectDatabase->allObjects()) {
+    try {
+      auto config = objectDatabase->getConfig(objectName);
+      if (config->type == "object" && !config->orientations.empty())
+        return objectName;
+    } catch (std::exception const&) {}
   }
   return {};
 }
@@ -915,6 +1035,36 @@ TEST(MulticorePhaseTest, ServerOptimizationEntitySerializationStatsAttributePack
   EXPECT_EQ(deltaStats->deltaNetStateCalls, createStats->deltaNetStateCalls + 2);
 }
 
+TEST(MulticorePhaseTest, ServerOptimizationSkipEmptyEntityUpdateSetsIsGuarded) {
+  auto legacyRun = runEmptyEntityUpdateSetSuppressionFixture(false);
+  EXPECT_GT(legacyRun.outgoingUpdateSets, 0u);
+  EXPECT_EQ(legacyRun.packetPreparationStats.entityUpdateSetPackets, legacyRun.outgoingUpdateSets);
+  EXPECT_EQ(legacyRun.packetPreparationStats.emptyEntityUpdateSetPackets, legacyRun.outgoingUpdateSets);
+  EXPECT_EQ(legacyRun.packetPreparationStats.emptyEntityUpdateSetSkips, 0u);
+
+  auto optimizedRun = runEmptyEntityUpdateSetSuppressionFixture(true);
+  EXPECT_EQ(optimizedRun.outgoingUpdateSets, 0u);
+  EXPECT_EQ(optimizedRun.packetPreparationStats.entityUpdateSetPackets, 0u);
+  EXPECT_EQ(optimizedRun.packetPreparationStats.emptyEntityUpdateSetPackets, 0u);
+  EXPECT_GT(optimizedRun.packetPreparationStats.emptyEntityUpdateSetSkips, 0u);
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationSkipEmptySystemWorldUpdatesIsGuarded) {
+  auto legacyRun = runEmptySystemWorldUpdateSuppressionFixture(false);
+  EXPECT_GT(legacyRun.outgoingUpdates, 0u);
+  EXPECT_EQ(legacyRun.emptyOutgoingUpdates, legacyRun.outgoingUpdates);
+  EXPECT_EQ(legacyRun.packetStats.updatePackets, legacyRun.outgoingUpdates + 1);
+  EXPECT_GT(legacyRun.packetStats.shipUpdateDeltas, 0u);
+  EXPECT_GT(legacyRun.packetStats.emptyUpdatePackets, 0u);
+  EXPECT_EQ(legacyRun.packetStats.emptyUpdateSkips, 0u);
+
+  auto optimizedRun = runEmptySystemWorldUpdateSuppressionFixture(true);
+  EXPECT_EQ(optimizedRun.outgoingUpdates, 0u);
+  EXPECT_GT(optimizedRun.packetStats.shipUpdateDeltas, 0u);
+  EXPECT_EQ(optimizedRun.packetStats.emptyUpdatePackets, 0u);
+  EXPECT_GT(optimizedRun.packetStats.emptyUpdateSkips, 0u);
+}
+
 TEST(MulticorePhaseTest, ServerOptimizationWorldStorageTimingStatsTrackSyncAndSkipUnchangedInserts) {
   ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
       {"storageGenerationPlanning", false},
@@ -968,9 +1118,15 @@ TEST(ServerMeasurement, DISABLED_GameMechanismSelfWorkloadCapture) {
   EXPECT_GT(capture.packetPreparationStats.monitoringRegionBuilds, 0u);
   EXPECT_GT(capture.packetPreparationStats.sectorPacketCacheHits + capture.packetPreparationStats.sectorPacketCacheMisses, 0u);
   EXPECT_GT(capture.packetPreparationStats.entityStoreCacheMisses, 0u);
+  EXPECT_EQ(capture.packetPreparationStats.entityUpdateSetPackets, capture.packets.entityUpdates);
+  EXPECT_GT(capture.packetPreparationStats.entityUpdateSetDeltas, 0u);
+  EXPECT_EQ(capture.packets.emptyEntityUpdates, 0u);
+  EXPECT_GT(capture.packetPreparationStats.emptyEntityUpdateSetSkips, 0u);
   EXPECT_GT(capture.phase6Stats.liquidBaselineTicks, 0u);
   EXPECT_GT(capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips, 0u);
   EXPECT_GT(capture.phase6Stats.fallingBlocksMovedBlocks, 0u);
+  EXPECT_GT(capture.phase6Stats.wiringInitialEntities, 0u);
+  EXPECT_GT(capture.phase6Stats.wiringEvaluatedEntities, 0u);
   EXPECT_GT(capture.phase6Stats.entityBaselineTicks, 0u);
   EXPECT_GT(capture.phase6Stats.entityUpdatedEntities, 0u);
   EXPECT_GT(capture.phase6Stats.luaBaselineTicks, 0u);

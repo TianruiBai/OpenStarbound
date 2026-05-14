@@ -9,9 +9,27 @@
 
 namespace Star {
 
+namespace {
+
+Json readSystemWorldServerConfig() {
+  auto& root = Root::singleton();
+  auto systemWorldConfig = root.assets()->json("/systemworld.config");
+
+  auto configOverrides = root.configuration()->get("systemWorldConfigOverrides", {});
+  if (configOverrides.isType(Json::Type::Object)) {
+    for (auto const& pair : configOverrides.iterateObject())
+      systemWorldConfig = systemWorldConfig.set(pair.first, pair.second);
+  }
+
+  return systemWorldConfig;
+}
+
+}
+
 SystemWorldServer::SystemWorldServer(Vec3I location, ClockConstPtr universeClock, CelestialDatabasePtr celestialDatabase)
   : SystemWorld(std::move(universeClock), std::move(celestialDatabase)) {
   m_location = std::move(location);
+  m_skipEmptyUpdatePackets = readSystemWorldServerConfig().getBool("skipEmptyUpdatePackets", false);
 
   placeInitialObjects();
 
@@ -23,6 +41,7 @@ SystemWorldServer::SystemWorldServer(Vec3I location, ClockConstPtr universeClock
 SystemWorldServer::SystemWorldServer(Json const& diskStore, ClockConstPtr universeClock, CelestialDatabasePtr celestialDatabase)
   : SystemWorld(std::move(universeClock), std::move(celestialDatabase)) {
   m_location = jsonToVec3I(diskStore.get("location"));
+  m_skipEmptyUpdatePackets = readSystemWorldServerConfig().getBool("skipEmptyUpdatePackets", false);
 
   for (auto objectStore : diskStore.getArray("objects")) {
     auto object = make_shared<SystemObject>(this, objectStore);
@@ -271,6 +290,7 @@ void SystemWorldServer::queueUpdatePackets() {
       if (!shipUpdate.first.empty())
         shipUpdates.set(ship->uuid(), shipUpdate.first);
     }
+    m_packetStats.shipUpdateDeltas += shipUpdates.size();
 
     HashMap<Uuid, ByteArray> objectUpdates;
     for (auto object : m_objects.values()) {
@@ -280,6 +300,16 @@ void SystemWorldServer::queueUpdatePackets() {
       if (!objectUpdate.first.empty())
         objectUpdates.set(object->uuid(), objectUpdate.first);
     }
+    m_packetStats.objectUpdateDeltas += objectUpdates.size();
+
+    if (shipUpdates.empty() && objectUpdates.empty()) {
+      if (m_skipEmptyUpdatePackets) {
+        m_packetStats.emptyUpdateSkips += 1;
+        continue;
+      }
+      m_packetStats.emptyUpdatePackets += 1;
+    }
+    m_packetStats.updatePackets += 1;
     m_outgoingPackets[clientId].append(make_shared<SystemWorldUpdatePacket>(objectUpdates, shipUpdates));
   }
 }
@@ -295,6 +325,10 @@ void SystemWorldServer::handleIncomingPacket(ConnectionId, PacketPtr packet) {
 
 List<PacketPtr> SystemWorldServer::pullOutgoingPackets(ConnectionId clientId) {
   return take(m_outgoingPackets[clientId]);
+}
+
+SystemWorldServer::PacketStats SystemWorldServer::packetStats() const {
+  return m_packetStats;
 }
 
 bool SystemWorldServer::triggeredStorage() {

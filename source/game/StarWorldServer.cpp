@@ -890,6 +890,10 @@ void WorldServer::recordPacketPreparationStats(WorldTickSnapshot const& snapshot
   m_packetPreparationStats.entityStoreCacheMisses += snapshot.packetPreparationStats.entityStoreCacheMisses;
   m_packetPreparationStats.entityNetStateCacheHits += snapshot.packetPreparationStats.entityNetStateCacheHits;
   m_packetPreparationStats.entityNetStateCacheMisses += snapshot.packetPreparationStats.entityNetStateCacheMisses;
+  m_packetPreparationStats.entityUpdateSetPackets += snapshot.packetPreparationStats.entityUpdateSetPackets;
+  m_packetPreparationStats.entityUpdateSetDeltas += snapshot.packetPreparationStats.entityUpdateSetDeltas;
+  m_packetPreparationStats.emptyEntityUpdateSetPackets += snapshot.packetPreparationStats.emptyEntityUpdateSetPackets;
+  m_packetPreparationStats.emptyEntityUpdateSetSkips += snapshot.packetPreparationStats.emptyEntityUpdateSetSkips;
   addEntitySerializationStats(m_packetPreparationStats.entitySerializationStats, snapshot.packetPreparationStats.entitySerializationStats);
 }
 
@@ -1256,7 +1260,7 @@ void WorldServer::update(float dt) {
 
     LogMap::set(strf("server_{}_entities", m_worldId), strf("{} in {} sectors", m_entityMap->size(), m_tileArray->loadedSectorCount()));
     LogMap::set(strf("server_{}_time", m_worldId), strf("age = {:4.2f}, day = {:4.2f}/{:4.2f}s", epochTime(), timeOfDay(), dayLength()));
-    LogMap::set(strf("server_{}_packet_prep", m_worldId), strf("ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, sectorFanout={}/{}/{}",
+    LogMap::set(strf("server_{}_packet_prep", m_worldId), strf("ticks={}, regions={}/{}/{}/{}, sectorCache={}/{}, entityStoreCache={}/{}, netStateCache={}/{}, entityUpdateSets={}/{}/{}/{}, sectorFanout={}/{}/{}",
         m_packetPreparationStats.ticks,
         m_packetPreparationStats.monitoringRegionBuilds,
         m_packetPreparationStats.monitoringRegionRects,
@@ -1268,6 +1272,10 @@ void WorldServer::update(float dt) {
         m_packetPreparationStats.entityStoreCacheMisses,
         m_packetPreparationStats.entityNetStateCacheHits,
         m_packetPreparationStats.entityNetStateCacheMisses,
+        m_packetPreparationStats.entityUpdateSetPackets,
+        m_packetPreparationStats.entityUpdateSetDeltas,
+        m_packetPreparationStats.emptyEntityUpdateSetPackets,
+        m_packetPreparationStats.emptyEntityUpdateSetSkips,
         m_packetPreparationStats.sectorClientFanoutLookups,
         m_packetPreparationStats.sectorClientFanoutRecipients,
         m_packetPreparationStats.sectorClientFanoutMisses));
@@ -1997,6 +2005,7 @@ void WorldServer::init(bool firstTime) {
   m_phase6PacketPreparationSectorPrefillMinimumSectors = phase6Config.getUInt("packetPreparationSectorPrefillMinimumSectors", 8);
   m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
   m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
+  m_skipEmptyEntityUpdateSets = m_serverConfig.getBool("skipEmptyEntityUpdateSets", false);
   bool mutationParallelismRequested = phase6Config.getBool("liquidMutationParallelism", false)
       || phase6Config.getBool("fallingBlockMutationParallelism", false)
       || phase6Config.getBool("wiringMutationParallelism", false)
@@ -2681,8 +2690,19 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
     }
   }
 
-  for (auto& p : updateSetPackets)
-    clientInfo->outgoingPackets.append(std::move(p.second));
+  for (auto& p : updateSetPackets) {
+    auto updateSetPacket = std::move(p.second);
+    snapshot.packetPreparationStats.entityUpdateSetDeltas += updateSetPacket->deltas.size();
+    if (updateSetPacket->deltas.empty()) {
+      if (m_skipEmptyEntityUpdateSets) {
+        snapshot.packetPreparationStats.emptyEntityUpdateSetSkips += 1;
+        continue;
+      }
+      snapshot.packetPreparationStats.emptyEntityUpdateSetPackets += 1;
+    }
+    snapshot.packetPreparationStats.entityUpdateSetPackets += 1;
+    clientInfo->outgoingPackets.append(std::move(updateSetPacket));
+  }
 }
 
 void WorldServer::updateDamage(float dt) {

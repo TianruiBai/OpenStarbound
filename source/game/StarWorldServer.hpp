@@ -90,6 +90,10 @@ public:
     uint64_t entityStoreCacheMisses = 0;
     uint64_t entityNetStateCacheHits = 0;
     uint64_t entityNetStateCacheMisses = 0;
+    uint64_t entityUpdateSetPackets = 0;
+    uint64_t entityUpdateSetDeltas = 0;
+    uint64_t emptyEntityUpdateSetPackets = 0;
+    uint64_t emptyEntityUpdateSetSkips = 0;
     uint64_t sectorClientFanoutLookups = 0;
     uint64_t sectorClientFanoutRecipients = 0;
     uint64_t sectorClientFanoutMisses = 0;
@@ -591,6 +595,7 @@ private:
   size_t m_phase6PacketPreparationSectorPrefillMinimumSectors;
   bool m_phase6PacketPreparationSectorPrefillDifferentialCheck;
   bool m_phase6SubsystemBaselineMetricsEnabled;
+  bool m_skipEmptyEntityUpdateSets;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
   HashMap<ServerTileSectorArray::Sector, HashSet<ConnectionId>> m_sectorClientSubscriptions;
 
