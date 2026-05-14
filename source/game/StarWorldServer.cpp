@@ -2178,7 +2178,7 @@ void WorldServer::init(bool firstTime) {
   bool mutationDependencyGate = phase6Config.getBool("mutationParallelismDependencyAnalysis", false);
   bool mutationModVisibilityGate = phase6Config.getBool("mutationParallelismModVisibilityContract", false);
   uint32_t mutationWorkerEligibleSubsystems = LiquidMutationParallelismSubsystem | FallingBlockMutationParallelismSubsystem | WiringMutationParallelismSubsystem;
-  if (mutationFixedSeedGate && mutationDependencyGate && mutationModVisibilityGate)
+  if (mutationFixedSeedGate && mutationDependencyGate && mutationModVisibilityGate && m_phase6MutationParallelismWorkerThreads > 1)
     m_phase6MutationWorkerSubsystems = mutationParallelismRequestedSubsystems & mutationWorkerEligibleSubsystems;
   else
     m_phase6MutationWorkerSubsystems = 0;
