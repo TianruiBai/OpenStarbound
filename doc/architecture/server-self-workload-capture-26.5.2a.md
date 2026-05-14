@@ -6,19 +6,21 @@ This note records the first repeatable in-process game-mechanism workload added 
 
 ## Harness
 
-New disabled test:
+Disabled measurement tests:
 
 ```text
 ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture
+ServerMeasurement.DISABLED_SaveDisconnectStorageCapture
 ```
 
-Run command from `source`:
+Run commands from `source`:
 
 ```powershell
 ..\dist\game_tests.exe -bootconfig ..\scripts\windows\sbinit.config "--gtest_filter=ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture" --gtest_also_run_disabled_tests
+..\dist\game_tests.exe -bootconfig ..\scripts\windows\sbinit.config "--gtest_filter=ServerMeasurement.DISABLED_SaveDisconnectStorageCapture" --gtest_also_run_disabled_tests
 ```
 
-The workload builds a direct `WorldServer` fixture and exercises:
+The game-mechanism workload builds a direct `WorldServer` fixture and exercises:
 
 - 4 acknowledged client windows with repeated window movement
 - generated active world regions
@@ -40,21 +42,39 @@ The fixture intentionally stays in-process. It avoids UI automation and keeps th
 2026-05-14 local result with `skipEmptyEntityUpdateSets=true` in the capture fixture:
 
 ```text
-GameMechanismCapture clients=4 ticks=240 packets=23025 step=960 tileArray=100 tile=3116 liquid=16888 tileDamage=1008 entityCreate=92 entityUpdate=784 entityUpdateDeltas=4800 emptyEntityUpdate=0 entityDestroy=36 giveItem=1 failures=0 packetPrepTicks=240 regions=960/960/960/2160 sectorCache=100/0 entityStoreCache=69/23 netStateCache=8094/7506 updateSets=784/4800/0/176 sectorFanout=5280/21120/0 liquidCache=12/48/48/320/5016/20064/5016 falling=30/1216/1540/324 wiring=48/144/144/144/144 wiringDirty=144/141/3/3/3/141/3 entity=240/3932/720/9/3932/3932/45/148/13735/541 lua=240/240/240/530/15 storage=1/64/64/64/66/65/1/65/6284 chunks=65 elapsedUs=174874
+GameMechanismCapture clients=4 ticks=240 packets=22085 step=960 tileArray=100 tile=3116 liquid=15944 tileDamage=1008 entityCreate=92 entityUpdate=784 entityUpdateDeltas=4800 emptyEntityUpdate=0 entityDestroy=40 giveItem=1 failures=0 packetPrepTicks=240 regions=960/960/960/2160 sectorCache=100/0 entityStoreCache=69/23 netStateCache=7968/7464 updateSets=784/4800/0/176 sectorFanout=5044/20176/0 liquidCache=12/48/48/320/4830/19320/4830 falling=30/1216/1539/324 wiring=48/144/144/144/144 wiringDirty=144/141/3/3/3/141/3 entity=240/3891/720/10/3891/3891/230/162/14890/622 entityTypes=object=720/720/0/1047/75,itemDrop=3171/0/10/13441/113 lua=240/240/240/240/569/12 luaContexts=OpenStarbound=240/240/240/569/12 storage=1/64/64/64/66/65/1/65/6286 dirty=32/32/3/0/32/0 dirtySync=32/0/0 dirtySnapshot=0/32 snapshotSync=32/18360 chunks=65 elapsedUs=166491
 ```
 
 Important reads:
 
-- Liquid fan-out remains the largest packet class in this synthetic capture: `16888` liquid update packets and `sectorFanout=5280/21120/0`.
+- Liquid fan-out remains the largest packet class in this synthetic capture: `15944` liquid update packets and `sectorFanout=5044/20176/0`.
 - The liquid cache rebuild-skip optimization is active under stable monitoring windows: `liquidCache=12/48/...`.
-- Tile-update, tile-damage, and falling-block paths are now nonzero: `tile=3116`, `tileDamage=1008`, `falling=30/1216/1540/324`.
+- Tile-update, tile-damage, and falling-block paths are now nonzero: `tile=3116`, `tileDamage=1008`, `falling=30/1216/1539/324`.
 - The minimal wire-object chain gives wiring a real baseline: `wiring=48/144/144/144/144`; `wiringDirty=144/141/3/3/3/141/3` means signature checks/clean networks/dirty networks/topology-dirty networks/output-dirty networks/clean entities/dirty entities, with the full serial scan still running.
 - Entity create-store sharing works across clients: `entityStoreCache=69/23`.
 - Empty entity update-set suppression is measured but still opt-in: the capture emitted `784` update sets, carried `4800` deltas, emitted `0` empty update sets, and skipped `176` empty update sets. An earlier legacy-compatible run emitted `960` update sets with `4808` deltas and `176` empty update-set packets.
-- Delta net-state cache now shows both reuse and misses: `netStateCache=8094/7506`. This should still be investigated, but not by blindly caching first-observation bytes.
-- Entity compatibility-layer attribution is now nonzero: `entity=240/3932/720/9/3932/3932/45/148/13735/541` means ticks/updated/tile/destroyed/copied/sorted/copyUs/sortUs/updateUs/metadataUs.
-- Lua compatibility-layer attribution is now nonzero for the OpenStarbound world script context: `lua=240/240/240/530/15` means ticks/contexts/updates/updateUs/maxSingleUpdateUs.
-- Storage remains measurable: `storage=1/64/64/64/66/65/1/65/6284`, including a full snapshot export.
+- Delta net-state cache now shows both reuse and misses: `netStateCache=7968/7464`. This should still be investigated, but not by blindly caching first-observation bytes.
+- Entity compatibility-layer attribution is now nonzero and split by entity type: `entity=240/3891/720/10/3891/3891/230/162/14890/622` means ticks/updated/tile/destroyed/copied/sorted/copyUs/sortUs/updateUs/metadataUs, while `entityTypes=object=720/720/0/1047/75,itemDrop=3171/0/10/13441/113` means updated/tile/destroyed/callbackUs/maxCallbackUs by type.
+- Lua compatibility-layer attribution is now nonzero for the OpenStarbound world script context: `lua=240/240/240/240/569/12` means ticks/contexts/updateCalls/readyUpdates/updateUs/maxSingleUpdateUs, and `luaContexts=OpenStarbound=240/240/240/569/12` means contextTicks/updateCalls/readyUpdates/updateUs/maxUpdateUs.
+- Storage remains measurable: `storage=1/64/64/64/66/65/1/65/6286` and `snapshotSync=32/18360`, separating the full snapshot export from the pre-export sector sync work.
+- Dirty-sector diagnostics are active while the new dirty-sector filtering gate remains default-off: `dirty=32/32/3/0/32/0` means marked sectors/tile/entity/unique/generation/unload reason marks, `dirtySync=32/0/0` means the one explicit sync visited 32 dirty-marked sectors, 0 unmarked sectors, and skipped 0 clean sectors, and `dirtySnapshot=0/32` means the later snapshot pre-sync saw only already-flushed sectors.
+
+## Save/Disconnect Storage Capture
+
+2026-05-14 local result:
+
+```text
+SaveDisconnectStorageCapture dirtyTileEdits=64 syncPasses=5 snapshotExports=10 chunks=41 sync=5/100/300 entity=300/0/300/161 tile=300/9524100/64805 copy=300/9210 compress=616/9536032/45666/41688 btree=46/570/4295/41601/614 storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0 dirty=24/24/0/0/20/0 dirtySync=24/76/0 dirtySnapshot=0/200 commit=5/31970 snapshot=10/410/32196/220 snapshotSync=200/85782 elapsedUs=162640
+```
+
+Important reads:
+
+- The fixture exercises repeated ordinary sync passes plus repeated full snapshot exports, which is closer to save/disconnect pressure than the general mechanism capture.
+- `sync=5/100/300` means sync calls/sync-pass sectors/all synced sectors; the difference is mostly `readChunks()` pre-sync work.
+- `snapshot=10/410/32196/220` and `snapshotSync=200/85782` separate B-tree export size/time from the owner-thread sector pre-sync required before exporting chunks.
+- `btree=46/570/4295/41601/614` confirms unchanged-sector insert skipping is active while default config still visits and serializes loaded sectors.
+- `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0` means metadata/tile-sector/entity-sector/unique-index/sector-unique writes/skips/removes. In this fixture, repeated tile and entity sector serialization dominate the skip count, while unique-index surfaces stay quiet.
+- `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, and `dirtySnapshot=0/200` show that the fixture dirtied 24 sectors by tile/generation reasons, then default config serially visited both dirty and clean sectors during sync and saw only clean sectors during post-sync full snapshot pre-sync. The third `dirtySync` value is clean sectors skipped; it stays `0` here because `storageDirtySectorFiltering` is default-off.
 
 ## Compatibility-Sensitive Prep
 
@@ -74,7 +94,7 @@ Preparation rule: do not cache first-observation `writeNetState(0)` bytes direct
 3. Differential-check generated bytes against current `writeNetState(0)` output.
 4. Only then consider caching or workerizing first-observation bytes.
 
-The capture's `netStateCache=8013/7479` makes entity replication a good research target, but the version-advancement contract is the gate.
+The capture's `netStateCache=7968/7464` makes entity replication a good research target, but the version-advancement contract is the gate.
 
 `skipEmptyEntityUpdateSets` is a guarded packet-stream optimization. The packaged config leaves it `false` for legacy-compatible default behavior because empty update sets can represent a blank delta from a remote master. When enabled, packet prep records `entityUpdateSets=emitted/deltas/empty/skipped` diagnostics and suppresses only update-set packets with no deltas.
 
@@ -91,7 +111,7 @@ Entry points:
 
 Preparation rule: dirty-sector filtering is safer than changing full snapshot export semantics, but dirty reasons must be explicit. Required dirty reasons include tile data, entity store, entity movement across sectors, unique entity index changes, sector-unique stores, generation writes, unload, and expiration.
 
-The first implementation should add dirty reason counters and a serial fallback. Full `readChunks()` export reduction should wait for byte-equivalence tests because ship/disconnect snapshots are durable client-context state.
+The dirty-sector implementation now records dirty reason counters and marked/unmarked/skipped ordinary sync visits, with clean-sector skipping kept behind the default-off `storageDirtySectorFiltering` gate. Full `readChunks()` export reduction should stay behind client-context equivalence coverage because ship/disconnect snapshots are durable client-context state; `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent` now verifies that `ServerClientContext::buildShipChunksSnapshot`, server-side apply, client-side `ClientContext` reads, changed chunks, added chunks, removed chunks, and no-op clean snapshots preserve the current update semantics.
 
 ### Wiring Dirty-Network Tracking
 
@@ -168,7 +188,7 @@ Keep serial until a stronger contract exists:
 1. Expand the wire-object fixture into stable and toggled networks before changing wiring behavior.
 2. Expand Lua attribution beyond the OpenStarbound worldserver context before changing any script execution behavior.
 3. Expand the falling-material fixture into a taller or cascading stress case before changing falling-block behavior.
-4. Add a save/disconnect-style workload that captures repeated `sync()` plus `readChunks()` under dirty and unchanged sectors.
+4. Done: add a save/disconnect-style storage workload that captures repeated `sync()` plus `readChunks()` under dirty and unchanged sectors, including dirty-reason counters. Future expansion should add ship/client-context persistence and entity/unique/unload dirty fixtures before changing storage behavior.
 5. Add an A/B variant for default queue-only networking versus `queueOnlyConnectionSend=false` once the mechanism workload is lifted into a full `UniverseServer` dummy-client path.
 6. Add an asset/mod startup capture that records source enumeration, patch parse/application, load-script, preload, and queued worker timings for a vanilla asset set and at least one modpack smoke set.
 

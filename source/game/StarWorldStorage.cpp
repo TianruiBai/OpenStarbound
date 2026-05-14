@@ -18,6 +18,7 @@ namespace Star {
 void WorldStorageTimingStats::add(WorldStorageTimingStats const& stats) {
   syncs += stats.syncs;
   syncedSectors += stats.syncedSectors;
+  syncPassSectors += stats.syncPassSectors;
   entityStoreSectors += stats.entityStoreSectors;
   entityStoreEntities += stats.entityStoreEntities;
   entityStoreBytes += stats.entityStoreBytes;
@@ -36,9 +37,37 @@ void WorldStorageTimingStats::add(WorldStorageTimingStats const& stats) {
   btreeInsertMicroseconds += stats.btreeInsertMicroseconds;
   btreeInsertSkips += stats.btreeInsertSkips;
   btreeInsertSkipBytes += stats.btreeInsertSkipBytes;
+  metadataWrites += stats.metadataWrites;
+  metadataWriteSkips += stats.metadataWriteSkips;
+  metadataRemoves += stats.metadataRemoves;
+  tileSectorWrites += stats.tileSectorWrites;
+  tileSectorWriteSkips += stats.tileSectorWriteSkips;
+  tileSectorRemoves += stats.tileSectorRemoves;
+  entitySectorWrites += stats.entitySectorWrites;
+  entitySectorWriteSkips += stats.entitySectorWriteSkips;
+  entitySectorRemoves += stats.entitySectorRemoves;
+  uniqueIndexWrites += stats.uniqueIndexWrites;
+  uniqueIndexWriteSkips += stats.uniqueIndexWriteSkips;
+  uniqueIndexRemoves += stats.uniqueIndexRemoves;
+  sectorUniqueWrites += stats.sectorUniqueWrites;
+  sectorUniqueWriteSkips += stats.sectorUniqueWriteSkips;
+  sectorUniqueRemoves += stats.sectorUniqueRemoves;
+  dirtyMarkedSectors += stats.dirtyMarkedSectors;
+  dirtyTileSectorMarks += stats.dirtyTileSectorMarks;
+  dirtyEntitySectorMarks += stats.dirtyEntitySectorMarks;
+  dirtyUniqueSectorMarks += stats.dirtyUniqueSectorMarks;
+  dirtyGenerationSectorMarks += stats.dirtyGenerationSectorMarks;
+  dirtyUnloadSectorMarks += stats.dirtyUnloadSectorMarks;
+  dirtySyncMarkedSectors += stats.dirtySyncMarkedSectors;
+  dirtySyncUnmarkedSectors += stats.dirtySyncUnmarkedSectors;
+  dirtySyncSkippedSectors += stats.dirtySyncSkippedSectors;
+  dirtySnapshotMarkedSectors += stats.dirtySnapshotMarkedSectors;
+  dirtySnapshotUnmarkedSectors += stats.dirtySnapshotUnmarkedSectors;
   commits += stats.commits;
   commitMicroseconds += stats.commitMicroseconds;
   fullSnapshotExports += stats.fullSnapshotExports;
+  fullSnapshotSyncSectors += stats.fullSnapshotSyncSectors;
+  fullSnapshotSyncMicroseconds += stats.fullSnapshotSyncMicroseconds;
   fullSnapshotChunks += stats.fullSnapshotChunks;
   fullSnapshotBytes += stats.fullSnapshotBytes;
   fullSnapshotExportMicroseconds += stats.fullSnapshotExportMicroseconds;
@@ -134,7 +163,7 @@ VersionedJson WorldStorage::worldMetadata() {
 }
 
 void WorldStorage::setWorldMetadata(VersionedJson const& metadata) {
-  insertStoredValue(metadataKey(), writeWorldMetadataTracked({Vec2U(m_tileArray->size()), metadata}));
+  insertStoredValue(StoreType::Metadata, metadataKey(), writeWorldMetadataTracked({Vec2U(m_tileArray->size()), metadata}));
 }
 
 ServerTileSectorArrayPtr const& WorldStorage::tileArray() const {
@@ -160,6 +189,42 @@ Maybe<RectI> WorldStorage::regionForSector(Sector sector) const {
   if (m_tileArray->sectorValid(sector))
     return m_tileArray->sectorRegion(sector);
   return {};
+}
+
+void WorldStorage::markSectorDirty(Sector const& sector, uint32_t reasonMask) {
+  if (!m_tileArray->sectorValid(sector) || reasonMask == 0)
+    return;
+
+  auto& reasons = m_dirtySectorReasons[sector];
+  uint32_t newReasons = reasonMask & ~reasons;
+  if (newReasons == 0)
+    return;
+
+  if (reasons == 0)
+    m_storageTimingStats.dirtyMarkedSectors += 1;
+  reasons |= reasonMask;
+
+  if (newReasons & TileDirtySectorReason)
+    m_storageTimingStats.dirtyTileSectorMarks += 1;
+  if (newReasons & EntityDirtySectorReason)
+    m_storageTimingStats.dirtyEntitySectorMarks += 1;
+  if (newReasons & UniqueDirtySectorReason)
+    m_storageTimingStats.dirtyUniqueSectorMarks += 1;
+  if (newReasons & GenerationDirtySectorReason)
+    m_storageTimingStats.dirtyGenerationSectorMarks += 1;
+  if (newReasons & UnloadDirtySectorReason)
+    m_storageTimingStats.dirtyUnloadSectorMarks += 1;
+}
+
+void WorldStorage::markPositionDirty(Vec2I const& position, uint32_t reasonMask) {
+  if (auto sector = sectorForPosition(position))
+    markSectorDirty(*sector, reasonMask);
+}
+
+void WorldStorage::setDirtySectorFiltering(bool enabled) {
+  m_dirtySectorFilteringEnabled = enabled;
+  if (!enabled)
+    m_dirtySectorFilteringPrimed = false;
 }
 
 SectorLoadLevel WorldStorage::sectorLoadLevel(Sector sector) const {
@@ -387,7 +452,8 @@ void WorldStorage::tick(float dt, String const* worldId) {
           m_storageTimingStats.entityStoreSectors += 1;
           m_storageTimingStats.entityStoreEntities += zombiesToStore.size();
           m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - entityStoreStart;
-          insertStoredValue(entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
+          markSectorDirty(sector, EntityDirtySectorReason | UniqueDirtySectorReason);
+          insertStoredValue(StoreType::EntitySector, entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
           mergeSectorUniques(sector, storedUniques);
         }
       }
@@ -436,9 +502,20 @@ void WorldStorage::unloadAll(bool force) {
 void WorldStorage::sync() {
   try {
     m_storageTimingStats.syncs += 1;
-    for (auto const& pair : m_sectorMetadata)
+    bool filterCleanSectors = m_dirtySectorFilteringEnabled && m_dirtySectorFilteringPrimed;
+    for (auto const& pair : m_sectorMetadata) {
+      m_storageTimingStats.syncPassSectors += 1;
+      recordDirtySectorVisit(pair.first, false);
+      if (filterCleanSectors && !m_dirtySectorReasons.contains(pair.first)) {
+        m_storageTimingStats.dirtySyncSkippedSectors += 1;
+        continue;
+      }
       syncSector(pair.first);
+    }
     commitStoredValues();
+    clearDirtySectorMarks();
+    if (m_dirtySectorFilteringEnabled)
+      m_dirtySectorFilteringPrimed = true;
   } catch (std::exception const& e) {
     m_db.rollback();
     m_db.close();
@@ -448,8 +525,15 @@ void WorldStorage::sync() {
 
 WorldChunks WorldStorage::readChunks() {
   try {
-    for (auto const& pair : m_sectorMetadata)
+    auto snapshotSyncStart = Time::monotonicMicroseconds();
+    uint64_t snapshotSyncSectors = 0;
+    for (auto const& pair : m_sectorMetadata) {
+      recordDirtySectorVisit(pair.first, true);
       syncSector(pair.first);
+      snapshotSyncSectors += 1;
+    }
+    m_storageTimingStats.fullSnapshotSyncSectors += snapshotSyncSectors;
+    m_storageTimingStats.fullSnapshotSyncMicroseconds += static_cast<uint64_t>(Time::monotonicMicroseconds() - snapshotSyncStart);
 
     WorldChunks chunks;
     auto exportStart = Time::monotonicMicroseconds();
@@ -704,11 +788,12 @@ ByteArray WorldStorage::writeSectorUniqueStoreTracked(SectorUniqueStore const& s
   return compressStorageData(serializeSectorUniqueStore(store));
 }
 
-bool WorldStorage::insertStoredValue(ByteArray const& key, ByteArray const& value) {
+bool WorldStorage::insertStoredValue(StoreType storeType, ByteArray const& key, ByteArray const& value) {
   if (auto existing = m_db.find(key)) {
     if (*existing == value) {
       m_storageTimingStats.btreeInsertSkips += 1;
       m_storageTimingStats.btreeInsertSkipBytes += value.size();
+      recordStoredValueSkip(storeType);
       return false;
     }
   }
@@ -718,18 +803,99 @@ bool WorldStorage::insertStoredValue(ByteArray const& key, ByteArray const& valu
   m_storageTimingStats.btreeInserts += 1;
   m_storageTimingStats.btreeInsertBytes += key.size() + value.size();
   m_storageTimingStats.btreeInsertMicroseconds += Time::monotonicMicroseconds() - insertStart;
+  recordStoredValueWrite(storeType);
   return replaced;
 }
 
-bool WorldStorage::removeStoredValue(ByteArray const& key) {
+bool WorldStorage::removeStoredValue(StoreType storeType, ByteArray const& key) {
   auto insertStart = Time::monotonicMicroseconds();
   bool removed = m_db.remove(key);
   if (removed) {
     m_storageTimingStats.btreeInserts += 1;
     m_storageTimingStats.btreeInsertBytes += key.size();
     m_storageTimingStats.btreeInsertMicroseconds += Time::monotonicMicroseconds() - insertStart;
+    recordStoredValueRemove(storeType);
   }
   return removed;
+}
+
+void WorldStorage::recordDirtySectorVisit(Sector const& sector, bool snapshotSync) {
+  bool markedDirty = m_dirtySectorReasons.contains(sector);
+  if (snapshotSync) {
+    if (markedDirty)
+      m_storageTimingStats.dirtySnapshotMarkedSectors += 1;
+    else
+      m_storageTimingStats.dirtySnapshotUnmarkedSectors += 1;
+  } else {
+    if (markedDirty)
+      m_storageTimingStats.dirtySyncMarkedSectors += 1;
+    else
+      m_storageTimingStats.dirtySyncUnmarkedSectors += 1;
+  }
+}
+
+void WorldStorage::clearDirtySectorMarks() {
+  m_dirtySectorReasons.clear();
+}
+
+void WorldStorage::recordStoredValueWrite(StoreType storeType) {
+  switch (storeType) {
+    case StoreType::Metadata:
+      m_storageTimingStats.metadataWrites += 1;
+      break;
+    case StoreType::TileSector:
+      m_storageTimingStats.tileSectorWrites += 1;
+      break;
+    case StoreType::EntitySector:
+      m_storageTimingStats.entitySectorWrites += 1;
+      break;
+    case StoreType::UniqueIndex:
+      m_storageTimingStats.uniqueIndexWrites += 1;
+      break;
+    case StoreType::SectorUniques:
+      m_storageTimingStats.sectorUniqueWrites += 1;
+      break;
+  }
+}
+
+void WorldStorage::recordStoredValueSkip(StoreType storeType) {
+  switch (storeType) {
+    case StoreType::Metadata:
+      m_storageTimingStats.metadataWriteSkips += 1;
+      break;
+    case StoreType::TileSector:
+      m_storageTimingStats.tileSectorWriteSkips += 1;
+      break;
+    case StoreType::EntitySector:
+      m_storageTimingStats.entitySectorWriteSkips += 1;
+      break;
+    case StoreType::UniqueIndex:
+      m_storageTimingStats.uniqueIndexWriteSkips += 1;
+      break;
+    case StoreType::SectorUniques:
+      m_storageTimingStats.sectorUniqueWriteSkips += 1;
+      break;
+  }
+}
+
+void WorldStorage::recordStoredValueRemove(StoreType storeType) {
+  switch (storeType) {
+    case StoreType::Metadata:
+      m_storageTimingStats.metadataRemoves += 1;
+      break;
+    case StoreType::TileSector:
+      m_storageTimingStats.tileSectorRemoves += 1;
+      break;
+    case StoreType::EntitySector:
+      m_storageTimingStats.entitySectorRemoves += 1;
+      break;
+    case StoreType::UniqueIndex:
+      m_storageTimingStats.uniqueIndexRemoves += 1;
+      break;
+    case StoreType::SectorUniques:
+      m_storageTimingStats.sectorUniqueRemoves += 1;
+      break;
+  }
 }
 
 void WorldStorage::commitStoredValues() {
@@ -778,6 +944,7 @@ pair<bool, size_t> WorldStorage::generateSectorToLevel(Sector const& sector, Sec
     m_generatorFacade->terraformSector(this, sector);
     metadata.generationLevel = SectorGenerationLevel::Complete;
     metadata.timeToLive = randomizedSectorTTL();
+    markSectorDirty(sector, TileDirtySectorReason | GenerationDirtySectorReason);
     return {true, 1};
   }
 
@@ -802,6 +969,7 @@ pair<bool, size_t> WorldStorage::generateSectorToLevel(Sector const& sector, Sec
 
     m_generatorFacade->generateSectorLevel(this, sector, currentGeneration);
     metadata.generationLevel = currentGeneration;
+    markSectorDirty(sector, TileDirtySectorReason | GenerationDirtySectorReason);
 
     ++totalGeneratedLevels;
     if (totalGeneratedLevels >= sectorGenerationLevelLimit)
@@ -870,6 +1038,8 @@ void WorldStorage::loadSectorToLevel(Sector const& sector, SectorLoadLevel targe
 
       // Update the stored unique ids on load, in case a desync has happened
       // and there are stale entries in the index.
+      if (!readUniques.empty() || m_db.find(sectorUniqueKey(sector)))
+        markSectorDirty(sector, UniqueDirtySectorReason);
       updateSectorUniques(sector, readUniques);
 
       metadata.loadLevel = currentLoad;
@@ -941,7 +1111,8 @@ bool WorldStorage::unloadSectorToLevel(Sector const& sector, SectorLoadLevel tar
       m_storageTimingStats.entityStoreSectors += 1;
       m_storageTimingStats.entityStoreEntities += entitiesToStore.size();
       m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - entityStoreStart;
-      insertStoredValue(entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
+      markSectorDirty(sector, EntityDirtySectorReason | UniqueDirtySectorReason | UnloadDirtySectorReason);
+      insertStoredValue(StoreType::EntitySector, entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
       if (metadata.loadLevel < SectorLoadLevel::Entities)
         mergeSectorUniques(sector, storedUniques);
       else
@@ -960,7 +1131,8 @@ bool WorldStorage::unloadSectorToLevel(Sector const& sector, SectorLoadLevel tar
       sectorStore.tiles = m_tileArray->unloadSector(sector);
       sectorStore.generationLevel = metadata.generationLevel;
       m_storageTimingStats.tileStoreSectors += 1;
-      insertStoredValue(tileSectorKey(sector), writeTileSectorTracked(sectorStore));
+      markSectorDirty(sector, TileDirtySectorReason | UnloadDirtySectorReason);
+      insertStoredValue(StoreType::TileSector, tileSectorKey(sector), writeTileSectorTracked(sectorStore));
       m_sectorMetadata.remove(sector);
       m_generatorFacade->sectorLoadLevelChanged(this, sector, SectorLoadLevel::None);
       return true;
@@ -1000,7 +1172,7 @@ void WorldStorage::syncSector(Sector const& sector) {
     m_storageTimingStats.entityStoreSectors += 1;
     m_storageTimingStats.entityStoreEntities += sectorStore.size();
     m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - entityStoreStart;
-    insertStoredValue(entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
+    insertStoredValue(StoreType::EntitySector, entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
     updateSectorUniques(sector, storedUniques);
   }
 
@@ -1012,7 +1184,7 @@ void WorldStorage::syncSector(Sector const& sector) {
     m_storageTimingStats.sectorCopyMicroseconds += Time::monotonicMicroseconds() - copyStart;
     sectorStore.generationLevel = metadata.generationLevel;
     m_storageTimingStats.tileStoreSectors += 1;
-    insertStoredValue(tileSectorKey(sector), writeTileSectorTracked(sectorStore));
+    insertStoredValue(StoreType::TileSector, tileSectorKey(sector), writeTileSectorTracked(sectorStore));
   }
 }
 
@@ -1036,9 +1208,9 @@ void WorldStorage::updateSectorUniques(Sector const& sector, UniqueIndexStore co
     setUniqueIndexEntry(p.first, p.second);
 
   if (sectorUniques.empty())
-    removeStoredValue(sectorUniqueKey(sector));
+    removeStoredValue(StoreType::SectorUniques, sectorUniqueKey(sector));
   else
-    insertStoredValue(sectorUniqueKey(sector), writeSectorUniqueStoreTracked(HashSet<String>::from(sectorUniques.keys())));
+    insertStoredValue(StoreType::SectorUniques, sectorUniqueKey(sector), writeSectorUniqueStoreTracked(HashSet<String>::from(sectorUniques.keys())));
 }
 
 void WorldStorage::mergeSectorUniques(Sector const& sector, UniqueIndexStore const& sectorUniques) {
@@ -1049,9 +1221,9 @@ void WorldStorage::mergeSectorUniques(Sector const& sector, UniqueIndexStore con
   }
 
   if (sectorUniqueStore.empty())
-    removeStoredValue(sectorUniqueKey(sector));
+    removeStoredValue(StoreType::SectorUniques, sectorUniqueKey(sector));
   else
-    insertStoredValue(sectorUniqueKey(sector), writeSectorUniqueStoreTracked(sectorUniqueStore));
+    insertStoredValue(StoreType::SectorUniques, sectorUniqueKey(sector), writeSectorUniqueStoreTracked(sectorUniqueStore));
 }
 
 auto WorldStorage::getUniqueIndexEntry(String const& uniqueId) -> Maybe<SectorAndPosition> {
@@ -1070,7 +1242,7 @@ void WorldStorage::setUniqueIndexEntry(String const& uniqueId, SectorAndPosition
       return;
     p.first->second = sectorAndPosition;
   }
-  insertStoredValue(uniqueIndexKey(uniqueId), writeUniqueIndexStoreTracked(uniqueIndex));
+  insertStoredValue(StoreType::UniqueIndex, uniqueIndexKey(uniqueId), writeUniqueIndexStoreTracked(uniqueIndex));
 }
 
 void WorldStorage::removeUniqueIndexEntry(String const& uniqueId, Sector const& sector) {
@@ -1079,9 +1251,9 @@ void WorldStorage::removeUniqueIndexEntry(String const& uniqueId, Sector const& 
       if (sectorAndPosition->first == sector) {
         uniqueIndex->remove(uniqueId);
         if (uniqueIndex->empty())
-          removeStoredValue(uniqueIndexKey(uniqueId));
+          removeStoredValue(StoreType::UniqueIndex, uniqueIndexKey(uniqueId));
         else
-          insertStoredValue(uniqueIndexKey(uniqueId), writeUniqueIndexStoreTracked(*uniqueIndex));
+          insertStoredValue(StoreType::UniqueIndex, uniqueIndexKey(uniqueId), writeUniqueIndexStoreTracked(*uniqueIndex));
       }
     }
   }

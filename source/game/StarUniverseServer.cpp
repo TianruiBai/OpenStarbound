@@ -422,6 +422,8 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6PacketPreparationSectorPrefillDifferentialChecks += phase6Stats.packetPreparationSectorPrefillDifferentialChecks;
           status.phase6PacketPreparationSectorPrefillDifferentialMicroseconds += phase6Stats.packetPreparationSectorPrefillDifferentialMicroseconds;
           status.phase6PacketPreparationSectorPrefillDivergences += phase6Stats.packetPreparationSectorPrefillDivergences;
+          if (phase6Stats.storageDirtySectorFilteringEnabled)
+            status.phase6StorageDirtySectorFilteringEnabledWorlds += 1;
           if (phase6Stats.subsystemBaselineMetricsEnabled)
             status.phase6SubsystemBaselineMetricsEnabledWorlds += 1;
           status.phase6LiquidBaselineTicks += phase6Stats.liquidBaselineTicks;
@@ -475,11 +477,16 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6EntitySortMicroseconds += phase6Stats.entitySortMicroseconds;
           status.phase6EntityUpdateMicroseconds += phase6Stats.entityUpdateMicroseconds;
           status.phase6EntityMetadataRefreshMicroseconds += phase6Stats.entityMetadataRefreshMicroseconds;
+          for (auto const& attributionStats : phase6Stats.entityUpdateAttributionStats)
+            status.phase6EntityUpdateAttributionStats[attributionStats.first].add(attributionStats.second);
           status.phase6LuaBaselineTicks += phase6Stats.luaBaselineTicks;
           status.phase6LuaScriptContexts += phase6Stats.luaScriptContexts;
           status.phase6LuaScriptUpdates += phase6Stats.luaScriptUpdates;
+          status.phase6LuaReadyScriptUpdates += phase6Stats.luaReadyScriptUpdates;
           status.phase6LuaScriptUpdateMicroseconds += phase6Stats.luaScriptUpdateMicroseconds;
           status.phase6LuaMaxScriptUpdateMicroseconds = max(status.phase6LuaMaxScriptUpdateMicroseconds, phase6Stats.luaMaxScriptUpdateMicroseconds);
+          for (auto const& contextStats : phase6Stats.luaScriptContextStats)
+            status.phase6LuaScriptContextStats[contextStats.first].add(contextStats.second);
           status.phase6MutationParallelismRequestedSubsystems |= phase6Stats.mutationParallelismRequestedSubsystems;
           status.phase6MutationParallelismBlockedByFixedSeedGateSubsystems |= phase6Stats.mutationParallelismBlockedByFixedSeedGateSubsystems;
           status.phase6MutationParallelismBlockedByDependencyGateSubsystems |= phase6Stats.mutationParallelismBlockedByDependencyGateSubsystems;

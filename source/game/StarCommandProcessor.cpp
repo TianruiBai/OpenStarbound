@@ -62,6 +62,63 @@ String packetPrepEntitySerializationSummary(HashMap<EntityType, WorldServer::Ent
   return parts.join(",");
 }
 
+String phase6EntityUpdateAttributionSummary(HashMap<EntityType, WorldServer::EntityUpdateAttributionStats> const& stats) {
+  StringList parts;
+  List<EntityType> entityTypes{
+      EntityType::Plant,
+      EntityType::Object,
+      EntityType::Vehicle,
+      EntityType::ItemDrop,
+      EntityType::PlantDrop,
+      EntityType::Projectile,
+      EntityType::Stagehand,
+      EntityType::Monster,
+      EntityType::Npc,
+      EntityType::Player};
+
+  for (auto entityType : entityTypes) {
+    if (auto typeStats = stats.ptr(entityType)) {
+      if (typeStats->updatedEntities != 0) {
+        parts.append(strf("{}={}/{}/{}/{}/{}",
+            EntityTypeNames.getRight(entityType),
+            typeStats->updatedEntities,
+            typeStats->tileEntities,
+            typeStats->destroyedEntities,
+            typeStats->callbackMicroseconds,
+            typeStats->maxCallbackMicroseconds));
+      }
+    }
+  }
+
+  if (parts.empty())
+    return "none";
+  return parts.join(",");
+}
+
+String phase6LuaScriptContextSummary(StringMap<WorldServer::LuaScriptContextStats> const& stats) {
+  StringList parts;
+  auto contextNames = stats.keys();
+  contextNames.sort();
+
+  for (auto const& contextName : contextNames) {
+    if (auto contextStats = stats.ptr(contextName)) {
+      if (contextStats->contextTicks != 0) {
+        parts.append(strf("{}={}/{}/{}/{}/{}",
+            contextName,
+            contextStats->contextTicks,
+            contextStats->updateCalls,
+            contextStats->readyUpdates,
+            contextStats->updateMicroseconds,
+            contextStats->maxUpdateMicroseconds));
+      }
+    }
+  }
+
+  if (parts.empty())
+    return "none";
+  return parts.join(",");
+}
+
 String mutationSubsystemSummary(uint32_t mask) {
   StringList parts;
   if (mask & WorldServer::LiquidMutationParallelismSubsystem)
@@ -81,9 +138,10 @@ String mutationSubsystemSummary(uint32_t mask) {
 }
 
 String worldStorageTimingSummary(WorldStorageTimingStats const& stats) {
-  return strf("sync:{}/{} entity:{}/{}/{}/{} tile:{}/{}/{} copy:{}/{} compress:{}/{}/{}/{} btree:{}/{}/{}/{} commit:{}/{} snapshot:{}/{}/{}/{}",
+  return strf("sync:{}/{} syncPass:{} entity:{}/{}/{}/{} tile:{}/{}/{} copy:{}/{} compress:{}/{}/{}/{} btree:{}/{}/{}/{} storeTypes:m:{}/{}/{} tile:{}/{}/{} entity:{}/{}/{} unique:{}/{}/{} sectorUnique:{}/{}/{} dirty:{}/{}/{}/{}/{}/{} dirtySync:{}/{}/{} dirtySnapshot:{}/{} commit:{}/{} snapshot:{}/{}/{}/{} snapshotSync:{}/{}",
       stats.syncs,
       stats.syncedSectors,
+      stats.syncPassSectors,
       stats.entityStoreSectors,
       stats.entityStoreEntities,
       stats.entityStoreBytes,
@@ -101,12 +159,40 @@ String worldStorageTimingSummary(WorldStorageTimingStats const& stats) {
       stats.btreeInserts + stats.btreeInsertSkips,
       stats.btreeInsertBytes + stats.btreeInsertSkipBytes,
       stats.btreeInsertMicroseconds,
+      stats.metadataWrites,
+      stats.metadataWriteSkips,
+      stats.metadataRemoves,
+      stats.tileSectorWrites,
+      stats.tileSectorWriteSkips,
+      stats.tileSectorRemoves,
+      stats.entitySectorWrites,
+      stats.entitySectorWriteSkips,
+      stats.entitySectorRemoves,
+      stats.uniqueIndexWrites,
+      stats.uniqueIndexWriteSkips,
+      stats.uniqueIndexRemoves,
+      stats.sectorUniqueWrites,
+      stats.sectorUniqueWriteSkips,
+      stats.sectorUniqueRemoves,
+      stats.dirtyMarkedSectors,
+      stats.dirtyTileSectorMarks,
+      stats.dirtyEntitySectorMarks,
+      stats.dirtyUniqueSectorMarks,
+      stats.dirtyGenerationSectorMarks,
+      stats.dirtyUnloadSectorMarks,
+      stats.dirtySyncMarkedSectors,
+      stats.dirtySyncUnmarkedSectors,
+      stats.dirtySyncSkippedSectors,
+      stats.dirtySnapshotMarkedSectors,
+      stats.dirtySnapshotUnmarkedSectors,
       stats.commits,
       stats.commitMicroseconds,
       stats.fullSnapshotExports,
       stats.fullSnapshotChunks,
       stats.fullSnapshotBytes,
-      stats.fullSnapshotExportMicroseconds);
+      stats.fullSnapshotExportMicroseconds,
+      stats.fullSnapshotSyncSectors,
+      stats.fullSnapshotSyncMicroseconds);
 }
 
 }
@@ -465,7 +551,9 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6PacketPreparationSectorPrefillDifferentialChecks,
       status.phase6PacketPreparationSectorPrefillDifferentialMicroseconds,
       status.phase6PacketPreparationSectorPrefillDivergences));
-    lines.append(strf("Phase 6 subsystem baselines: enabledWorlds={}, liquidTicks={}, liquidActiveCells={}, liquidRegions={}, liquidCache={}/{}/{}/{}/{}/{}/{}, fallingTicks={}, fallingPending={}, fallingProcessed={}, fallingMoved={}, wiringTicks={}, wiringInitial={}, wiringLoaded={}, wiringNetworkLoads={}, wiringEvaluated={}, wiringDirty={}/{}/{}/{}/{}/{}/{}, entity={}/{}/{}/{}/{}/{}/{}/{}/{}/{}, lua={}/{}/{}/{}/{}",
+  lines.append(strf("Phase 6 storage dirty filtering: enabledWorlds={}",
+      status.phase6StorageDirtySectorFilteringEnabledWorlds));
+  lines.append(strf("Phase 6 subsystem baselines: enabledWorlds={}, liquidTicks={}, liquidActiveCells={}, liquidRegions={}, liquidCache={}/{}/{}/{}/{}/{}/{}, fallingTicks={}, fallingPending={}, fallingProcessed={}, fallingMoved={}, wiringTicks={}, wiringInitial={}, wiringLoaded={}, wiringNetworkLoads={}, wiringEvaluated={}, wiringDirty={}/{}/{}/{}/{}/{}/{}, entity={}/{}/{}/{}/{}/{}/{}/{}/{}/{} entityTypes={}, lua={}/{}/{}/{}/{}/{} luaContexts={}",
       status.phase6SubsystemBaselineMetricsEnabledWorlds,
       status.phase6LiquidBaselineTicks,
       status.phase6LiquidActiveCells,
@@ -503,11 +591,14 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6EntitySortMicroseconds,
       status.phase6EntityUpdateMicroseconds,
       status.phase6EntityMetadataRefreshMicroseconds,
+      phase6EntityUpdateAttributionSummary(status.phase6EntityUpdateAttributionStats),
       status.phase6LuaBaselineTicks,
       status.phase6LuaScriptContexts,
       status.phase6LuaScriptUpdates,
+      status.phase6LuaReadyScriptUpdates,
       status.phase6LuaScriptUpdateMicroseconds,
-      status.phase6LuaMaxScriptUpdateMicroseconds));
+      status.phase6LuaMaxScriptUpdateMicroseconds,
+      phase6LuaScriptContextSummary(status.phase6LuaScriptContextStats)));
   lines.append(strf("Phase 6 fixed-seed signatures: enabledWorlds={}, liquid=ticks:{} cells:{} activeHash:{} regionHash:{}, falling=ticks:{} pending:{} processed:{} moved:{} next:{}, wiring=ticks:{} topology:{} output:{}",
       status.phase6MutationFixedSeedSignaturesEnabledWorlds,
       status.phase6LiquidSignatureTicks,
@@ -588,7 +679,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} entityUpdateSets:{}/{}/{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{}/{}/{}/{}/{} dirty:{}/{}/{}/{}/{}/{}/{} entity:{}/{}/{}/{}/{}/{}/{}/{}/{}/{} lua:{}/{}/{}/{}/{} signatures:liquid:{}/{}/{}/{} falling:{}/{}/{}/{}/{} wiring:{}/{}/{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{} worker:{} ticks:{} jobs:{} us:{}/{} checks:{} divergences:{} fallbacks:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} entityUpdateSets:{}/{}/{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} dirtyFilter:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{}/{} falling:{} wiring:{}/{}/{}/{}/{} dirty:{}/{}/{}/{}/{}/{}/{} entity:{}/{}/{}/{}/{}/{}/{}/{}/{}/{} entityTypes:{} lua:{}/{}/{}/{}/{}/{} luaContexts:{} signatures:liquid:{}/{}/{}/{} falling:{}/{}/{}/{}/{} wiring:{}/{}/{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{} worker:{} ticks:{} jobs:{} us:{}/{} checks:{} divergences:{} fallbacks:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -624,6 +715,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         phase6.storageGenerationPlanningSectors,
         phase6.storageGenerationPlanningFallbacks,
         phase6.storageGenerationPlanningDivergences,
+        phase6.storageDirtySectorFilteringEnabled,
         phase6.packetPreparationSectorPrefillTicks,
         phase6.packetPreparationSectorPrefillSerialTicks,
         phase6.packetPreparationSectorPrefillParallelTicks,
@@ -661,11 +753,14 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         phase6.entitySortMicroseconds,
         phase6.entityUpdateMicroseconds,
         phase6.entityMetadataRefreshMicroseconds,
+        phase6EntityUpdateAttributionSummary(phase6.entityUpdateAttributionStats),
         phase6.luaBaselineTicks,
         phase6.luaScriptContexts,
         phase6.luaScriptUpdates,
+        phase6.luaReadyScriptUpdates,
         phase6.luaScriptUpdateMicroseconds,
         phase6.luaMaxScriptUpdateMicroseconds,
+        phase6LuaScriptContextSummary(phase6.luaScriptContextStats),
         phase6.liquidSignatureTicks,
         phase6.liquidSignatureActiveCells,
         phase6.liquidSignatureActiveCellHash,

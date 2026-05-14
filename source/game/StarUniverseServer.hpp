@@ -123,6 +123,7 @@ public:
     uint64_t phase6PacketPreparationSectorPrefillDifferentialChecks;
     uint64_t phase6PacketPreparationSectorPrefillDifferentialMicroseconds;
     uint64_t phase6PacketPreparationSectorPrefillDivergences;
+    size_t phase6StorageDirtySectorFilteringEnabledWorlds;
     size_t phase6SubsystemBaselineMetricsEnabledWorlds;
     uint64_t phase6LiquidBaselineTicks;
     uint64_t phase6LiquidActiveCells;
@@ -174,11 +175,14 @@ public:
     uint64_t phase6EntitySortMicroseconds;
     uint64_t phase6EntityUpdateMicroseconds;
     uint64_t phase6EntityMetadataRefreshMicroseconds;
+    HashMap<EntityType, WorldServer::EntityUpdateAttributionStats> phase6EntityUpdateAttributionStats;
     uint64_t phase6LuaBaselineTicks;
     uint64_t phase6LuaScriptContexts;
     uint64_t phase6LuaScriptUpdates;
+    uint64_t phase6LuaReadyScriptUpdates;
     uint64_t phase6LuaScriptUpdateMicroseconds;
     uint64_t phase6LuaMaxScriptUpdateMicroseconds;
+    StringMap<WorldServer::LuaScriptContextStats> phase6LuaScriptContextStats;
     uint32_t phase6MutationParallelismRequestedSubsystems;
     uint32_t phase6MutationParallelismBlockedByFixedSeedGateSubsystems;
     uint32_t phase6MutationParallelismBlockedByDependencyGateSubsystems;

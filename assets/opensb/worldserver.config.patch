@@ -10,6 +10,7 @@
     "packetPreparationSectorPrefillWorkerThreads" : 2,
     "packetPreparationSectorPrefillMinimumSectors" : 8,
     "packetPreparationSectorPrefillDifferentialCheck" : true,
+    "storageDirtySectorFiltering" : false,
     "subsystemBaselineMetrics" : true,
     "liquidMutationParallelism" : false,
     "fallingBlockMutationParallelism" : false,

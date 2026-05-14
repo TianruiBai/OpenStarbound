@@ -86,6 +86,38 @@ public:
     }
   };
 
+  struct EntityUpdateAttributionStats {
+    uint64_t updatedEntities = 0;
+    uint64_t tileEntities = 0;
+    uint64_t destroyedEntities = 0;
+    uint64_t callbackMicroseconds = 0;
+    uint64_t maxCallbackMicroseconds = 0;
+
+    void add(EntityUpdateAttributionStats const& stats) {
+      updatedEntities += stats.updatedEntities;
+      tileEntities += stats.tileEntities;
+      destroyedEntities += stats.destroyedEntities;
+      callbackMicroseconds += stats.callbackMicroseconds;
+      maxCallbackMicroseconds = max(maxCallbackMicroseconds, stats.maxCallbackMicroseconds);
+    }
+  };
+
+  struct LuaScriptContextStats {
+    uint64_t contextTicks = 0;
+    uint64_t updateCalls = 0;
+    uint64_t readyUpdates = 0;
+    uint64_t updateMicroseconds = 0;
+    uint64_t maxUpdateMicroseconds = 0;
+
+    void add(LuaScriptContextStats const& stats) {
+      contextTicks += stats.contextTicks;
+      updateCalls += stats.updateCalls;
+      readyUpdates += stats.readyUpdates;
+      updateMicroseconds += stats.updateMicroseconds;
+      maxUpdateMicroseconds = max(maxUpdateMicroseconds, stats.maxUpdateMicroseconds);
+    }
+  };
+
   struct PacketPreparationStats {
     uint64_t ticks = 0;
     uint64_t monitoringRegionBuilds = 0;
@@ -135,6 +167,7 @@ public:
     uint64_t packetPreparationSectorPrefillDifferentialChecks = 0;
     uint64_t packetPreparationSectorPrefillDifferentialMicroseconds = 0;
     uint64_t packetPreparationSectorPrefillDivergences = 0;
+    bool storageDirtySectorFilteringEnabled = false;
     bool subsystemBaselineMetricsEnabled = false;
     bool mutationFixedSeedSignaturesEnabled = false;
     bool mutationParallelismRequested = false;
@@ -204,11 +237,14 @@ public:
     uint64_t entitySortMicroseconds = 0;
     uint64_t entityUpdateMicroseconds = 0;
     uint64_t entityMetadataRefreshMicroseconds = 0;
+    HashMap<EntityType, EntityUpdateAttributionStats> entityUpdateAttributionStats;
     uint64_t luaBaselineTicks = 0;
     uint64_t luaScriptContexts = 0;
     uint64_t luaScriptUpdates = 0;
+    uint64_t luaReadyScriptUpdates = 0;
     uint64_t luaScriptUpdateMicroseconds = 0;
     uint64_t luaMaxScriptUpdateMicroseconds = 0;
+    StringMap<LuaScriptContextStats> luaScriptContextStats;
   };
 
   // Create a new world with the given template, writing new storage file.
@@ -644,6 +680,7 @@ private:
   size_t m_phase6PacketPreparationSectorPrefillWorkerThreads;
   size_t m_phase6PacketPreparationSectorPrefillMinimumSectors;
   bool m_phase6PacketPreparationSectorPrefillDifferentialCheck;
+  bool m_phase6StorageDirtySectorFilteringEnabled;
   bool m_phase6SubsystemBaselineMetricsEnabled;
   bool m_phase6MutationFixedSeedSignaturesEnabled;
   size_t m_phase6MutationParallelismWorkerThreads;

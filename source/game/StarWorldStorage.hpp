@@ -21,6 +21,7 @@ typedef HashMap<ByteArray, Maybe<ByteArray>> WorldChunks;
 struct WorldStorageTimingStats {
   uint64_t syncs = 0;
   uint64_t syncedSectors = 0;
+  uint64_t syncPassSectors = 0;
   uint64_t entityStoreSectors = 0;
   uint64_t entityStoreEntities = 0;
   uint64_t entityStoreBytes = 0;
@@ -39,9 +40,37 @@ struct WorldStorageTimingStats {
   uint64_t btreeInsertMicroseconds = 0;
   uint64_t btreeInsertSkips = 0;
   uint64_t btreeInsertSkipBytes = 0;
+  uint64_t metadataWrites = 0;
+  uint64_t metadataWriteSkips = 0;
+  uint64_t metadataRemoves = 0;
+  uint64_t tileSectorWrites = 0;
+  uint64_t tileSectorWriteSkips = 0;
+  uint64_t tileSectorRemoves = 0;
+  uint64_t entitySectorWrites = 0;
+  uint64_t entitySectorWriteSkips = 0;
+  uint64_t entitySectorRemoves = 0;
+  uint64_t uniqueIndexWrites = 0;
+  uint64_t uniqueIndexWriteSkips = 0;
+  uint64_t uniqueIndexRemoves = 0;
+  uint64_t sectorUniqueWrites = 0;
+  uint64_t sectorUniqueWriteSkips = 0;
+  uint64_t sectorUniqueRemoves = 0;
+  uint64_t dirtyMarkedSectors = 0;
+  uint64_t dirtyTileSectorMarks = 0;
+  uint64_t dirtyEntitySectorMarks = 0;
+  uint64_t dirtyUniqueSectorMarks = 0;
+  uint64_t dirtyGenerationSectorMarks = 0;
+  uint64_t dirtyUnloadSectorMarks = 0;
+  uint64_t dirtySyncMarkedSectors = 0;
+  uint64_t dirtySyncUnmarkedSectors = 0;
+  uint64_t dirtySyncSkippedSectors = 0;
+  uint64_t dirtySnapshotMarkedSectors = 0;
+  uint64_t dirtySnapshotUnmarkedSectors = 0;
   uint64_t commits = 0;
   uint64_t commitMicroseconds = 0;
   uint64_t fullSnapshotExports = 0;
+  uint64_t fullSnapshotSyncSectors = 0;
+  uint64_t fullSnapshotSyncMicroseconds = 0;
   uint64_t fullSnapshotChunks = 0;
   uint64_t fullSnapshotBytes = 0;
   uint64_t fullSnapshotExportMicroseconds = 0;
@@ -121,6 +150,14 @@ public:
   typedef ServerTileSectorArray::Array TileArray;
   typedef ServerTileSectorArray::ArrayPtr TileArrayPtr;
 
+  enum DirtySectorReason : uint32_t {
+    TileDirtySectorReason = 1,
+    EntityDirtySectorReason = 1 << 1,
+    UniqueDirtySectorReason = 1 << 2,
+    GenerationDirtySectorReason = 1 << 3,
+    UnloadDirtySectorReason = 1 << 4
+  };
+
   static WorldChunks getWorldChunksUpdate(WorldChunks const& oldChunks, WorldChunks const& newChunks);
   static void applyWorldChunksUpdateToFile(String const& file, WorldChunks const& update);
   static WorldChunks getWorldChunksFromFile(String const& file);
@@ -142,6 +179,10 @@ public:
   Maybe<Sector> sectorForPosition(Vec2I const& position) const;
   List<Sector> sectorsForRegion(RectI const& region) const;
   Maybe<RectI> regionForSector(Sector sector) const;
+
+  void markSectorDirty(Sector const& sector, uint32_t reasonMask);
+  void markPositionDirty(Vec2I const& position, uint32_t reasonMask);
+  void setDirtySectorFiltering(bool enabled);
 
   SectorLoadLevel sectorLoadLevel(Sector sector) const;
   // Returns the sector generation level if it is currently loaded, nothing
@@ -315,8 +356,13 @@ private:
   ByteArray writeTileSectorTracked(TileSectorStore const& store);
   ByteArray writeUniqueIndexStoreTracked(UniqueIndexStore const& store);
   ByteArray writeSectorUniqueStoreTracked(SectorUniqueStore const& store);
-  bool insertStoredValue(ByteArray const& key, ByteArray const& value);
-  bool removeStoredValue(ByteArray const& key);
+  bool insertStoredValue(StoreType storeType, ByteArray const& key, ByteArray const& value);
+  bool removeStoredValue(StoreType storeType, ByteArray const& key);
+  void recordDirtySectorVisit(Sector const& sector, bool snapshotSync);
+  void clearDirtySectorMarks();
+  void recordStoredValueWrite(StoreType storeType);
+  void recordStoredValueSkip(StoreType storeType);
+  void recordStoredValueRemove(StoreType storeType);
   void commitStoredValues();
 
   // Returns the sectors within WorldSectorSize of the given sector.  This is
@@ -345,8 +391,11 @@ private:
   WorldGeneratorFacadePtr m_generatorFacade;
 
   bool m_floatingDungeonWorld;
+  bool m_dirtySectorFilteringEnabled = false;
+  bool m_dirtySectorFilteringPrimed = false;
 
   StableHashMap<Sector, SectorMetadata> m_sectorMetadata;
+  StableHashMap<Sector, uint32_t> m_dirtySectorReasons;
   OrderedHashMap<Sector, float> m_generationQueue;
   BTreeDatabase m_db;
   WorldStorageTimingStats m_storageTimingStats;

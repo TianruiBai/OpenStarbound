@@ -11,6 +11,7 @@
 #include "StarObject.hpp"
 #include "StarObjectDatabase.hpp"
 #include "StarRoot.hpp"
+#include "StarServerClientContext.hpp"
 #include "StarSystemWorldServer.hpp"
 #include "StarTime.hpp"
 #include "StarUniverseConnection.hpp"
@@ -128,6 +129,90 @@ void acknowledgeClientWindow(WorldServer& worldServer, ConnectionId clientId, Re
   worldServer.handleIncomingPackets(clientId, {
       make_shared<WorldStartAcknowledgePacket>(),
       make_shared<WorldClientStateUpdatePacket>(clientState.writeDelta())});
+}
+
+String phase6EntityUpdateAttributionSummary(HashMap<EntityType, WorldServer::EntityUpdateAttributionStats> const& stats) {
+  StringList parts;
+  List<EntityType> entityTypes{
+      EntityType::Plant,
+      EntityType::Object,
+      EntityType::Vehicle,
+      EntityType::ItemDrop,
+      EntityType::PlantDrop,
+      EntityType::Projectile,
+      EntityType::Stagehand,
+      EntityType::Monster,
+      EntityType::Npc,
+      EntityType::Player};
+
+  for (auto entityType : entityTypes) {
+    if (auto typeStats = stats.ptr(entityType)) {
+      if (typeStats->updatedEntities != 0) {
+        parts.append(strf("{}={}/{}/{}/{}/{}",
+            EntityTypeNames.getRight(entityType),
+            typeStats->updatedEntities,
+            typeStats->tileEntities,
+            typeStats->destroyedEntities,
+            typeStats->callbackMicroseconds,
+            typeStats->maxCallbackMicroseconds));
+      }
+    }
+  }
+
+  if (parts.empty())
+    return "none";
+  return parts.join(",");
+}
+
+String phase6LuaScriptContextSummary(StringMap<WorldServer::LuaScriptContextStats> const& stats) {
+  StringList parts;
+  auto contextNames = stats.keys();
+  contextNames.sort();
+
+  for (auto const& contextName : contextNames) {
+    if (auto contextStats = stats.ptr(contextName)) {
+      if (contextStats->contextTicks != 0) {
+        parts.append(strf("{}={}/{}/{}/{}/{}",
+            contextName,
+            contextStats->contextTicks,
+            contextStats->updateCalls,
+            contextStats->readyUpdates,
+            contextStats->updateMicroseconds,
+            contextStats->maxUpdateMicroseconds));
+      }
+    }
+  }
+
+  if (parts.empty())
+    return "none";
+  return parts.join(",");
+}
+
+ByteArray testChunkBytes(String const& value) {
+  DataStreamBuffer buffer;
+  buffer.write(value);
+  return buffer.takeData();
+}
+
+bool worldChunksEqual(WorldChunks const& lhs, WorldChunks const& rhs) {
+  if (lhs.size() != rhs.size())
+    return false;
+
+  for (auto const& chunk : lhs) {
+    if (rhs.value(chunk.first) != chunk.second)
+      return false;
+  }
+  return true;
+}
+
+WorldChunks applyWorldChunksUpdate(WorldChunks chunks, WorldChunks const& updateChunks) {
+  for (auto const& updateChunk : updateChunks) {
+    if (updateChunk.second)
+      chunks[updateChunk.first] = updateChunk.second;
+    else
+      chunks.remove(updateChunk.first);
+  }
+  return chunks;
 }
 
 ByteArray packetPayload(PacketPtr const& packet) {
@@ -366,6 +451,21 @@ struct GameMechanismWorkloadCapture {
   WorldStorageTimingStats storageTimingStats;
 };
 
+struct SaveDisconnectStorageCapture {
+  size_t dirtyTileEdits = 0;
+  size_t syncPasses = 0;
+  size_t snapshotExports = 0;
+  size_t chunks = 0;
+  int64_t elapsedMicroseconds = 0;
+  WorldStorageTimingStats storageTimingStats;
+};
+
+struct DirtySectorFilteringFixtureRun {
+  WorldStorageTimingStats firstSyncStats;
+  WorldStorageTimingStats cleanSyncStats;
+  WorldStorageTimingStats dirtySyncStats;
+};
+
 bool setSelfWorkloadForegroundMaterial(WorldServer& worldServer, Vec2I const& position, MaterialId materialId) {
   auto tile = worldServer.modifyServerTile(position, true);
   if (!tile)
@@ -593,9 +693,96 @@ GameMechanismWorkloadCapture runGameMechanismSelfWorkloadCapture() {
             << " wiring=" << capture.phase6Stats.wiringBaselineTicks << "/" << capture.phase6Stats.wiringInitialEntities << "/" << capture.phase6Stats.wiringLoadedEntities << "/" << capture.phase6Stats.wiringNetworkLoads << "/" << capture.phase6Stats.wiringEvaluatedEntities
             << " wiringDirty=" << capture.phase6Stats.wiringNetworkSignatureChecks << "/" << capture.phase6Stats.wiringCleanNetworkSignatures << "/" << capture.phase6Stats.wiringDirtyNetworkSignatures << "/" << capture.phase6Stats.wiringTopologyDirtyNetworkSignatures << "/" << capture.phase6Stats.wiringOutputDirtyNetworkSignatures << "/" << capture.phase6Stats.wiringCleanNetworkEntities << "/" << capture.phase6Stats.wiringDirtyNetworkEntities
             << " entity=" << capture.phase6Stats.entityBaselineTicks << "/" << capture.phase6Stats.entityUpdatedEntities << "/" << capture.phase6Stats.entityTileEntities << "/" << capture.phase6Stats.entityDestroyedEntities << "/" << capture.phase6Stats.entityIterationCopies << "/" << capture.phase6Stats.entitySortedEntities << "/" << capture.phase6Stats.entityCopyMicroseconds << "/" << capture.phase6Stats.entitySortMicroseconds << "/" << capture.phase6Stats.entityUpdateMicroseconds << "/" << capture.phase6Stats.entityMetadataRefreshMicroseconds
-            << " lua=" << capture.phase6Stats.luaBaselineTicks << "/" << capture.phase6Stats.luaScriptContexts << "/" << capture.phase6Stats.luaScriptUpdates << "/" << capture.phase6Stats.luaScriptUpdateMicroseconds << "/" << capture.phase6Stats.luaMaxScriptUpdateMicroseconds
+            << " entityTypes=" << phase6EntityUpdateAttributionSummary(capture.phase6Stats.entityUpdateAttributionStats).utf8()
+            << " lua=" << capture.phase6Stats.luaBaselineTicks << "/" << capture.phase6Stats.luaScriptContexts << "/" << capture.phase6Stats.luaScriptUpdates << "/" << capture.phase6Stats.luaReadyScriptUpdates << "/" << capture.phase6Stats.luaScriptUpdateMicroseconds << "/" << capture.phase6Stats.luaMaxScriptUpdateMicroseconds
+            << " luaContexts=" << phase6LuaScriptContextSummary(capture.phase6Stats.luaScriptContextStats).utf8()
             << " storage=" << capture.storageTimingStats.syncs << "/" << capture.storageTimingStats.syncedSectors << "/" << capture.storageTimingStats.tileStoreSectors << "/" << capture.storageTimingStats.entityStoreSectors << "/" << capture.storageTimingStats.btreeInserts << "/" << capture.storageTimingStats.btreeInsertSkips << "/" << capture.storageTimingStats.fullSnapshotExports << "/" << capture.storageTimingStats.fullSnapshotChunks << "/" << capture.storageTimingStats.fullSnapshotBytes
+            << " dirty=" << capture.storageTimingStats.dirtyMarkedSectors << "/" << capture.storageTimingStats.dirtyTileSectorMarks << "/" << capture.storageTimingStats.dirtyEntitySectorMarks << "/" << capture.storageTimingStats.dirtyUniqueSectorMarks << "/" << capture.storageTimingStats.dirtyGenerationSectorMarks << "/" << capture.storageTimingStats.dirtyUnloadSectorMarks
+            << " dirtySync=" << capture.storageTimingStats.dirtySyncMarkedSectors << "/" << capture.storageTimingStats.dirtySyncUnmarkedSectors << "/" << capture.storageTimingStats.dirtySyncSkippedSectors
+            << " dirtySnapshot=" << capture.storageTimingStats.dirtySnapshotMarkedSectors << "/" << capture.storageTimingStats.dirtySnapshotUnmarkedSectors
+            << " snapshotSync=" << capture.storageTimingStats.fullSnapshotSyncSectors << "/" << capture.storageTimingStats.fullSnapshotSyncMicroseconds
             << " chunks=" << capture.chunks
+            << " elapsedUs=" << capture.elapsedMicroseconds
+            << std::endl;
+
+  return capture;
+}
+
+SaveDisconnectStorageCapture runSaveDisconnectStorageCapture() {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(160, 128), File::ephemeralFile());
+  worldServer.setWorldId("save-disconnect-storage-capture");
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.generateRegion(RectI::withSize(Vec2I(48, 32), Vec2I(72, 64)));
+
+  auto materialId = firstTestMaterialId();
+  EXPECT_TRUE((bool)materialId);
+  if (!materialId)
+    return {};
+
+  SaveDisconnectStorageCapture capture;
+  auto start = Time::monotonicMicroseconds();
+
+  worldServer.sync();
+  capture.syncPasses += 1;
+  for (size_t i = 0; i < 3; ++i) {
+    auto chunks = worldServer.readChunks();
+    capture.snapshotExports += 1;
+    capture.chunks = chunks.size();
+  }
+
+  for (size_t pass = 0; pass < 4; ++pass) {
+    for (int x = 52 + static_cast<int>(pass * 4); x < 56 + static_cast<int>(pass * 4); ++x) {
+      for (int y = 40; y < 44; ++y) {
+        if (setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, y), *materialId))
+          capture.dirtyTileEdits += 1;
+      }
+    }
+
+    worldServer.sync();
+    capture.syncPasses += 1;
+    auto chunks = worldServer.readChunks();
+    capture.snapshotExports += 1;
+    capture.chunks = chunks.size();
+  }
+
+  for (size_t i = 0; i < 3; ++i) {
+    auto chunks = worldServer.readChunks();
+    capture.snapshotExports += 1;
+    capture.chunks = chunks.size();
+  }
+
+  capture.elapsedMicroseconds = Time::monotonicMicroseconds() - start;
+  capture.storageTimingStats = worldServer.storageTimingStats();
+
+  std::cout << "SaveDisconnectStorageCapture dirtyTileEdits=" << capture.dirtyTileEdits
+            << " syncPasses=" << capture.syncPasses
+            << " snapshotExports=" << capture.snapshotExports
+            << " chunks=" << capture.chunks
+            << " sync=" << capture.storageTimingStats.syncs << "/" << capture.storageTimingStats.syncPassSectors << "/" << capture.storageTimingStats.syncedSectors
+            << " entity=" << capture.storageTimingStats.entityStoreSectors << "/" << capture.storageTimingStats.entityStoreEntities << "/" << capture.storageTimingStats.entityStoreBytes << "/" << capture.storageTimingStats.entityStoreMicroseconds
+            << " tile=" << capture.storageTimingStats.tileStoreSectors << "/" << capture.storageTimingStats.tileStoreBytes << "/" << capture.storageTimingStats.tileStoreMicroseconds
+            << " copy=" << capture.storageTimingStats.sectorCopies << "/" << capture.storageTimingStats.sectorCopyMicroseconds
+            << " compress=" << capture.storageTimingStats.compressionCalls << "/" << capture.storageTimingStats.compressionInputBytes << "/" << capture.storageTimingStats.compressionOutputBytes << "/" << capture.storageTimingStats.compressionMicroseconds
+            << " btree=" << capture.storageTimingStats.btreeInserts << "/" << capture.storageTimingStats.btreeInsertSkips << "/" << capture.storageTimingStats.btreeInsertBytes << "/" << capture.storageTimingStats.btreeInsertSkipBytes << "/" << capture.storageTimingStats.btreeInsertMicroseconds
+            << " storeTypes=" << capture.storageTimingStats.metadataWrites << "/" << capture.storageTimingStats.metadataWriteSkips << "/" << capture.storageTimingStats.metadataRemoves
+            << ":" << capture.storageTimingStats.tileSectorWrites << "/" << capture.storageTimingStats.tileSectorWriteSkips << "/" << capture.storageTimingStats.tileSectorRemoves
+            << ":" << capture.storageTimingStats.entitySectorWrites << "/" << capture.storageTimingStats.entitySectorWriteSkips << "/" << capture.storageTimingStats.entitySectorRemoves
+            << ":" << capture.storageTimingStats.uniqueIndexWrites << "/" << capture.storageTimingStats.uniqueIndexWriteSkips << "/" << capture.storageTimingStats.uniqueIndexRemoves
+            << ":" << capture.storageTimingStats.sectorUniqueWrites << "/" << capture.storageTimingStats.sectorUniqueWriteSkips << "/" << capture.storageTimingStats.sectorUniqueRemoves
+            << " dirty=" << capture.storageTimingStats.dirtyMarkedSectors << "/" << capture.storageTimingStats.dirtyTileSectorMarks << "/" << capture.storageTimingStats.dirtyEntitySectorMarks << "/" << capture.storageTimingStats.dirtyUniqueSectorMarks << "/" << capture.storageTimingStats.dirtyGenerationSectorMarks << "/" << capture.storageTimingStats.dirtyUnloadSectorMarks
+            << " dirtySync=" << capture.storageTimingStats.dirtySyncMarkedSectors << "/" << capture.storageTimingStats.dirtySyncUnmarkedSectors << "/" << capture.storageTimingStats.dirtySyncSkippedSectors
+            << " dirtySnapshot=" << capture.storageTimingStats.dirtySnapshotMarkedSectors << "/" << capture.storageTimingStats.dirtySnapshotUnmarkedSectors
+            << " commit=" << capture.storageTimingStats.commits << "/" << capture.storageTimingStats.commitMicroseconds
+            << " snapshot=" << capture.storageTimingStats.fullSnapshotExports << "/" << capture.storageTimingStats.fullSnapshotChunks << "/" << capture.storageTimingStats.fullSnapshotBytes << "/" << capture.storageTimingStats.fullSnapshotExportMicroseconds
+            << " snapshotSync=" << capture.storageTimingStats.fullSnapshotSyncSectors << "/" << capture.storageTimingStats.fullSnapshotSyncMicroseconds
             << " elapsedUs=" << capture.elapsedMicroseconds
             << std::endl;
 
@@ -706,16 +893,44 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
   EXPECT_GT(stats.entityBaselineTicks, 0u);
   EXPECT_GT(stats.entityIterationCopies, 0u);
   EXPECT_GT(stats.entitySortedEntities, 0u);
+  EXPECT_GT(stats.entityUpdateAttributionStats.size(), 0u);
   EXPECT_GT(stats.luaBaselineTicks, 0u);
   EXPECT_GT(stats.luaScriptContexts, 0u);
   EXPECT_GT(stats.luaScriptUpdates, 0u);
+  EXPECT_GT(stats.luaReadyScriptUpdates, 0u);
+  EXPECT_GT(stats.luaScriptContextStats.size(), 0u);
   EXPECT_GE(stats.fallingBlocksProcessedPositions, stats.fallingBlocksMovedBlocks);
   EXPECT_GE(stats.wiringLoadedEntities, stats.wiringEvaluatedEntities);
   EXPECT_GE(stats.entityUpdatedEntities, stats.entityTileEntities);
   EXPECT_GE(stats.entityIterationCopies, stats.entityUpdatedEntities);
   EXPECT_GE(stats.entitySortedEntities, stats.entityUpdatedEntities);
   EXPECT_GE(stats.luaScriptUpdates, stats.luaScriptContexts);
+  EXPECT_GE(stats.luaScriptUpdates, stats.luaReadyScriptUpdates);
   EXPECT_GE(stats.luaScriptUpdateMicroseconds, stats.luaMaxScriptUpdateMicroseconds);
+
+  uint64_t attributedUpdatedEntities = 0;
+  uint64_t attributedTileEntities = 0;
+  uint64_t attributedDestroyedEntities = 0;
+  for (auto const& attributionStats : stats.entityUpdateAttributionStats) {
+    attributedUpdatedEntities += attributionStats.second.updatedEntities;
+    attributedTileEntities += attributionStats.second.tileEntities;
+    attributedDestroyedEntities += attributionStats.second.destroyedEntities;
+  }
+  EXPECT_EQ(attributedUpdatedEntities, stats.entityUpdatedEntities);
+  EXPECT_EQ(attributedTileEntities, stats.entityTileEntities);
+  EXPECT_EQ(attributedDestroyedEntities, stats.entityDestroyedEntities);
+
+  uint64_t contextTicks = 0;
+  uint64_t contextUpdateCalls = 0;
+  uint64_t contextReadyUpdates = 0;
+  for (auto const& contextStats : stats.luaScriptContextStats) {
+    contextTicks += contextStats.second.contextTicks;
+    contextUpdateCalls += contextStats.second.updateCalls;
+    contextReadyUpdates += contextStats.second.readyUpdates;
+  }
+  EXPECT_EQ(contextTicks, stats.luaScriptContexts);
+  EXPECT_EQ(contextUpdateCalls, stats.luaScriptUpdates);
+  EXPECT_EQ(contextReadyUpdates, stats.luaReadyScriptUpdates);
 
   return List<uint64_t>{
       stats.liquidBaselineTicks,
@@ -750,9 +965,12 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.entityDestroyedEntities,
       stats.entityIterationCopies,
       stats.entitySortedEntities,
+      static_cast<uint64_t>(stats.entityUpdateAttributionStats.size()),
       stats.luaBaselineTicks,
       stats.luaScriptContexts,
-      stats.luaScriptUpdates};
+      stats.luaScriptUpdates,
+      stats.luaReadyScriptUpdates,
+      static_cast<uint64_t>(stats.luaScriptContextStats.size())};
 }
 
 List<uint64_t> phase6MutationFixedSeedSignature() {
@@ -1229,21 +1447,128 @@ TEST(MulticorePhaseTest, ServerOptimizationWorldStorageTimingStatsTrackSyncAndSk
   EXPECT_GT(firstSyncStats.sectorCopies, 0u);
   EXPECT_GT(firstSyncStats.compressionCalls, 0u);
   EXPECT_GT(firstSyncStats.btreeInserts, 0u);
+  EXPECT_GT(firstSyncStats.tileSectorWrites, 0u);
+  EXPECT_GT(firstSyncStats.entitySectorWrites, 0u);
+  EXPECT_GT(firstSyncStats.dirtyMarkedSectors, 0u);
+  EXPECT_GT(firstSyncStats.dirtyGenerationSectorMarks, 0u);
+  EXPECT_GT(firstSyncStats.dirtySyncMarkedSectors, 0u);
   EXPECT_GT(firstSyncStats.commits, 0u);
 
   worldServer.sync();
   auto secondSyncStats = worldServer.storageTimingStats();
   EXPECT_EQ(secondSyncStats.syncs, firstSyncStats.syncs + 1);
+  EXPECT_GT(secondSyncStats.syncPassSectors, firstSyncStats.syncPassSectors);
   EXPECT_GT(secondSyncStats.syncedSectors, firstSyncStats.syncedSectors);
   EXPECT_GT(secondSyncStats.tileStoreSectors, firstSyncStats.tileStoreSectors);
   EXPECT_GT(secondSyncStats.btreeInsertSkips, firstSyncStats.btreeInsertSkips);
+  EXPECT_GT(secondSyncStats.tileSectorWriteSkips, firstSyncStats.tileSectorWriteSkips);
+  EXPECT_GT(secondSyncStats.entitySectorWriteSkips, firstSyncStats.entitySectorWriteSkips);
+  EXPECT_GT(secondSyncStats.dirtySyncUnmarkedSectors, firstSyncStats.dirtySyncUnmarkedSectors);
+  EXPECT_EQ(secondSyncStats.dirtySyncSkippedSectors, 0u);
 
   auto chunks = worldServer.readChunks();
   EXPECT_FALSE(chunks.empty());
   auto snapshotStats = worldServer.storageTimingStats();
   EXPECT_EQ(snapshotStats.fullSnapshotExports, secondSyncStats.fullSnapshotExports + 1);
+  EXPECT_GT(snapshotStats.fullSnapshotSyncSectors, secondSyncStats.fullSnapshotSyncSectors);
+  EXPECT_GT(snapshotStats.dirtySnapshotUnmarkedSectors, secondSyncStats.dirtySnapshotUnmarkedSectors);
   EXPECT_GE(snapshotStats.fullSnapshotChunks, chunks.size());
   EXPECT_GT(snapshotStats.fullSnapshotBytes, 0u);
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent) {
+  ByteArray metadataKey = testChunkBytes("metadata");
+  ByteArray tileKey = testChunkBytes("tile-sector");
+  ByteArray entityKey = testChunkBytes("entity-sector");
+  ByteArray sectorUniqueKey = testChunkBytes("sector-unique");
+
+  WorldChunks initialChunks;
+  initialChunks[metadataKey] = testChunkBytes("metadata-v1");
+  initialChunks[tileKey] = testChunkBytes("tile-v1");
+  initialChunks[entityKey] = testChunkBytes("entity-v1");
+
+  WorldChunks newChunks = initialChunks;
+  newChunks[tileKey] = testChunkBytes("tile-v2");
+  newChunks.remove(entityKey);
+  newChunks[sectorUniqueKey] = testChunkBytes("sector-unique-v1");
+
+  ServerClientContext serverContext(1, {}, NetCompatibilityRules(), Uuid(), "snapshot-test", "human", true, initialChunks);
+  auto snapshot = serverContext.buildShipChunksSnapshot(newChunks);
+  auto expectedUpdateChunks = WorldStorage::getWorldChunksUpdate(initialChunks, newChunks);
+
+  EXPECT_TRUE(worldChunksEqual(snapshot.chunks, newChunks));
+  EXPECT_TRUE(worldChunksEqual(snapshot.updateChunks, expectedUpdateChunks));
+  EXPECT_TRUE(worldChunksEqual(applyWorldChunksUpdate(initialChunks, snapshot.updateChunks), newChunks));
+
+  serverContext.applyShipChunksSnapshot(std::move(snapshot));
+  EXPECT_TRUE(worldChunksEqual(serverContext.shipChunks(), newChunks));
+
+  auto updateData = serverContext.writeUpdate();
+  EXPECT_FALSE(updateData.empty());
+
+  ClientContext clientContext{Uuid(), Uuid()};
+  clientContext.readUpdate(updateData, NetCompatibilityRules());
+  EXPECT_TRUE(worldChunksEqual(clientContext.newShipUpdates(), expectedUpdateChunks));
+  EXPECT_TRUE(clientContext.newShipUpdates().empty());
+
+  auto cleanSnapshot = serverContext.buildShipChunksSnapshot(newChunks);
+  EXPECT_TRUE(cleanSnapshot.updateChunks.empty());
+  serverContext.applyShipChunksSnapshot(std::move(cleanSnapshot));
+  EXPECT_TRUE(serverContext.writeUpdate().empty());
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationDirtySectorFilteringIsGuarded) {
+  auto runFixture = [](bool filteringEnabled) {
+    ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+        {"storageGenerationPlanning", false},
+        {"storageGenerationPlanningDifferentialCheck", false},
+        {"packetPreparationSectorPrefill", false},
+        {"packetPreparationSectorPrefillDifferentialCheck", false},
+        {"storageDirtySectorFiltering", filteringEnabled},
+        {"subsystemBaselineMetrics", false}}}});
+
+    WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+    worldServer.setFidelity(WorldServerFidelity::Minimum);
+    worldServer.setSpawningEnabled(false);
+    worldServer.generateRegion(RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+    worldServer.sync();
+    auto firstSyncStats = worldServer.storageTimingStats();
+
+    worldServer.sync();
+    auto cleanSyncStats = worldServer.storageTimingStats();
+
+    auto materialId = firstTestMaterialId();
+    EXPECT_TRUE(materialId);
+    if (materialId)
+      EXPECT_TRUE(setSelfWorkloadForegroundMaterial(worldServer, Vec2I(28, 28), *materialId));
+
+    worldServer.sync();
+    auto dirtySyncStats = worldServer.storageTimingStats();
+
+    return DirtySectorFilteringFixtureRun{firstSyncStats, cleanSyncStats, dirtySyncStats};
+  };
+
+  auto legacyRun = runFixture(false);
+  auto const& legacyFirstSyncStats = legacyRun.firstSyncStats;
+  auto const& legacyCleanSyncStats = legacyRun.cleanSyncStats;
+  auto const& legacyDirtySyncStats = legacyRun.dirtySyncStats;
+  EXPECT_GT(legacyCleanSyncStats.syncedSectors, legacyFirstSyncStats.syncedSectors);
+  EXPECT_EQ(legacyCleanSyncStats.dirtySyncSkippedSectors, 0u);
+  EXPECT_EQ(legacyDirtySyncStats.dirtySyncSkippedSectors, 0u);
+
+  auto filteredRun = runFixture(true);
+  auto const& filteredFirstSyncStats = filteredRun.firstSyncStats;
+  auto const& filteredCleanSyncStats = filteredRun.cleanSyncStats;
+  auto const& filteredDirtySyncStats = filteredRun.dirtySyncStats;
+  EXPECT_EQ(filteredCleanSyncStats.syncedSectors, filteredFirstSyncStats.syncedSectors);
+  EXPECT_GT(filteredCleanSyncStats.dirtySyncSkippedSectors, filteredFirstSyncStats.dirtySyncSkippedSectors);
+  EXPECT_GT(filteredCleanSyncStats.dirtySyncUnmarkedSectors, filteredFirstSyncStats.dirtySyncUnmarkedSectors);
+  EXPECT_GT(filteredDirtySyncStats.syncedSectors, filteredCleanSyncStats.syncedSectors);
+  EXPECT_LT(filteredDirtySyncStats.syncedSectors - filteredCleanSyncStats.syncedSectors,
+      filteredDirtySyncStats.syncPassSectors - filteredCleanSyncStats.syncPassSectors);
+  EXPECT_GT(filteredDirtySyncStats.dirtySyncMarkedSectors, filteredCleanSyncStats.dirtySyncMarkedSectors);
+  EXPECT_GT(filteredDirtySyncStats.dirtySyncSkippedSectors, filteredCleanSyncStats.dirtySyncSkippedSectors);
 }
 
 TEST(ServerMeasurement, DISABLED_GameMechanismSelfWorkloadCapture) {
@@ -1274,13 +1599,18 @@ TEST(ServerMeasurement, DISABLED_GameMechanismSelfWorkloadCapture) {
   EXPECT_GT(capture.phase6Stats.entityIterationCopies, 0u);
   EXPECT_GT(capture.phase6Stats.entitySortedEntities, 0u);
   EXPECT_GT(capture.phase6Stats.entityUpdateMicroseconds, 0u);
+  EXPECT_GT(capture.phase6Stats.entityUpdateAttributionStats.size(), 0u);
   EXPECT_GT(capture.phase6Stats.luaBaselineTicks, 0u);
   EXPECT_GT(capture.phase6Stats.luaScriptContexts, 0u);
   EXPECT_GT(capture.phase6Stats.luaScriptUpdates, 0u);
+  EXPECT_GT(capture.phase6Stats.luaReadyScriptUpdates, 0u);
+  EXPECT_GT(capture.phase6Stats.luaScriptContextStats.size(), 0u);
   EXPECT_GE(capture.phase6Stats.luaScriptUpdateMicroseconds, capture.phase6Stats.luaMaxScriptUpdateMicroseconds);
   EXPECT_GT(capture.storageTimingStats.syncs, 0u);
   EXPECT_GT(capture.storageTimingStats.syncedSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.syncPassSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.fullSnapshotExports, 0u);
+  EXPECT_GT(capture.storageTimingStats.fullSnapshotSyncSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.fullSnapshotBytes, 0u);
   EXPECT_EQ(capture.phase6Stats.storageGenerationPlanningDivergences, 0u);
   EXPECT_EQ(capture.phase6Stats.packetPreparationSectorPrefillDivergences, 0u);
@@ -1290,6 +1620,41 @@ TEST(ServerMeasurement, DISABLED_GameMechanismSelfWorkloadCapture) {
   RecordProperty("entityUpdated", static_cast<int64_t>(capture.phase6Stats.entityUpdatedEntities));
   RecordProperty("liquidCacheRebuildSkips", static_cast<int64_t>(capture.phase6Stats.liquidNoProcessingLimitRegionCacheRebuildSkips));
   RecordProperty("snapshotBytes", static_cast<int64_t>(capture.storageTimingStats.fullSnapshotBytes));
+}
+
+TEST(ServerMeasurement, DISABLED_SaveDisconnectStorageCapture) {
+  auto capture = runSaveDisconnectStorageCapture();
+
+  EXPECT_GT(capture.dirtyTileEdits, 0u);
+  EXPECT_EQ(capture.syncPasses, 5u);
+  EXPECT_EQ(capture.snapshotExports, 10u);
+  EXPECT_GT(capture.chunks, 0u);
+  EXPECT_EQ(capture.storageTimingStats.syncs, capture.syncPasses);
+  EXPECT_EQ(capture.storageTimingStats.fullSnapshotExports, capture.snapshotExports);
+  EXPECT_GT(capture.storageTimingStats.syncPassSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.fullSnapshotSyncSectors, 0u);
+  EXPECT_GE(capture.storageTimingStats.syncedSectors, capture.storageTimingStats.syncPassSectors + capture.storageTimingStats.fullSnapshotSyncSectors);
+  EXPECT_GT(capture.storageTimingStats.tileStoreSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.sectorCopies, 0u);
+  EXPECT_GT(capture.storageTimingStats.btreeInserts, 0u);
+  EXPECT_GT(capture.storageTimingStats.btreeInsertSkips, 0u);
+  EXPECT_GT(capture.storageTimingStats.tileSectorWrites, 0u);
+  EXPECT_GT(capture.storageTimingStats.tileSectorWriteSkips, 0u);
+  EXPECT_GT(capture.storageTimingStats.entitySectorWrites, 0u);
+  EXPECT_GT(capture.storageTimingStats.entitySectorWriteSkips, 0u);
+  EXPECT_GT(capture.storageTimingStats.dirtyMarkedSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.dirtyTileSectorMarks, 0u);
+  EXPECT_GT(capture.storageTimingStats.dirtyGenerationSectorMarks, 0u);
+  EXPECT_GT(capture.storageTimingStats.dirtySyncMarkedSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.dirtySyncUnmarkedSectors, 0u);
+  EXPECT_EQ(capture.storageTimingStats.dirtySyncSkippedSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.dirtySnapshotUnmarkedSectors, 0u);
+  EXPECT_GT(capture.storageTimingStats.fullSnapshotBytes, 0u);
+
+  RecordProperty("dirtyTileEdits", static_cast<int64_t>(capture.dirtyTileEdits));
+  RecordProperty("snapshotSyncSectors", static_cast<int64_t>(capture.storageTimingStats.fullSnapshotSyncSectors));
+  RecordProperty("snapshotBytes", static_cast<int64_t>(capture.storageTimingStats.fullSnapshotBytes));
+  RecordProperty("elapsedUs", capture.elapsedMicroseconds);
 }
 
 TEST(MulticorePhaseTest, Phase6EntityInitialNetStateWritesAdvancePerClientVersions) {
@@ -1360,6 +1725,7 @@ TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
     EXPECT_TRUE(stats.storageGenerationPlanningDifferentialCheckEnabled);
     EXPECT_TRUE(stats.packetPreparationSectorPrefillEnabled);
     EXPECT_TRUE(stats.packetPreparationSectorPrefillDifferentialCheckEnabled);
+    EXPECT_FALSE(stats.storageDirtySectorFilteringEnabled);
     EXPECT_TRUE(stats.subsystemBaselineMetricsEnabled);
     EXPECT_FALSE(stats.mutationParallelismRequested);
     EXPECT_FALSE(stats.mutationParallelismBlockedByImplementationGate);
@@ -1379,6 +1745,7 @@ TEST(MulticorePhaseTest, Phase6StorageGenerationPlanningIsGuarded) {
     EXPECT_FALSE(stats.storageGenerationPlanningDifferentialCheckEnabled);
     EXPECT_FALSE(stats.packetPreparationSectorPrefillEnabled);
     EXPECT_FALSE(stats.packetPreparationSectorPrefillDifferentialCheckEnabled);
+    EXPECT_FALSE(stats.storageDirtySectorFilteringEnabled);
     EXPECT_FALSE(stats.subsystemBaselineMetricsEnabled);
     EXPECT_FALSE(stats.mutationParallelismRequested);
   }

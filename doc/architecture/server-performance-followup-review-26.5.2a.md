@@ -39,7 +39,7 @@ The current implementation has useful observability for most of the remaining pe
 - `/serverstatus` reports universe-loop timings, world-thread timings, world-update phase timings, network queued/eager/worker send counters, world packet-prep counters, storage timing counters, Phase 6 parallel helper divergence counters, and Phase 6 subsystem baselines.
 - `/worldstats` reports per-world command stats, packet-prep stats, storage timings, Phase 6 helper counters, and mutation gate states.
 - `/servernetstats` reports per-worker connection ownership, scans, callbacks, wakeups, waits, and queued/eager/worker send counts.
-- `WorldStorageTimingStats` separates sync, sector copy, entity/tile store, compression, B-tree insert/skip, commit, and full snapshot export work.
+- `WorldStorageTimingStats` separates sync, sync-pass sector visits, `readChunks()` pre-sync sector/time cost, sector copy, entity/tile store, compression, B-tree insert/skip, per-store-surface write/skip/remove attribution, commit, and full snapshot export work.
 
 This means the next pass should not begin with broad instrumentation. It should begin with fixed workload captures using the existing counters, then implement only the tickets whose target workload is visible.
 
@@ -76,7 +76,7 @@ These were real concerns in earlier reviews but should now be treated as impleme
 | 5 | Socket readiness abstraction | idle/many connections, latency | high idle CPU and latency improvement | medium to high | design API before implementation |
 | 6 | Liquid no-limit region cache rebuild skip | liquid-heavy static visibility | low to medium | low | safe bookkeeping ticket |
 | 7 | Dirty wiring-network tracker | wiring-heavy bases | high for stable wiring | medium to high | guarded prototype with full-scan fallback |
-| 8 | Entity/Lua per-type and per-context profiling | modded crowded worlds | diagnostic, guides later work | low | add before mutation experiments |
+| 8 | Entity/Lua per-type and per-context profiling | modded crowded worlds | diagnostic, guides later work | low | first bounded counters added; use captures before mutation experiments |
 | 9 | System-world delta/cache review | many system-world clients | low to medium | low to medium | only after workload shows cost |
 | 10 | Separate first net-state byte generation from version advancement | crowded hubs, first observation | medium | medium | prerequisite for workerized entity packet prep |
 
@@ -186,16 +186,22 @@ Acceptance tests:
 - unload path still persists required state
 - byte-identical unchanged sync still reports skipped inserts when dirty filtering is disabled
 
-Diagnostics to add with the dirty-sector ticket:
+Diagnostics now available for the dirty-sector ticket:
 
-- dirty sectors visited versus clean sectors skipped
-- dirty reason counters
+- dirty reason counters: `dirty=marked/tile/entity/unique/generation/unload`
+- ordinary sync visit attribution: `dirtySync=marked/unmarked/skipped`
+- full snapshot pre-sync visit attribution: `dirtySnapshot=marked/unmarked`
+
+Diagnostics still needed before considering the filter default-safe:
+
 - dirty sync fallbacks
 - reload verification count in tests
 
 ### 6. `readChunks()` Full Exports Are The Save/Disconnect Spike To Watch
 
 `WorldStorage::readChunks()` syncs active sectors and then iterates the full database with `m_db.forAll()` to build a complete `WorldChunks` snapshot. `UniverseServer::buildClientContextStorageSnapshots()` calls `shipWorld->readChunks()` for each connected client's ship world during triggered storage, then stores the result in client context data.
+
+The disabled save/disconnect-style storage capture now exists as `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture`. On 2026-05-14 it produced `sync=5/100/300`, `btree=46/570/4295/41601/614`, `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0`, `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, `dirtySnapshot=0/200`, `snapshot=10/410/32196/220`, and `snapshotSync=200/85782`, which confirms that unchanged B-tree inserts are skipped but default config still visits, serializes, and compresses loaded tile/entity sectors before full exports. The dirty-sector filter now exists behind `storageDirtySectorFiltering=false` by default; the third `dirtySync` value reports clean sectors skipped by that opt-in path.
 
 This is the clearest remaining storage p99 risk:
 
@@ -211,7 +217,7 @@ Possible paths:
 3. Queue immutable ship-world snapshot exports from the world owner thread and write them through the persistence worker path.
 4. Keep full `readChunks()` as the serial fallback and byte-compare incremental versus full exports during tests.
 
-This path has higher compatibility risk than dirty-sector sync because the exported chunk set becomes part of durable client context state. Do not change it without byte-equivalence tests across tile edits, entity edits, unique entities, unload, and old-save reload.
+This path has higher compatibility risk than dirty-sector sync because the exported chunk set becomes part of durable client context state. The first focused gate, `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent`, now covers current changed, added, removed, and no-op client-context update semantics. Do not change export behavior until that expands across tile edits, entity edits, unique entities, unload, and old-save reload.
 
 ### 7. B-tree Tuning Should Be Measurement-Led
 
@@ -339,18 +345,19 @@ Do not tackle this before network readiness and fixed workload captures. A wake-
 2. Capture `/serverstatus`, `/worldstats`, and `/servernetstats` for default config.
 3. Repeat network-heavy captures with `queueOnlyConnectionSend=false` as rollback comparison.
 4. Keep queue-only default only if fixed workloads stay neutral or improve.
-5. Record the current top p99 world-update phases and storage snapshot/export counters.
+5. Run `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture` to keep save/disconnect-style `sync`, `dirty`, `dirtySync=marked/unmarked/skipped`, `dirtySnapshot`, `snapshot`, and `snapshotSync` counters in the comparison pack.
+6. Record the current top p99 world-update phases and storage snapshot/export counters.
 
 ### Pass 9: Low-Risk Bookkeeping Wins
 
 1. Skip liquid no-limit cache rebuilds when monitoring regions are unchanged.
-2. Add dirty-sector reason counters and implement dirty-sector sync filtering behind fallback/test gates.
+2. Expand dirty-sector sync filtering coverage with reload verification, entity/unique/unload fixtures, and fallback counters before considering a default-on decision.
 3. Add B-tree cache/cadence counters if save-heavy workload points there.
-4. Add deeper entity/Lua attribution if crowded-world p99 remains dominated by entity/script phases.
+4. Use the new per-entity-type and per-Lua-context attribution to decide whether deeper mod-heavy profiling is needed.
 
 ### Pass 10: Spike Reduction And Readiness Design
 
-1. Design incremental or cached ship `readChunks()` exports with byte-equivalence tests.
+1. Expand incremental or cached ship `readChunks()` export equivalence tests from synthetic chunk updates into real ship world tile/entity/unique/unload/reload cases.
 2. Draft and test `SocketPoller` fallback API.
 3. Prototype dirty wiring networks with full-scan differential validation.
 4. Start first-net-state byte-generation API split for future packet-prep worker expansion.
@@ -370,10 +377,11 @@ Before accepting another optimization as default-enabled:
 2. Build `game_tests`, `starbound_server`, and `starbound`
 3. Run `game_tests.exe -bootconfig ..\scripts\windows\sbinit.config --gtest_filter=MulticorePhaseTest.*:ServerTest.*:UniverseConnections.*:UniverseConnectionServer.*`
 4. Run any focused new regression suite for the ticket
-5. Capture fixed workload before/after p50/p95/p99
-6. Capture `/serverstatus`, `/worldstats`, and `/servernetstats`
-7. Run modpack smoke with the optimization enabled and disabled
-8. Confirm no packet, save, protocol, or Lua-visible behavior changes unless explicitly versioned and documented
+5. Run relevant disabled measurement captures, including `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture` for storage/export changes
+6. Capture fixed workload before/after p50/p95/p99
+7. Capture `/serverstatus`, `/worldstats`, and `/servernetstats`
+8. Run modpack smoke with the optimization enabled and disabled
+9. Confirm no packet, save, protocol, or Lua-visible behavior changes unless explicitly versioned and documented
 
 ## Code Review Watchlist
 

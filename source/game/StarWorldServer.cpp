@@ -1176,10 +1176,16 @@ void WorldServer::update(float dt) {
     uint64_t tileEntities = 0;
     EntityMap::UpdateAllEntitiesStats entityUpdateStats;
     m_entityMap->updateAllEntities([&](EntityPtr const& entity) {
+        auto entityCallbackStart = m_phase6SubsystemBaselineMetricsEnabled ? Time::monotonicMicroseconds() : 0;
+        auto entityType = entity->entityType();
+        bool entityIsTileEntity = false;
+        bool entityWillDestroy = false;
+
         updatedEntities += 1;
         entity->update(dt, m_currentStep);
 
         if (auto tileEntity = as<TileEntity>(entity)) {
+          entityIsTileEntity = true;
           tileEntities += 1;
           // Only do break checks on objects if all sectors the object touches
           // *and surrounding sectors* are active.  Objects that this object
@@ -1189,8 +1195,23 @@ void WorldServer::update(float dt) {
           updateTileEntityTiles(tileEntity);
         }
 
-        if (entity->shouldDestroy() && entity->entityMode() == EntityMode::Master)
+        if (entity->shouldDestroy() && entity->entityMode() == EntityMode::Master) {
+          entityWillDestroy = true;
           toRemove.append(entity->entityId());
+        }
+
+        if (m_phase6SubsystemBaselineMetricsEnabled) {
+          auto elapsed = Time::monotonicMicroseconds() - entityCallbackStart;
+          auto& attributionStats = m_phase6WorldParallelismStats.entityUpdateAttributionStats[entityType];
+          attributionStats.updatedEntities += 1;
+          if (entityIsTileEntity)
+            attributionStats.tileEntities += 1;
+          if (entityWillDestroy)
+            attributionStats.destroyedEntities += 1;
+          attributionStats.callbackMicroseconds += elapsed;
+          if (elapsed > attributionStats.maxCallbackMicroseconds)
+            attributionStats.maxCallbackMicroseconds = elapsed;
+        }
       }, [](EntityPtr const& a, EntityPtr const& b) {
         return a->entityType() < b->entityType();
       }, m_phase6SubsystemBaselineMetricsEnabled ? &entityUpdateStats : nullptr);
@@ -1211,9 +1232,11 @@ void WorldServer::update(float dt) {
 
   timePhase(UpdateTimingPhase::Scripts, [&]() {
     uint64_t scriptUpdates = 0;
+    uint64_t readyScriptUpdates = 0;
     uint64_t scriptUpdateMicroseconds = 0;
     uint64_t maxScriptUpdateMicroseconds = 0;
     for (auto& pair : m_scriptContexts) {
+      bool scriptReady = m_phase6SubsystemBaselineMetricsEnabled && pair.second->updateReady();
       auto scriptStart = m_phase6SubsystemBaselineMetricsEnabled ? Time::monotonicMicroseconds() : 0;
       pair.second->update(pair.second->updateDt(dt));
       if (m_phase6SubsystemBaselineMetricsEnabled) {
@@ -1221,6 +1244,16 @@ void WorldServer::update(float dt) {
         scriptUpdateMicroseconds += elapsed;
         if (elapsed > maxScriptUpdateMicroseconds)
           maxScriptUpdateMicroseconds = elapsed;
+        auto& contextStats = m_phase6WorldParallelismStats.luaScriptContextStats[pair.first];
+        contextStats.contextTicks += 1;
+        contextStats.updateCalls += 1;
+        if (scriptReady) {
+          contextStats.readyUpdates += 1;
+          readyScriptUpdates += 1;
+        }
+        contextStats.updateMicroseconds += elapsed;
+        if (elapsed > contextStats.maxUpdateMicroseconds)
+          contextStats.maxUpdateMicroseconds = elapsed;
       }
       scriptUpdates += 1;
     }
@@ -1229,6 +1262,7 @@ void WorldServer::update(float dt) {
       m_phase6WorldParallelismStats.luaBaselineTicks += 1;
       m_phase6WorldParallelismStats.luaScriptContexts += m_scriptContexts.size();
       m_phase6WorldParallelismStats.luaScriptUpdates += scriptUpdates;
+      m_phase6WorldParallelismStats.luaReadyScriptUpdates += readyScriptUpdates;
       m_phase6WorldParallelismStats.luaScriptUpdateMicroseconds += scriptUpdateMicroseconds;
       if (maxScriptUpdateMicroseconds > m_phase6WorldParallelismStats.luaMaxScriptUpdateMicroseconds)
         m_phase6WorldParallelismStats.luaMaxScriptUpdateMicroseconds = maxScriptUpdateMicroseconds;
@@ -1419,9 +1453,10 @@ void WorldServer::update(float dt) {
         m_packetPreparationStats.sectorClientFanoutRecipients,
         m_packetPreparationStats.sectorClientFanoutMisses));
       auto storageTimingStats = m_worldStorage->storageTimingStats();
-      LogMap::set(strf("server_{}_storage_timing", m_worldId), strf("syncs={}, sectors={}, entity={}/{}/{}, tile={}/{}, copy={}, compress={}/{}/{}, btree={}/{}, commit={}, snapshot={}",
+      LogMap::set(strf("server_{}_storage_timing", m_worldId), strf("syncs={}, sectors={}, syncPassSectors={}, entity={}/{}/{}, tile={}/{}, copy={}, compress={}/{}/{}, btree={}/{}, storeTypes=m:{}/{}/{} tile:{}/{}/{} entity:{}/{}/{} unique:{}/{}/{} sectorUnique:{}/{}/{}, dirty={}/{}/{}/{}/{}/{}, dirtySync={}/{}/{}, dirtySnapshot={}/{}, commit={}, snapshot={}, snapshotSync={}/{}",
         storageTimingStats.syncs,
         storageTimingStats.syncedSectors,
+        storageTimingStats.syncPassSectors,
         storageTimingStats.entityStoreSectors,
         storageTimingStats.entityStoreEntities,
         storageTimingStats.entityStoreMicroseconds,
@@ -1433,8 +1468,36 @@ void WorldServer::update(float dt) {
         storageTimingStats.compressionOutputBytes,
         storageTimingStats.btreeInserts,
         storageTimingStats.btreeInsertSkips,
+        storageTimingStats.metadataWrites,
+        storageTimingStats.metadataWriteSkips,
+        storageTimingStats.metadataRemoves,
+        storageTimingStats.tileSectorWrites,
+        storageTimingStats.tileSectorWriteSkips,
+        storageTimingStats.tileSectorRemoves,
+        storageTimingStats.entitySectorWrites,
+        storageTimingStats.entitySectorWriteSkips,
+        storageTimingStats.entitySectorRemoves,
+        storageTimingStats.uniqueIndexWrites,
+        storageTimingStats.uniqueIndexWriteSkips,
+        storageTimingStats.uniqueIndexRemoves,
+        storageTimingStats.sectorUniqueWrites,
+        storageTimingStats.sectorUniqueWriteSkips,
+        storageTimingStats.sectorUniqueRemoves,
+        storageTimingStats.dirtyMarkedSectors,
+        storageTimingStats.dirtyTileSectorMarks,
+        storageTimingStats.dirtyEntitySectorMarks,
+        storageTimingStats.dirtyUniqueSectorMarks,
+        storageTimingStats.dirtyGenerationSectorMarks,
+        storageTimingStats.dirtyUnloadSectorMarks,
+        storageTimingStats.dirtySyncMarkedSectors,
+        storageTimingStats.dirtySyncUnmarkedSectors,
+        storageTimingStats.dirtySyncSkippedSectors,
+        storageTimingStats.dirtySnapshotMarkedSectors,
+        storageTimingStats.dirtySnapshotUnmarkedSectors,
         storageTimingStats.commits,
-        storageTimingStats.fullSnapshotExports));
+        storageTimingStats.fullSnapshotExports,
+        storageTimingStats.fullSnapshotSyncSectors,
+        storageTimingStats.fullSnapshotSyncMicroseconds));
     LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
     if (m_phase6MutationFixedSeedSignaturesEnabled) {
       LogMap::set(strf("server_{}_phase6_signatures", m_worldId), strf("liquid={}/{}/{}/{}, falling={}/{}/{}/{}/{}, wiring={}/{}/{}",
@@ -1519,6 +1582,10 @@ void WorldServer::addEntity(EntityPtr const& entity, EntityId entityId) {
 
   entity->init(this, m_entityMap->reserveEntityId(entityId), EntityMode::Master);
   m_entityMap->addEntity(entity);
+  uint32_t dirtyReasonMask = WorldStorage::EntityDirtySectorReason;
+  if (entity->uniqueId())
+    dirtyReasonMask |= WorldStorage::UniqueDirtySectorReason;
+  m_worldStorage->markPositionDirty(Vec2I(entity->position()), dirtyReasonMask);
 
   if (auto tileEntity = as<TileEntity>(entity))
     updateTileEntityTiles(tileEntity);
@@ -2158,6 +2225,7 @@ void WorldServer::init(bool firstTime) {
   m_phase6PacketPreparationSectorPrefillWorkerThreads = phase6Config.getUInt("packetPreparationSectorPrefillWorkerThreads", 2);
   m_phase6PacketPreparationSectorPrefillMinimumSectors = phase6Config.getUInt("packetPreparationSectorPrefillMinimumSectors", 8);
   m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
+  m_phase6StorageDirtySectorFilteringEnabled = phase6Config.getBool("storageDirtySectorFiltering", false);
   m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
   m_phase6MutationFixedSeedSignaturesEnabled = phase6Config.getBool("mutationParallelismFixedSeedSignatures", false);
   m_phase6MutationParallelismWorkerThreads = phase6Config.getUInt("mutationParallelismWorkerThreads", 2);
@@ -2187,6 +2255,7 @@ void WorldServer::init(bool firstTime) {
   m_phase6WorldParallelismStats.storageGenerationPlanningDifferentialCheckEnabled = m_phase6StorageGenerationPlanningDifferentialCheck;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillEnabled = m_phase6PacketPreparationSectorPrefillEnabled;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillDifferentialCheckEnabled = m_phase6PacketPreparationSectorPrefillDifferentialCheck;
+  m_phase6WorldParallelismStats.storageDirtySectorFilteringEnabled = m_phase6StorageDirtySectorFilteringEnabled;
   m_phase6WorldParallelismStats.subsystemBaselineMetricsEnabled = m_phase6SubsystemBaselineMetricsEnabled;
   m_phase6WorldParallelismStats.mutationFixedSeedSignaturesEnabled = m_phase6MutationFixedSeedSignaturesEnabled;
   m_phase6WorldParallelismStats.mutationParallelismRequested = mutationParallelismRequested;
@@ -2213,6 +2282,7 @@ void WorldServer::init(bool firstTime) {
     m_phase6WorkerPool.stop();
   setFidelity(WorldServerFidelity::Medium);
 
+  m_worldStorage->setDirtySectorFiltering(m_phase6StorageDirtySectorFilteringEnabled);
   m_worldStorage->setFloatingDungeonWorld(isFloatingDungeonWorld());
 
   m_currentTime = 0;
@@ -2484,8 +2554,11 @@ void WorldServer::updateTileEntityTiles(TileEntityPtr const& entity, bool removi
 
   // remove all old roots
   for (auto const& rootPos : spaces.roots) {
-    if (auto tile = m_tileArray->modifyTile(rootPos + entity->tilePosition()))
+    auto pos = rootPos + entity->tilePosition();
+    if (auto tile = m_tileArray->modifyTile(pos)) {
       tile->rootSource = {};
+      m_worldStorage->markPositionDirty(pos, WorldStorage::TileDirtySectorReason);
+    }
   }
 
   // remove all old material spaces
@@ -2550,8 +2623,11 @@ void WorldServer::updateTileEntityTiles(TileEntityPtr const& entity, bool removi
 
     // add new roots and update known roots entry
     for (auto const& rootPos : newRoots) {
-      if (auto tile = m_tileArray->modifyTile(rootPos + entity->tilePosition()))
+      auto pos = rootPos + entity->tilePosition();
+      if (auto tile = m_tileArray->modifyTile(pos)) {
         tile->rootSource = entity->tilePosition();
+        m_worldStorage->markPositionDirty(pos, WorldStorage::TileDirtySectorReason);
+      }
     }
     spaces.roots = std::move(newRoots);
   }
@@ -2991,6 +3067,7 @@ void WorldServer::checkEntityBreaks(RectF const& rect) {
 }
 
 void WorldServer::queueTileUpdates(Vec2I const& pos) {
+  m_worldStorage->markPositionDirty(pos, WorldStorage::TileDirtySectorReason);
   auto sector = m_tileArray->sectorFor(pos);
   m_packetPreparationStats.sectorClientFanoutLookups += 1;
   if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
@@ -3003,6 +3080,7 @@ void WorldServer::queueTileUpdates(Vec2I const& pos) {
 }
 
 void WorldServer::queueTileDamageUpdates(Vec2I const& pos, TileLayer layer) {
+  m_worldStorage->markPositionDirty(pos, WorldStorage::TileDirtySectorReason);
   auto sector = m_tileArray->sectorFor(pos);
   m_packetPreparationStats.sectorClientFanoutLookups += 1;
   if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
@@ -3015,6 +3093,7 @@ void WorldServer::queueTileDamageUpdates(Vec2I const& pos, TileLayer layer) {
 }
 
 void WorldServer::queueLiquidUpdates(Vec2I const& pos) {
+  m_worldStorage->markPositionDirty(pos, WorldStorage::TileDirtySectorReason);
   auto sector = m_tileArray->sectorFor(pos);
   m_packetPreparationStats.sectorClientFanoutLookups += 1;
   if (auto subscribers = m_sectorClientSubscriptions.ptr(sector)) {
@@ -3106,6 +3185,10 @@ void WorldServer::removeEntity(EntityId entityId, bool andDie) {
   if (auto clientInfo = m_clientInfo.value(connectionForEntity(entityId)))
     clientInfo->clientMasterEntities.remove(entityId);
 
+  uint32_t dirtyReasonMask = WorldStorage::EntityDirtySectorReason;
+  if (entity->uniqueId())
+    dirtyReasonMask |= WorldStorage::UniqueDirtySectorReason;
+  m_worldStorage->markPositionDirty(Vec2I(entity->position()), dirtyReasonMask);
   m_entityMap->removeEntity(entityId);
   entity->uninit();
 }
