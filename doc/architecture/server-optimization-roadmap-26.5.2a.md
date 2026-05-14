@@ -35,7 +35,8 @@ Current checklist:
 8. Done: guarded empty `EntityUpdateSetPacket` suppression behind `skipEmptyEntityUpdateSets`, with default-off legacy behavior, packet-prep diagnostics, and focused coverage.
 9. Done: guarded empty `SystemWorldUpdatePacket` suppression behind `skipEmptyUpdatePackets`, with default-off legacy behavior, `/worldstats` packet diagnostics, and focused coverage.
 10. Done: compatibility-sensitive entity/Lua attribution under `subsystemBaselineMetrics`, with entity copy/sort/update/metadata timings and bounded Lua script-context timing diagnostics.
-11. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
+11. Done: per-subsystem mutation gate reporting for requested liquid/falling/wiring/entity/Lua experiments, including fixed-seed, dependency-analysis, mod-visibility, and implementation blockers.
+12. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
 
 ## 2. Current Bottleneck Statement
 
@@ -71,7 +72,7 @@ Tasks:
 1. Define the `26.5.2a` fixed workload set: crowded hub, high-fan-out replication, liquid-heavy region, wiring-heavy base, generation-heavy exploration, save/disconnect spike, login burst, and modpack smoke.
 2. Record baseline p50/p95/p99 for universe loop, world thread, world-update subphases, packet preparation, persistence queue, network worker wakeups, and Phase 6 worker helpers.
 3. Add or update command output notes for collecting `/serverstatus`, `/worldstats`, and `/servernetstats` during the workloads.
-4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, wire objects, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-14 with opt-in empty update-set suppression enabled in the harness: `packets=22621`, `tile=3116`, `liquid=16484`, `tileDamage=1008`, `falling=30/1216/1537/324`, `wiring=48/144/144/144/144`, `entityCreate=92`, `entityUpdate=780`, `entityUpdateDeltas=4800`, `updateSets=780/4800/0/180`, `sectorFanout=5179/20716/0`, `netStateCache=8127/7517`, `entity=240/3944/720/10/3944/3944/44/176/15791/646`, `lua=240/240/240/680/87`, `storage=1/64/64/64/66/65/1/65/6285`, `elapsedUs=189429`.
+4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, wire objects, item-drop replication, packet prep, storage sync, and full snapshot export. Latest local result on 2026-05-14 with opt-in empty update-set suppression enabled in the harness: `packets=22769`, `tile=3116`, `liquid=16628`, `tileDamage=1008`, `falling=30/1216/1540/324`, `wiring=48/144/144/144/144`, `entityCreate=92`, `entityUpdate=784`, `entityUpdateDeltas=4808`, `updateSets=784/4808/0/176`, `sectorFanout=5215/20860/0`, `netStateCache=8013/7479`, `entity=240/3906/720/10/3906/3906/55/207/20491/1004`, `lua=240/240/240/837/51`, `storage=1/64/64/64/66/65/1/65/6274`, `elapsedUs=197387`.
 5. Re-enable or document the `world_benchmark` utility target only if it can run without disturbing normal builds; otherwise keep it as a manual profiling harness.
 6. Store benchmark world setup notes with enough detail that future releases can rerun the same workload.
 
@@ -150,7 +151,7 @@ Priority tickets:
 
 1. Done: move `UniverseConnectionServer::sendPackets()` toward queue-only behavior behind `queueOnlyConnectionSend`, so socket writes can be fully owned by the assigned network worker while the legacy eager-send path remains available as `queueOnlyConnectionSend=false`.
 2. Done: measure eager send/write versus queue-only send with `queued`, `eager`, and `workerSend` counters in `/serverstatus` and `/servernetstats` before changing the default.
-3. Done: add `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison`, which runs 8 in-process dummy clients and compares eager versus queue-only server fan-out with inter-round drains so the measurement does not turn local socket backlog into a flake. Latest local result on 2026-05-14: eager `sent=128 queued=128 eager=128 worker=0 elapsedUs=532`; queue-only `sent=128 queued=130 eager=0 worker=130 elapsedUs=5870`.
+3. Done: add `ServerMeasurement.DISABLED_QueueOnlySendFanoutComparison`, which runs 8 direct `UniverseConnectionServer` local-socket clients and compares eager versus queue-only transport fan-out with inter-round drains so the measurement does not turn `UniverseServer` inactivity reaping or local socket backlog into a flake. Latest local result on 2026-05-14: eager `sent=128 received=128 queued=128 eager=128 worker=0 wakeups=128 idleTimedWaits=32 elapsedUs=247373`; queue-only `sent=128 received=128 queued=128 eager=0 worker=128 wakeups=128 idleTimedWaits=9 elapsedUs=252290`.
 4. Draft the narrow `SocketPoller` API for readable/writable interest, unregister, wake, timed wait, and ready connection handles.
 5. Keep the current condition-variable and timed fallback until Windows, Linux, and macOS paths have coverage.
 
@@ -191,7 +192,7 @@ Priority tickets:
 3. Wiring component signatures for loaded networks, evaluated entities, output states, and topology changes.
 4. Region/component boundary stress tests for each subsystem.
 5. Done: compatibility-sensitive entity/Lua attribution. `subsystemBaselineMetrics` now reports entity iteration copy/sort/update/metadata-refresh timing and bounded Lua script-context update timing while preserving the serial execution path.
-6. Per-subsystem gate reporting that explains why a requested mutation worker is blocked.
+6. Done: per-subsystem gate reporting. `/serverstatus` and `/worldstats` now render requested mutation experiments and fixed-seed, dependency-analysis, mod-visibility, and implementation blockers as subsystem names, e.g. `liquid|entity`, instead of only coarse booleans.
 
 Must-ship acceptance:
 

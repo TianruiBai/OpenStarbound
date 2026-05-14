@@ -1296,11 +1296,17 @@ TEST(MulticorePhaseTest, Phase6MutationParallelismRequiresExplicitGates) {
 
     WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
+    uint32_t expectedSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::EntityMutationParallelismSubsystem;
     EXPECT_TRUE(stats.mutationParallelismRequested);
     EXPECT_TRUE(stats.mutationParallelismBlockedByFixedSeedGate);
     EXPECT_TRUE(stats.mutationParallelismBlockedByDependencyGate);
     EXPECT_TRUE(stats.mutationParallelismBlockedByModVisibilityGate);
     EXPECT_TRUE(stats.mutationParallelismBlockedByImplementationGate);
+    EXPECT_EQ(stats.mutationParallelismRequestedSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByFixedSeedGateSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByDependencyGateSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByModVisibilityGateSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, expectedSubsystems);
   }
 
   {
@@ -1319,11 +1325,17 @@ TEST(MulticorePhaseTest, Phase6MutationParallelismRequiresExplicitGates) {
 
     WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
+    uint32_t expectedSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::FallingBlockMutationParallelismSubsystem | WorldServer::WiringMutationParallelismSubsystem | WorldServer::EntityMutationParallelismSubsystem | WorldServer::LuaMutationParallelismSubsystem;
     EXPECT_TRUE(stats.mutationParallelismRequested);
     EXPECT_FALSE(stats.mutationParallelismBlockedByFixedSeedGate);
     EXPECT_FALSE(stats.mutationParallelismBlockedByDependencyGate);
     EXPECT_FALSE(stats.mutationParallelismBlockedByModVisibilityGate);
     EXPECT_TRUE(stats.mutationParallelismBlockedByImplementationGate);
+    EXPECT_EQ(stats.mutationParallelismRequestedSubsystems, expectedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByFixedSeedGateSubsystems, 0u);
+    EXPECT_EQ(stats.mutationParallelismBlockedByDependencyGateSubsystems, 0u);
+    EXPECT_EQ(stats.mutationParallelismBlockedByModVisibilityGateSubsystems, 0u);
+    EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, expectedSubsystems);
   }
 }
 

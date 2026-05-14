@@ -62,6 +62,24 @@ String packetPrepEntitySerializationSummary(HashMap<EntityType, WorldServer::Ent
   return parts.join(",");
 }
 
+String mutationSubsystemSummary(uint32_t mask) {
+  StringList parts;
+  if (mask & WorldServer::LiquidMutationParallelismSubsystem)
+    parts.append("liquid");
+  if (mask & WorldServer::FallingBlockMutationParallelismSubsystem)
+    parts.append("falling");
+  if (mask & WorldServer::WiringMutationParallelismSubsystem)
+    parts.append("wiring");
+  if (mask & WorldServer::EntityMutationParallelismSubsystem)
+    parts.append("entity");
+  if (mask & WorldServer::LuaMutationParallelismSubsystem)
+    parts.append("lua");
+
+  if (parts.empty())
+    return "none";
+  return parts.join("|");
+}
+
 String worldStorageTimingSummary(WorldStorageTimingStats const& stats) {
   return strf("sync:{}/{} entity:{}/{}/{}/{} tile:{}/{}/{} copy:{}/{} compress:{}/{}/{}/{} btree:{}/{}/{}/{} commit:{}/{} snapshot:{}/{}/{}/{}",
       stats.syncs,
@@ -483,6 +501,12 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.phase6LuaScriptUpdates,
       status.phase6LuaScriptUpdateMicroseconds,
       status.phase6LuaMaxScriptUpdateMicroseconds));
+  lines.append(strf("Phase 6 mutation gates: requested={}, blocked=fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
+      mutationSubsystemSummary(status.phase6MutationParallelismRequestedSubsystems),
+      mutationSubsystemSummary(status.phase6MutationParallelismBlockedByFixedSeedGateSubsystems),
+      mutationSubsystemSummary(status.phase6MutationParallelismBlockedByDependencyGateSubsystems),
+      mutationSubsystemSummary(status.phase6MutationParallelismBlockedByModVisibilityGateSubsystems),
+      mutationSubsystemSummary(status.phase6MutationParallelismBlockedByImplementationGateSubsystems)));
   lines.append(strf("Persistence: asyncEnabled={}, pendingBatches={}, pendingSnapshots={}, oldestPendingMs={}, completedBatches={}, snapshots={}, snapshotBuildUs={}, writeUs={}, celestialCommitUs={}, celestialCommits={}, failures={}, retries={}, syncFallbacks={}, queueFullFallbacks={}",
       status.persistenceAsyncEnabled,
       status.persistenceBatchesPending,
@@ -601,11 +625,11 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         phase6.luaScriptUpdates,
         phase6.luaScriptUpdateMicroseconds,
         phase6.luaMaxScriptUpdateMicroseconds,
-        phase6.mutationParallelismRequested,
-        phase6.mutationParallelismBlockedByFixedSeedGate,
-        phase6.mutationParallelismBlockedByDependencyGate,
-        phase6.mutationParallelismBlockedByModVisibilityGate,
-        phase6.mutationParallelismBlockedByImplementationGate));
+        mutationSubsystemSummary(phase6.mutationParallelismRequestedSubsystems),
+        mutationSubsystemSummary(phase6.mutationParallelismBlockedByFixedSeedGateSubsystems),
+        mutationSubsystemSummary(phase6.mutationParallelismBlockedByDependencyGateSubsystems),
+        mutationSubsystemSummary(phase6.mutationParallelismBlockedByModVisibilityGateSubsystems),
+        mutationSubsystemSummary(phase6.mutationParallelismBlockedByImplementationGateSubsystems)));
 
     StringList threadTimingParts;
     for (auto const& timing : world.threadTimings) {

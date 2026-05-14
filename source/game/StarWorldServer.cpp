@@ -2025,11 +2025,18 @@ void WorldServer::init(bool firstTime) {
   m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
   m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
   m_skipEmptyEntityUpdateSets = m_serverConfig.getBool("skipEmptyEntityUpdateSets", false);
-  bool mutationParallelismRequested = phase6Config.getBool("liquidMutationParallelism", false)
-      || phase6Config.getBool("fallingBlockMutationParallelism", false)
-      || phase6Config.getBool("wiringMutationParallelism", false)
-      || phase6Config.getBool("entityMutationParallelism", false)
-      || phase6Config.getBool("luaMutationParallelism", false);
+  uint32_t mutationParallelismRequestedSubsystems = 0;
+  if (phase6Config.getBool("liquidMutationParallelism", false))
+    mutationParallelismRequestedSubsystems |= LiquidMutationParallelismSubsystem;
+  if (phase6Config.getBool("fallingBlockMutationParallelism", false))
+    mutationParallelismRequestedSubsystems |= FallingBlockMutationParallelismSubsystem;
+  if (phase6Config.getBool("wiringMutationParallelism", false))
+    mutationParallelismRequestedSubsystems |= WiringMutationParallelismSubsystem;
+  if (phase6Config.getBool("entityMutationParallelism", false))
+    mutationParallelismRequestedSubsystems |= EntityMutationParallelismSubsystem;
+  if (phase6Config.getBool("luaMutationParallelism", false))
+    mutationParallelismRequestedSubsystems |= LuaMutationParallelismSubsystem;
+  bool mutationParallelismRequested = mutationParallelismRequestedSubsystems != 0;
   bool mutationFixedSeedGate = phase6Config.getBool("mutationParallelismFixedSeedSignatures", false);
   bool mutationDependencyGate = phase6Config.getBool("mutationParallelismDependencyAnalysis", false);
   bool mutationModVisibilityGate = phase6Config.getBool("mutationParallelismModVisibilityContract", false);
@@ -2043,6 +2050,11 @@ void WorldServer::init(bool firstTime) {
   m_phase6WorldParallelismStats.mutationParallelismBlockedByDependencyGate = mutationParallelismRequested && !mutationDependencyGate;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByModVisibilityGate = mutationParallelismRequested && !mutationModVisibilityGate;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGate = mutationParallelismRequested;
+  m_phase6WorldParallelismStats.mutationParallelismRequestedSubsystems = mutationParallelismRequestedSubsystems;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByFixedSeedGateSubsystems = mutationFixedSeedGate ? 0 : mutationParallelismRequestedSubsystems;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByDependencyGateSubsystems = mutationDependencyGate ? 0 : mutationParallelismRequestedSubsystems;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByModVisibilityGateSubsystems = mutationModVisibilityGate ? 0 : mutationParallelismRequestedSubsystems;
+  m_phase6WorldParallelismStats.mutationParallelismBlockedByImplementationGateSubsystems = mutationParallelismRequestedSubsystems;
   size_t phase6WorkerThreads = 0;
   if (m_phase6StorageGenerationPlanningEnabled)
     phase6WorkerThreads = max(phase6WorkerThreads, m_phase6StorageGenerationPlanningWorkerThreads);

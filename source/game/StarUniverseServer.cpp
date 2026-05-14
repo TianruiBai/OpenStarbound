@@ -458,6 +458,11 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6LuaScriptUpdates += phase6Stats.luaScriptUpdates;
           status.phase6LuaScriptUpdateMicroseconds += phase6Stats.luaScriptUpdateMicroseconds;
           status.phase6LuaMaxScriptUpdateMicroseconds = max(status.phase6LuaMaxScriptUpdateMicroseconds, phase6Stats.luaMaxScriptUpdateMicroseconds);
+          status.phase6MutationParallelismRequestedSubsystems |= phase6Stats.mutationParallelismRequestedSubsystems;
+          status.phase6MutationParallelismBlockedByFixedSeedGateSubsystems |= phase6Stats.mutationParallelismBlockedByFixedSeedGateSubsystems;
+          status.phase6MutationParallelismBlockedByDependencyGateSubsystems |= phase6Stats.mutationParallelismBlockedByDependencyGateSubsystems;
+          status.phase6MutationParallelismBlockedByModVisibilityGateSubsystems |= phase6Stats.mutationParallelismBlockedByModVisibilityGateSubsystems;
+          status.phase6MutationParallelismBlockedByImplementationGateSubsystems |= phase6Stats.mutationParallelismBlockedByImplementationGateSubsystems;
 
           for (auto const& timingRecord : world->threadTimingRecords())
             mergeServerTimingRecord(worldThreadTimingRecords, timingRecord);

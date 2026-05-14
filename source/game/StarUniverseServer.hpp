@@ -158,6 +158,11 @@ public:
     uint64_t phase6LuaScriptUpdates;
     uint64_t phase6LuaScriptUpdateMicroseconds;
     uint64_t phase6LuaMaxScriptUpdateMicroseconds;
+    uint32_t phase6MutationParallelismRequestedSubsystems;
+    uint32_t phase6MutationParallelismBlockedByFixedSeedGateSubsystems;
+    uint32_t phase6MutationParallelismBlockedByDependencyGateSubsystems;
+    uint32_t phase6MutationParallelismBlockedByModVisibilityGateSubsystems;
+    uint32_t phase6MutationParallelismBlockedByImplementationGateSubsystems;
     bool networkQueueOnlySends;
     size_t networkWorkers;
     size_t networkOwnedConnections;

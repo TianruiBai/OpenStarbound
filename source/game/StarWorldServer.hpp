@@ -52,6 +52,14 @@ extern EnumMap<WorldServerFidelity> const WorldServerFidelityNames;
 
 class WorldServer : public World {
 public:
+  enum MutationParallelismSubsystem : uint32_t {
+    LiquidMutationParallelismSubsystem = 1 << 0,
+    FallingBlockMutationParallelismSubsystem = 1 << 1,
+    WiringMutationParallelismSubsystem = 1 << 2,
+    EntityMutationParallelismSubsystem = 1 << 3,
+    LuaMutationParallelismSubsystem = 1 << 4
+  };
+
   typedef LuaMessageHandlingComponent<LuaUpdatableComponent<LuaWorldComponent<LuaBaseComponent>>> ScriptComponent;
   typedef shared_ptr<ScriptComponent> ScriptComponentPtr;
   typedef function<void(Json const&)> WorldPropertyListener;
@@ -133,6 +141,11 @@ public:
     bool mutationParallelismBlockedByDependencyGate = false;
     bool mutationParallelismBlockedByModVisibilityGate = false;
     bool mutationParallelismBlockedByImplementationGate = false;
+    uint32_t mutationParallelismRequestedSubsystems = 0;
+    uint32_t mutationParallelismBlockedByFixedSeedGateSubsystems = 0;
+    uint32_t mutationParallelismBlockedByDependencyGateSubsystems = 0;
+    uint32_t mutationParallelismBlockedByModVisibilityGateSubsystems = 0;
+    uint32_t mutationParallelismBlockedByImplementationGateSubsystems = 0;
     uint64_t liquidBaselineTicks = 0;
     uint64_t liquidActiveCells = 0;
     uint64_t liquidMonitoringRegions = 0;
