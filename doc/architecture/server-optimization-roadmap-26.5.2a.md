@@ -1,6 +1,6 @@
 # OpenStarbound 26.5.2a Server Optimization Roadmap
 
-This roadmap is the first concrete post-Phase-6 server-performance slice after `26.5.1a` (`Ethereal Drake`). It targets `26.5.2a` as an alpha preview release focused on reducing the remaining crowded-world hot-thread problem without changing legacy gameplay, Lua, save, or packet behavior by default.
+This roadmap is the first concrete post-Phase-6 server-performance slice after `26.5.1a` in the `Ethereal Drake` release line. It targets `26.5.2a` as an alpha preview in that same release line, focused on reducing the remaining crowded-world hot-thread problem without changing legacy gameplay, Lua, save, or packet behavior by default.
 
 Vulkan and broader graphics backend modernization are intentionally out of scope for this release slice. The current bottleneck is server simulation and replication, not graphics API overhead.
 
@@ -25,9 +25,9 @@ Current checklist:
 2. Done: first monitoring-region snapshot reuse slice, with precomputed player-active signal regions and `regions=builds/rects/splits/reuses` diagnostics for liquid and packet-prep consumers.
 3. Done: liquid no-limit membership cache using bucketed region candidates, with `liquidCache=builds/regions/buckets/lookups/candidates/hits` diagnostics and focused engine coverage.
 4. Done: per-entity serialization counters for packet-prep cost attribution, with `entitySerialize=type=store:calls/bytes first:calls/bytes delta:calls/bytes` diagnostics and focused ItemDrop coverage.
-5. Next: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests.
-6. Pending: storage timing counters and one storage spike-reduction ticket.
-7. Pending: queue-only network send experiment behind measurement and fallback gates.
+5. Done: immutable entity net-state input research and deeper `writeNetState(0)` equivalence tests, including byte-equivalent but version-advancing first writes.
+6. Done: storage timing counters for world sync/readChunks phases, with byte-identical B-tree insert filtering to reduce repeated save spikes.
+7. Next: queue-only network send experiment behind measurement and fallback gates.
 
 ## 2. Current Bottleneck Statement
 
@@ -96,9 +96,9 @@ Goal: move more replication prep off the owner thread only after immutable input
 
 Priority tickets:
 
-1. Next: finish immutable net-state input research for first-observation and later-delta paths.
-2. Next: add deeper `writeNetState(0)` equivalence tests, including cases where first writes advance entity net versions.
-3. Separate byte generation from owner-thread version advancement where possible, or explicitly document why a path must remain serial.
+1. Done: finish immutable net-state input research for first-observation and later-delta paths. `writeNetState(0)` full writes are byte-equivalent for unchanged state but still advance the top-level net version, so create-store bytes can be shared from `EntityCreateSnapshot`, while first-observation net-state writes must remain per-client owner-thread work until byte generation is separated from version advancement.
+2. Done: add deeper `writeNetState(0)` equivalence tests, including cases where first writes advance entity net versions.
+3. Next: separate byte generation from owner-thread version advancement where possible, or explicitly document why a path must remain serial.
 4. Extend workerized packet preparation from sector tile-array prefill toward entity create/update payload preparation only when the worker consumes immutable inputs and the owner thread performs the visible merge.
 5. Keep default-enabled serial-versus-worker differential checks and divergence counters for every expanded packet-prep worker path.
 
@@ -115,11 +115,12 @@ Goal: reduce save, disconnect, and sync spikes without weakening durability.
 
 Priority tickets:
 
-1. Dirty-sector write filtering for world storage sync, with careful dirty marks for generation, tile edits, entity movement, entity persistence changes, unload, and unique-index updates.
+1. Pending: dirty-sector write filtering for world storage sync, with careful dirty marks for generation, tile edits, entity movement, entity persistence changes, unload, and unique-index updates.
 2. Reduce avoidable `readChunks()` full exports in ship/disconnect paths where incremental chunk updates are available.
-3. Add storage timing counters for sector copy, entity store, tile store, compression, B-tree insert, commit, and full snapshot export.
-4. Evaluate async compression only from immutable sector snapshots; do not expose live `WorldStorage` or `BTreeDatabase` to workers.
-5. Profile `BTreeDatabase` cache size and commit cadence before considering any backend change.
+3. Done: add storage timing counters for sector copy, entity store, tile store, compression, B-tree insert, commit, and full snapshot export. Diagnostics: `storageTiming=sync:... entity:... tile:... copy:... compress:... btree:... commit:... snapshot:...` in `/serverstatus`, `/worldstats`, and `LogMap`.
+4. Done: skip byte-identical B-tree inserts during world storage writes. This keeps the serialized compatibility surface unchanged while avoiding repeated leaf rewrites when periodic sync serializes unchanged sectors or metadata.
+5. Evaluate async compression only from immutable sector snapshots; do not expose live `WorldStorage` or `BTreeDatabase` to workers.
+6. Profile `BTreeDatabase` cache size and commit cadence before considering any backend change.
 
 Must-ship acceptance:
 

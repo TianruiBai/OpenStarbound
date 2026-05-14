@@ -100,6 +100,11 @@ WorldServer::PacketPreparationStats WorldServerThread::packetPreparationStats() 
   return m_worldServer->packetPreparationStats();
 }
 
+WorldStorageTimingStats WorldServerThread::storageTimingStats() const {
+  RecursiveMutexLocker locker(m_mutex);
+  return m_worldServer->storageTimingStats();
+}
+
 WorldServer::Phase6WorldParallelismStats WorldServerThread::phase6WorldParallelismStats() const {
   RecursiveMutexLocker locker(m_mutex);
   return m_worldServer->phase6WorldParallelismStats();

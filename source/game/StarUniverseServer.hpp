@@ -91,6 +91,7 @@ public:
     uint64_t worldPacketPrepSectorClientFanoutRecipients;
     uint64_t worldPacketPrepSectorClientFanoutMisses;
     HashMap<EntityType, WorldServer::EntitySerializationStats> worldPacketPrepEntitySerializationStats;
+    WorldStorageTimingStats worldStorageTimingStats;
     bool persistenceAsyncEnabled;
     size_t phase6StorageGenerationPlanningEnabledWorlds;
     uint64_t phase6StorageGenerationPlanningTicks;
@@ -175,6 +176,7 @@ public:
     size_t clients = 0;
     WorldServerThread::CommandStats commandStats{};
     WorldServer::PacketPreparationStats packetPreparationStats{};
+    WorldStorageTimingStats storageTimingStats{};
     WorldServer::Phase6WorldParallelismStats phase6WorldParallelismStats{};
     List<ServerTimingStatus> threadTimings;
     List<ServerTimingStatus> worldTimings;

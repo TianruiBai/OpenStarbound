@@ -234,6 +234,7 @@ TEST(ServerTest, WorldStatsCommandReportsDiagnostics) {
   EXPECT_TRUE(statusOutput.contains("sectorFanout="));
   EXPECT_TRUE(statusOutput.contains("liquidCache="));
   EXPECT_TRUE(statusOutput.contains("entitySerialize="));
+  EXPECT_TRUE(statusOutput.contains("storageTiming="));
 }
 
 TEST(ServerTest, PendingHandshakeStateMachineAcceptsLocalClient) {

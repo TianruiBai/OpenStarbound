@@ -119,6 +119,33 @@ TEST(NetElements, DirectWriteRead) {
   EXPECT_EQ(slaveField4.get(), 40u);
 }
 
+TEST(NetElements, InitialFullWritesArePayloadEquivalentButVersionAdvancing) {
+  NetElementUInt masterField;
+  NetElementTop<NetElementGroup> master;
+  master.addNetElement(&masterField);
+  masterField.set(42);
+
+  auto firstInitialWrite = master.writeNetState(0);
+  auto secondInitialWrite = master.writeNetState(0);
+
+  EXPECT_EQ(firstInitialWrite.first, secondInitialWrite.first);
+  EXPECT_GT(firstInitialWrite.second, 0u);
+  EXPECT_GT(secondInitialWrite.second, firstInitialWrite.second);
+
+  NetElementUInt firstSlaveField;
+  NetElementTop<NetElementGroup> firstSlave;
+  firstSlave.addNetElement(&firstSlaveField);
+  firstSlave.readNetState(firstInitialWrite.first);
+
+  NetElementUInt secondSlaveField;
+  NetElementTop<NetElementGroup> secondSlave;
+  secondSlave.addNetElement(&secondSlaveField);
+  secondSlave.readNetState(secondInitialWrite.first);
+
+  EXPECT_EQ(firstSlaveField.get(), 42u);
+  EXPECT_EQ(secondSlaveField.get(), 42u);
+}
+
 TEST(NetElements, DeltaSize) {
   NetElementInt masterField1;
   NetElementUInt masterField2;

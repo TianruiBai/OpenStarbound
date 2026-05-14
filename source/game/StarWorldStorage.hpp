@@ -18,6 +18,37 @@ STAR_CLASS(WorldStorage);
 
 typedef HashMap<ByteArray, Maybe<ByteArray>> WorldChunks;
 
+struct WorldStorageTimingStats {
+  uint64_t syncs = 0;
+  uint64_t syncedSectors = 0;
+  uint64_t entityStoreSectors = 0;
+  uint64_t entityStoreEntities = 0;
+  uint64_t entityStoreBytes = 0;
+  uint64_t entityStoreMicroseconds = 0;
+  uint64_t tileStoreSectors = 0;
+  uint64_t tileStoreBytes = 0;
+  uint64_t tileStoreMicroseconds = 0;
+  uint64_t sectorCopies = 0;
+  uint64_t sectorCopyMicroseconds = 0;
+  uint64_t compressionCalls = 0;
+  uint64_t compressionInputBytes = 0;
+  uint64_t compressionOutputBytes = 0;
+  uint64_t compressionMicroseconds = 0;
+  uint64_t btreeInserts = 0;
+  uint64_t btreeInsertBytes = 0;
+  uint64_t btreeInsertMicroseconds = 0;
+  uint64_t btreeInsertSkips = 0;
+  uint64_t btreeInsertSkipBytes = 0;
+  uint64_t commits = 0;
+  uint64_t commitMicroseconds = 0;
+  uint64_t fullSnapshotExports = 0;
+  uint64_t fullSnapshotChunks = 0;
+  uint64_t fullSnapshotBytes = 0;
+  uint64_t fullSnapshotExportMicroseconds = 0;
+
+  void add(WorldStorageTimingStats const& stats);
+};
+
 enum class SectorLoadLevel : uint8_t {
   None = 0,
   Tiles = 1,
@@ -176,6 +207,8 @@ public:
   // into memory.
   WorldChunks readChunks();
 
+  WorldStorageTimingStats storageTimingStats() const;
+
   // if this is set, all terrain generation is assumed to be handled by dungeon placement
   // and steps such as microdungeons, biome objects and grass mods will be skipped
   bool floatingDungeonWorld() const;
@@ -224,22 +257,27 @@ private:
 
   static ByteArray metadataKey();
   static WorldMetadataStore readWorldMetadata(ByteArray const& data);
+  static ByteArray serializeWorldMetadata(WorldMetadataStore const& metadata);
   static ByteArray writeWorldMetadata(WorldMetadataStore const& metadata);
 
   static ByteArray entitySectorKey(Sector const& sector);
   static EntitySectorStore readEntitySector(ByteArray const& data);
+  static ByteArray serializeEntitySector(EntitySectorStore const& store);
   static ByteArray writeEntitySector(EntitySectorStore const& store);
 
   static ByteArray tileSectorKey(Sector const& sector);
   static TileSectorStore readTileSector(ByteArray const& data);
+  static ByteArray serializeTileSector(TileSectorStore const& store);
   static ByteArray writeTileSector(TileSectorStore const& store);
 
   static ByteArray uniqueIndexKey(String const& uniqueId);
   static UniqueIndexStore readUniqueIndexStore(ByteArray const& data);
+  static ByteArray serializeUniqueIndexStore(UniqueIndexStore const& store);
   static ByteArray writeUniqueIndexStore(UniqueIndexStore const& store);
 
   static ByteArray sectorUniqueKey(Sector const& sector);
   static SectorUniqueStore readSectorUniqueStore(ByteArray const& data);
+  static ByteArray serializeSectorUniqueStore(SectorUniqueStore const& store);
   static ByteArray writeSectorUniqueStore(SectorUniqueStore const& store);
 
   static void openDatabase(BTreeDatabase& db, IODevicePtr device);
@@ -271,6 +309,16 @@ private:
   // Sync this sector to disk without unloading it.
   void syncSector(Sector const& sector);
 
+  ByteArray compressStorageData(ByteArray const& data);
+  ByteArray writeWorldMetadataTracked(WorldMetadataStore const& metadata);
+  ByteArray writeEntitySectorTracked(EntitySectorStore const& store);
+  ByteArray writeTileSectorTracked(TileSectorStore const& store);
+  ByteArray writeUniqueIndexStoreTracked(UniqueIndexStore const& store);
+  ByteArray writeSectorUniqueStoreTracked(SectorUniqueStore const& store);
+  bool insertStoredValue(ByteArray const& key, ByteArray const& value);
+  bool removeStoredValue(ByteArray const& key);
+  void commitStoredValues();
+
   // Returns the sectors within WorldSectorSize of the given sector.  This is
   // *not exactly the same* as the surrounding 9 sectors in a square pattern,
   // because first this does not return invalid sectors, and second, If a world
@@ -301,6 +349,7 @@ private:
   StableHashMap<Sector, SectorMetadata> m_sectorMetadata;
   OrderedHashMap<Sector, float> m_generationQueue;
   BTreeDatabase m_db;
+  WorldStorageTimingStats m_storageTimingStats;
 };
 
 }

@@ -1270,6 +1270,23 @@ void WorldServer::update(float dt) {
         m_packetPreparationStats.sectorClientFanoutLookups,
         m_packetPreparationStats.sectorClientFanoutRecipients,
         m_packetPreparationStats.sectorClientFanoutMisses));
+      auto storageTimingStats = m_worldStorage->storageTimingStats();
+      LogMap::set(strf("server_{}_storage_timing", m_worldId), strf("syncs={}, sectors={}, entity={}/{}/{}, tile={}/{}, copy={}, compress={}/{}/{}, btree={}/{}, commit={}, snapshot={}",
+        storageTimingStats.syncs,
+        storageTimingStats.syncedSectors,
+        storageTimingStats.entityStoreSectors,
+        storageTimingStats.entityStoreEntities,
+        storageTimingStats.entityStoreMicroseconds,
+        storageTimingStats.tileStoreSectors,
+        storageTimingStats.tileStoreMicroseconds,
+        storageTimingStats.sectorCopies,
+        storageTimingStats.compressionCalls,
+        storageTimingStats.compressionInputBytes,
+        storageTimingStats.compressionOutputBytes,
+        storageTimingStats.btreeInserts,
+        storageTimingStats.btreeInsertSkips,
+        storageTimingStats.commits,
+        storageTimingStats.fullSnapshotExports));
     LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
     LogMap::set(strf("server_{}_lua_mem", m_worldId), m_luaRoot->luaMemoryUsage());
   });
@@ -1285,6 +1302,10 @@ uint64_t WorldServer::currentStep() const {
 
 WorldServer::PacketPreparationStats WorldServer::packetPreparationStats() const {
   return m_packetPreparationStats;
+}
+
+WorldStorageTimingStats WorldServer::storageTimingStats() const {
+  return m_worldStorage->storageTimingStats();
 }
 
 List<ServerTimingRecord> WorldServer::updateTimingRecords() const {

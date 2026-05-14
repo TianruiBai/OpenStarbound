@@ -383,6 +383,8 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           for (auto const& serializationStats : packetPreparationStats.entitySerializationStats)
             status.worldPacketPrepEntitySerializationStats[serializationStats.first].add(serializationStats.second);
 
+          status.worldStorageTimingStats.add(world->storageTimingStats());
+
           auto phase6Stats = world->phase6WorldParallelismStats();
           if (phase6Stats.storageGenerationPlanningEnabled)
             status.phase6StorageGenerationPlanningEnabledWorlds += 1;
@@ -516,6 +518,7 @@ UniverseServer::WorldStatsSummary UniverseServer::worldStats() const {
         stats.clients = world->clients().size();
         stats.commandStats = world->commandStats();
         stats.packetPreparationStats = world->packetPreparationStats();
+        stats.storageTimingStats = world->storageTimingStats();
         stats.phase6WorldParallelismStats = world->phase6WorldParallelismStats();
         stats.threadTimings = world->threadTimingStatus();
         stats.worldTimings = world->worldTimingStatus();

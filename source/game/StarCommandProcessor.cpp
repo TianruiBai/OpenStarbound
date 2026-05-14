@@ -62,6 +62,35 @@ String packetPrepEntitySerializationSummary(HashMap<EntityType, WorldServer::Ent
   return parts.join(",");
 }
 
+String worldStorageTimingSummary(WorldStorageTimingStats const& stats) {
+  return strf("sync:{}/{} entity:{}/{}/{}/{} tile:{}/{}/{} copy:{}/{} compress:{}/{}/{}/{} btree:{}/{}/{}/{} commit:{}/{} snapshot:{}/{}/{}/{}",
+      stats.syncs,
+      stats.syncedSectors,
+      stats.entityStoreSectors,
+      stats.entityStoreEntities,
+      stats.entityStoreBytes,
+      stats.entityStoreMicroseconds,
+      stats.tileStoreSectors,
+      stats.tileStoreBytes,
+      stats.tileStoreMicroseconds,
+      stats.sectorCopies,
+      stats.sectorCopyMicroseconds,
+      stats.compressionCalls,
+      stats.compressionInputBytes,
+      stats.compressionOutputBytes,
+      stats.compressionMicroseconds,
+      stats.btreeInserts,
+      stats.btreeInserts + stats.btreeInsertSkips,
+      stats.btreeInsertBytes + stats.btreeInsertSkipBytes,
+      stats.btreeInsertMicroseconds,
+      stats.commits,
+      stats.commitMicroseconds,
+      stats.fullSnapshotExports,
+      stats.fullSnapshotChunks,
+      stats.fullSnapshotBytes,
+      stats.fullSnapshotExportMicroseconds);
+}
+
 }
 
 CommandProcessor::CommandProcessor(UniverseServer* universe, LuaRootPtr luaRoot)
@@ -376,6 +405,7 @@ String CommandProcessor::serverStatus(ConnectionId connectionId, String const&) 
       status.worldPacketPrepSectorClientFanoutRecipients,
       status.worldPacketPrepSectorClientFanoutMisses,
       packetPrepEntitySerializationSummary(status.worldPacketPrepEntitySerializationStats)));
+  lines.append(strf("World storage: storageTiming={}", worldStorageTimingSummary(status.worldStorageTimingStats)));
   lines.append(strf("Phase 6 storage planning: enabledWorlds={}, ticks={}, serialTicks={}, parallelTicks={}, sectors={}, serialUs={}, parallelUs={}, mergeUs={}, fallbacks={}, diffWorlds={}, diffChecks={}, diffUs={}, divergences={}",
       status.phase6StorageGenerationPlanningEnabledWorlds,
       status.phase6StorageGenerationPlanningTicks,
@@ -482,7 +512,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
     auto const& commands = world.commandStats;
     auto const& packetPrep = world.packetPreparationStats;
     auto const& phase6 = world.phase6WorldParallelismStats;
-    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{} entitySerialize:{}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
+    lines.append(strf("world {}: state={}, clients={}, commands=pending:{} oldestPendingUs:{} processed:{} direct:{} failed:{} waitUs:{}, packetPrep=ticks:{} regions:{}/{}/{}/{} sectorCache:{}/{} entityStoreCache:{}/{} netStateCache:{}/{} sectorFanout:{}/{}/{} entitySerialize:{} storageTiming={}, phase6=storage:{}/{}/{} sectors:{} fallbacks:{} divergences:{} packetPrefill:{}/{}/{} sectors:{} fallbacks:{} divergences:{} baselines:liquid:{} liquidCache:{}/{}/{}/{}/{}/{} falling:{} wiring:{} entity:{} lua:{} mutation=requested:{} blocked:fixedSeed:{} dependency:{} modVisibility:{} implementation:{}",
         printWorldId(world.worldId),
         state,
         world.clients,
@@ -507,6 +537,7 @@ String CommandProcessor::worldStats(ConnectionId connectionId, String const&) {
         packetPrep.sectorClientFanoutRecipients,
         packetPrep.sectorClientFanoutMisses,
         packetPrepEntitySerializationSummary(packetPrep.entitySerializationStats),
+        worldStorageTimingSummary(world.storageTimingStats),
         phase6.storageGenerationPlanningTicks,
         phase6.storageGenerationPlanningSerialTicks,
         phase6.storageGenerationPlanningParallelTicks,

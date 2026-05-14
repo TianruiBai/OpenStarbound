@@ -611,6 +611,89 @@ TEST(MulticorePhaseTest, ServerOptimizationEntitySerializationStatsAttributePack
   EXPECT_EQ(deltaStats->deltaNetStateCalls, createStats->deltaNetStateCalls + 2);
 }
 
+TEST(MulticorePhaseTest, ServerOptimizationWorldStorageTimingStatsTrackSyncAndSkipUnchangedInserts) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.generateRegion(RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  worldServer.sync();
+  auto firstSyncStats = worldServer.storageTimingStats();
+  EXPECT_GE(firstSyncStats.syncs, 1u);
+  EXPECT_GT(firstSyncStats.syncedSectors, 0u);
+  EXPECT_GT(firstSyncStats.tileStoreSectors, 0u);
+  EXPECT_GT(firstSyncStats.tileStoreBytes, 0u);
+  EXPECT_GT(firstSyncStats.sectorCopies, 0u);
+  EXPECT_GT(firstSyncStats.compressionCalls, 0u);
+  EXPECT_GT(firstSyncStats.btreeInserts, 0u);
+  EXPECT_GT(firstSyncStats.commits, 0u);
+
+  worldServer.sync();
+  auto secondSyncStats = worldServer.storageTimingStats();
+  EXPECT_EQ(secondSyncStats.syncs, firstSyncStats.syncs + 1);
+  EXPECT_GT(secondSyncStats.syncedSectors, firstSyncStats.syncedSectors);
+  EXPECT_GT(secondSyncStats.tileStoreSectors, firstSyncStats.tileStoreSectors);
+  EXPECT_GT(secondSyncStats.btreeInsertSkips, firstSyncStats.btreeInsertSkips);
+
+  auto chunks = worldServer.readChunks();
+  EXPECT_FALSE(chunks.empty());
+  auto snapshotStats = worldServer.storageTimingStats();
+  EXPECT_EQ(snapshotStats.fullSnapshotExports, secondSyncStats.fullSnapshotExports + 1);
+  EXPECT_GE(snapshotStats.fullSnapshotChunks, chunks.size());
+  EXPECT_GT(snapshotStats.fullSnapshotBytes, 0u);
+}
+
+TEST(MulticorePhaseTest, Phase6EntityInitialNetStateWritesAdvancePerClientVersions) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+
+  ASSERT_TRUE(worldServer.addClient(1, SpawnTargetPosition(Vec2F(32, 32)), true));
+  ASSERT_TRUE(worldServer.addClient(2, SpawnTargetPosition(Vec2F(32, 32)), true));
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+  acknowledgeClientWindow(worldServer, 2, RectI::withSize(Vec2I(24, 24), Vec2I(16, 16)));
+
+  auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(32, 32), Vec2F(), Vec2F(), true);
+  ASSERT_TRUE(itemDrop);
+  worldServer.addEntity(itemDrop, 100);
+
+  worldServer.update(1.0f / 60.0f);
+  auto statsAfterCreate = worldServer.packetPreparationStats();
+  auto createStats = statsAfterCreate.entitySerializationStats.ptr(EntityType::ItemDrop);
+  ASSERT_TRUE(createStats);
+  EXPECT_EQ(createStats->createStoreCalls, 1u);
+  EXPECT_EQ(createStats->initialNetStateCalls, 2u);
+  EXPECT_EQ(createStats->deltaNetStateCalls, 0u);
+  EXPECT_EQ(statsAfterCreate.entityStoreCacheMisses, 1u);
+  EXPECT_EQ(statsAfterCreate.entityStoreCacheHits, 1u);
+
+  worldServer.getOutgoingPackets(1);
+  worldServer.getOutgoingPackets(2);
+  worldServer.update(1.0f / 60.0f);
+
+  auto statsAfterDelta = worldServer.packetPreparationStats();
+  auto deltaStats = statsAfterDelta.entitySerializationStats.ptr(EntityType::ItemDrop);
+  ASSERT_TRUE(deltaStats);
+  EXPECT_EQ(deltaStats->createStoreCalls, 1u);
+  EXPECT_EQ(deltaStats->initialNetStateCalls, 2u);
+  EXPECT_EQ(deltaStats->deltaNetStateCalls, 2u);
+  EXPECT_GE(statsAfterDelta.entityNetStateCacheMisses, statsAfterCreate.entityNetStateCacheMisses + 2);
+}
+
 TEST(MulticorePhaseTest, Phase6PacketSectorPrefillMatchesSerialSectorPackets) {
   auto serialPayloads = preparedTileArrayUpdatePayloads(false);
   auto prefilledPayloads = preparedTileArrayUpdatePayloads(true);

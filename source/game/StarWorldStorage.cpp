@@ -11,8 +11,38 @@
 #include "StarAssets.hpp"
 #include "StarMaterialDatabase.hpp"
 #include "StarLiquidsDatabase.hpp"
+#include "StarTime.hpp"
 
 namespace Star {
+
+void WorldStorageTimingStats::add(WorldStorageTimingStats const& stats) {
+  syncs += stats.syncs;
+  syncedSectors += stats.syncedSectors;
+  entityStoreSectors += stats.entityStoreSectors;
+  entityStoreEntities += stats.entityStoreEntities;
+  entityStoreBytes += stats.entityStoreBytes;
+  entityStoreMicroseconds += stats.entityStoreMicroseconds;
+  tileStoreSectors += stats.tileStoreSectors;
+  tileStoreBytes += stats.tileStoreBytes;
+  tileStoreMicroseconds += stats.tileStoreMicroseconds;
+  sectorCopies += stats.sectorCopies;
+  sectorCopyMicroseconds += stats.sectorCopyMicroseconds;
+  compressionCalls += stats.compressionCalls;
+  compressionInputBytes += stats.compressionInputBytes;
+  compressionOutputBytes += stats.compressionOutputBytes;
+  compressionMicroseconds += stats.compressionMicroseconds;
+  btreeInserts += stats.btreeInserts;
+  btreeInsertBytes += stats.btreeInsertBytes;
+  btreeInsertMicroseconds += stats.btreeInsertMicroseconds;
+  btreeInsertSkips += stats.btreeInsertSkips;
+  btreeInsertSkipBytes += stats.btreeInsertSkipBytes;
+  commits += stats.commits;
+  commitMicroseconds += stats.commitMicroseconds;
+  fullSnapshotExports += stats.fullSnapshotExports;
+  fullSnapshotChunks += stats.fullSnapshotChunks;
+  fullSnapshotBytes += stats.fullSnapshotBytes;
+  fullSnapshotExportMicroseconds += stats.fullSnapshotExportMicroseconds;
+}
 
 WorldChunks WorldStorage::getWorldChunksUpdate(WorldChunks const& oldChunks, WorldChunks const& newChunks) {
   WorldChunks update;
@@ -104,7 +134,7 @@ VersionedJson WorldStorage::worldMetadata() {
 }
 
 void WorldStorage::setWorldMetadata(VersionedJson const& metadata) {
-  m_db.insert(metadataKey(), writeWorldMetadata({Vec2U(m_tileArray->size()), metadata}));
+  insertStoredValue(metadataKey(), writeWorldMetadataTracked({Vec2U(m_tileArray->size()), metadata}));
 }
 
 ServerTileSectorArrayPtr const& WorldStorage::tileArray() const {
@@ -346,6 +376,7 @@ void WorldStorage::tick(float dt, String const* worldId) {
             sectorStore = readEntitySector(*res);
 
           UniqueIndexStore storedUniques;
+          auto entityStoreStart = Time::monotonicMicroseconds();
           for (auto const& entity : zombiesToStore) {
             m_entityMap->removeEntity(entity->entityId());
             m_generatorFacade->destructEntity(this, entity);
@@ -353,7 +384,10 @@ void WorldStorage::tick(float dt, String const* worldId) {
               storedUniques.add(*uniqueId, {sector, entity->position()});
             sectorStore.append(entityFactory->storeVersionedEntity(entity));
           }
-          m_db.insert(entitySectorKey(sector), writeEntitySector(sectorStore));
+          m_storageTimingStats.entityStoreSectors += 1;
+          m_storageTimingStats.entityStoreEntities += zombiesToStore.size();
+          m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - entityStoreStart;
+          insertStoredValue(entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
           mergeSectorUniques(sector, storedUniques);
         }
       }
@@ -401,9 +435,10 @@ void WorldStorage::unloadAll(bool force) {
 
 void WorldStorage::sync() {
   try {
+    m_storageTimingStats.syncs += 1;
     for (auto const& pair : m_sectorMetadata)
       syncSector(pair.first);
-    m_db.commit();
+    commitStoredValues();
   } catch (std::exception const& e) {
     m_db.rollback();
     m_db.close();
@@ -417,9 +452,18 @@ WorldChunks WorldStorage::readChunks() {
       syncSector(pair.first);
 
     WorldChunks chunks;
+    auto exportStart = Time::monotonicMicroseconds();
     m_db.forAll([&chunks](ByteArray k, ByteArray v) {
         chunks.add(std::move(k), std::move(v));
       });
+    m_storageTimingStats.fullSnapshotExports += 1;
+    m_storageTimingStats.fullSnapshotExportMicroseconds += Time::monotonicMicroseconds() - exportStart;
+    m_storageTimingStats.fullSnapshotChunks += chunks.size();
+    for (auto const& chunk : chunks) {
+      m_storageTimingStats.fullSnapshotBytes += chunk.first.size();
+      if (chunk.second)
+        m_storageTimingStats.fullSnapshotBytes += chunk.second->size();
+    }
 
     return WorldChunks(chunks);
 
@@ -428,6 +472,10 @@ WorldChunks WorldStorage::readChunks() {
     m_db.close();
     throw WorldStorageException("WorldStorage exception during readChunks", e);
   }
+}
+
+WorldStorageTimingStats WorldStorage::storageTimingStats() const {
+  return m_storageTimingStats;
 }
 
 bool WorldStorage::floatingDungeonWorld() const {
@@ -461,12 +509,16 @@ WorldStorage::WorldMetadataStore WorldStorage::readWorldMetadata(ByteArray const
 }
 
 ByteArray WorldStorage::writeWorldMetadata(WorldMetadataStore const& metadata) {
+  return compressData(serializeWorldMetadata(metadata));
+}
+
+ByteArray WorldStorage::serializeWorldMetadata(WorldMetadataStore const& metadata) {
   DataStreamBuffer ds;
 
   ds.write(metadata.worldSize);
   ds.write(metadata.userMetadata);
   VersionedJson::writeSubVersioning(ds, metadata.userMetadata);
-  return compressData(ds.data());
+  return ds.takeData();
 }
 
 ByteArray WorldStorage::entitySectorKey(Sector const& sector) {
@@ -487,12 +539,16 @@ WorldStorage::EntitySectorStore WorldStorage::readEntitySector(ByteArray const& 
 }
 
 ByteArray WorldStorage::writeEntitySector(EntitySectorStore const& store) {
+  return compressData(serializeEntitySector(store));
+}
+
+ByteArray WorldStorage::serializeEntitySector(EntitySectorStore const& store) {
   DataStreamBuffer ds;
   ds.write(store);
   for (auto& entity : store) {
     VersionedJson::writeSubVersioning(ds, entity);
   }
-  return compressData(ds.data());
+  return ds.takeData();
 }
 
 ByteArray WorldStorage::tileSectorKey(Sector const& sector) {
@@ -544,6 +600,10 @@ WorldStorage::TileSectorStore WorldStorage::readTileSector(ByteArray const& data
 }
 
 ByteArray WorldStorage::writeTileSector(TileSectorStore const& store) {
+  return compressData(serializeTileSector(store));
+}
+
+ByteArray WorldStorage::serializeTileSector(TileSectorStore const& store) {
   DataStreamBuffer ds;
   ds.vuwrite(store.generationLevel);
   ds.vuwrite(store.tileSerializationVersion);
@@ -552,7 +612,7 @@ ByteArray WorldStorage::writeTileSector(TileSectorStore const& store) {
     for (size_t x = 0; x < WorldSectorSize; ++x)
       (*store.tiles)(x, y).write(ds);
   }
-  return compressData(ds.takeData());
+  return ds.takeData();
 }
 
 ByteArray WorldStorage::uniqueIndexKey(String const& uniqueId) {
@@ -573,13 +633,17 @@ WorldStorage::UniqueIndexStore WorldStorage::readUniqueIndexStore(ByteArray cons
 }
 
 ByteArray WorldStorage::writeUniqueIndexStore(UniqueIndexStore const& store) {
-  return compressData(DataStreamBuffer::serializeMapContainer(store,
+  return compressData(serializeUniqueIndexStore(store));
+}
+
+ByteArray WorldStorage::serializeUniqueIndexStore(UniqueIndexStore const& store) {
+  return DataStreamBuffer::serializeMapContainer(store,
       [](DataStream& ds, String const& key, SectorAndPosition const& value) {
         ds.write(key);
         ds.cwrite<uint16_t>(value.first[0]);
         ds.cwrite<uint16_t>(value.first[1]);
         ds.write(value.second);
-      }));
+      });
 }
 
 ByteArray WorldStorage::sectorUniqueKey(Sector const& sector) {
@@ -595,7 +659,84 @@ WorldStorage::SectorUniqueStore WorldStorage::readSectorUniqueStore(ByteArray co
 }
 
 ByteArray WorldStorage::writeSectorUniqueStore(SectorUniqueStore const& store) {
-  return compressData(DataStreamBuffer::serialize(store));
+  return compressData(serializeSectorUniqueStore(store));
+}
+
+ByteArray WorldStorage::serializeSectorUniqueStore(SectorUniqueStore const& store) {
+  return DataStreamBuffer::serialize(store);
+}
+
+ByteArray WorldStorage::compressStorageData(ByteArray const& data) {
+  auto compressionStart = Time::monotonicMicroseconds();
+  auto compressed = compressData(data);
+  m_storageTimingStats.compressionCalls += 1;
+  m_storageTimingStats.compressionInputBytes += data.size();
+  m_storageTimingStats.compressionOutputBytes += compressed.size();
+  m_storageTimingStats.compressionMicroseconds += Time::monotonicMicroseconds() - compressionStart;
+  return compressed;
+}
+
+ByteArray WorldStorage::writeWorldMetadataTracked(WorldMetadataStore const& metadata) {
+  return compressStorageData(serializeWorldMetadata(metadata));
+}
+
+ByteArray WorldStorage::writeEntitySectorTracked(EntitySectorStore const& store) {
+  auto storeStart = Time::monotonicMicroseconds();
+  auto data = serializeEntitySector(store);
+  m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - storeStart;
+  m_storageTimingStats.entityStoreBytes += data.size();
+  return compressStorageData(data);
+}
+
+ByteArray WorldStorage::writeTileSectorTracked(TileSectorStore const& store) {
+  auto storeStart = Time::monotonicMicroseconds();
+  auto data = serializeTileSector(store);
+  m_storageTimingStats.tileStoreMicroseconds += Time::monotonicMicroseconds() - storeStart;
+  m_storageTimingStats.tileStoreBytes += data.size();
+  return compressStorageData(data);
+}
+
+ByteArray WorldStorage::writeUniqueIndexStoreTracked(UniqueIndexStore const& store) {
+  return compressStorageData(serializeUniqueIndexStore(store));
+}
+
+ByteArray WorldStorage::writeSectorUniqueStoreTracked(SectorUniqueStore const& store) {
+  return compressStorageData(serializeSectorUniqueStore(store));
+}
+
+bool WorldStorage::insertStoredValue(ByteArray const& key, ByteArray const& value) {
+  if (auto existing = m_db.find(key)) {
+    if (*existing == value) {
+      m_storageTimingStats.btreeInsertSkips += 1;
+      m_storageTimingStats.btreeInsertSkipBytes += value.size();
+      return false;
+    }
+  }
+
+  auto insertStart = Time::monotonicMicroseconds();
+  bool replaced = m_db.insert(key, value);
+  m_storageTimingStats.btreeInserts += 1;
+  m_storageTimingStats.btreeInsertBytes += key.size() + value.size();
+  m_storageTimingStats.btreeInsertMicroseconds += Time::monotonicMicroseconds() - insertStart;
+  return replaced;
+}
+
+bool WorldStorage::removeStoredValue(ByteArray const& key) {
+  auto insertStart = Time::monotonicMicroseconds();
+  bool removed = m_db.remove(key);
+  if (removed) {
+    m_storageTimingStats.btreeInserts += 1;
+    m_storageTimingStats.btreeInsertBytes += key.size();
+    m_storageTimingStats.btreeInsertMicroseconds += Time::monotonicMicroseconds() - insertStart;
+  }
+  return removed;
+}
+
+void WorldStorage::commitStoredValues() {
+  auto commitStart = Time::monotonicMicroseconds();
+  m_db.commit();
+  m_storageTimingStats.commits += 1;
+  m_storageTimingStats.commitMicroseconds += Time::monotonicMicroseconds() - commitStart;
 }
 
 void WorldStorage::openDatabase(BTreeDatabase& db, IODevicePtr device) {
@@ -788,6 +929,7 @@ bool WorldStorage::unloadSectorToLevel(Sector const& sector, SectorLoadLevel tar
       }
 
       UniqueIndexStore storedUniques;
+      auto entityStoreStart = Time::monotonicMicroseconds();
       for (auto const& entity : entitiesToStore) {
         m_entityMap->removeEntity(entity->entityId());
         m_generatorFacade->destructEntity(this, entity);
@@ -796,7 +938,10 @@ bool WorldStorage::unloadSectorToLevel(Sector const& sector, SectorLoadLevel tar
           storedUniques.add(*uniqueId, {sector, position});
         sectorStore.append(entityFactory->storeVersionedEntity(entity));
       }
-      m_db.insert(entitySectorKey(sector), writeEntitySector(sectorStore));
+      m_storageTimingStats.entityStoreSectors += 1;
+      m_storageTimingStats.entityStoreEntities += entitiesToStore.size();
+      m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - entityStoreStart;
+      insertStoredValue(entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
       if (metadata.loadLevel < SectorLoadLevel::Entities)
         mergeSectorUniques(sector, storedUniques);
       else
@@ -814,7 +959,8 @@ bool WorldStorage::unloadSectorToLevel(Sector const& sector, SectorLoadLevel tar
       TileSectorStore sectorStore;
       sectorStore.tiles = m_tileArray->unloadSector(sector);
       sectorStore.generationLevel = metadata.generationLevel;
-      m_db.insert(tileSectorKey(sector), writeTileSector(sectorStore));
+      m_storageTimingStats.tileStoreSectors += 1;
+      insertStoredValue(tileSectorKey(sector), writeTileSectorTracked(sectorStore));
       m_sectorMetadata.remove(sector);
       m_generatorFacade->sectorLoadLevelChanged(this, sector, SectorLoadLevel::None);
       return true;
@@ -830,6 +976,7 @@ void WorldStorage::syncSector(Sector const& sector) {
 
   auto entityFactory = Root::singleton().entityFactory();
   auto& metadata = m_sectorMetadata[sector];
+  m_storageTimingStats.syncedSectors += 1;
 
   // Only sync the levels that we know are loaded.  It is possible that this
   // sector is at load level < Entities but has zombie entities in it,  but
@@ -839,6 +986,7 @@ void WorldStorage::syncSector(Sector const& sector) {
   if (metadata.loadLevel >= SectorLoadLevel::Entities) {
     EntitySectorStore sectorStore;
     UniqueIndexStore storedUniques;
+    auto entityStoreStart = Time::monotonicMicroseconds();
     for (auto const& entity : m_entityMap->entityQuery(RectF(m_tileArray->sectorRegion(sector)))) {
       if (!belongsInSector(sector, entity->position()))
         continue;
@@ -849,15 +997,22 @@ void WorldStorage::syncSector(Sector const& sector) {
         sectorStore.append(entityFactory->storeVersionedEntity(entity));
       }
     }
-    m_db.insert(entitySectorKey(sector), writeEntitySector(sectorStore));
+    m_storageTimingStats.entityStoreSectors += 1;
+    m_storageTimingStats.entityStoreEntities += sectorStore.size();
+    m_storageTimingStats.entityStoreMicroseconds += Time::monotonicMicroseconds() - entityStoreStart;
+    insertStoredValue(entitySectorKey(sector), writeEntitySectorTracked(sectorStore));
     updateSectorUniques(sector, storedUniques);
   }
 
   if (metadata.loadLevel >= SectorLoadLevel::Tiles) {
     TileSectorStore sectorStore;
+    auto copyStart = Time::monotonicMicroseconds();
     sectorStore.tiles = m_tileArray->copySector(sector);
+    m_storageTimingStats.sectorCopies += 1;
+    m_storageTimingStats.sectorCopyMicroseconds += Time::monotonicMicroseconds() - copyStart;
     sectorStore.generationLevel = metadata.generationLevel;
-    m_db.insert(tileSectorKey(sector), writeTileSector(sectorStore));
+    m_storageTimingStats.tileStoreSectors += 1;
+    insertStoredValue(tileSectorKey(sector), writeTileSectorTracked(sectorStore));
   }
 }
 
@@ -881,9 +1036,9 @@ void WorldStorage::updateSectorUniques(Sector const& sector, UniqueIndexStore co
     setUniqueIndexEntry(p.first, p.second);
 
   if (sectorUniques.empty())
-    m_db.remove(sectorUniqueKey(sector));
+    removeStoredValue(sectorUniqueKey(sector));
   else
-    m_db.insert(sectorUniqueKey(sector), writeSectorUniqueStore(HashSet<String>::from(sectorUniques.keys())));
+    insertStoredValue(sectorUniqueKey(sector), writeSectorUniqueStoreTracked(HashSet<String>::from(sectorUniques.keys())));
 }
 
 void WorldStorage::mergeSectorUniques(Sector const& sector, UniqueIndexStore const& sectorUniques) {
@@ -894,9 +1049,9 @@ void WorldStorage::mergeSectorUniques(Sector const& sector, UniqueIndexStore con
   }
 
   if (sectorUniqueStore.empty())
-    m_db.remove(sectorUniqueKey(sector));
+    removeStoredValue(sectorUniqueKey(sector));
   else
-    m_db.insert(sectorUniqueKey(sector), writeSectorUniqueStore(sectorUniqueStore));
+    insertStoredValue(sectorUniqueKey(sector), writeSectorUniqueStoreTracked(sectorUniqueStore));
 }
 
 auto WorldStorage::getUniqueIndexEntry(String const& uniqueId) -> Maybe<SectorAndPosition> {
@@ -915,7 +1070,7 @@ void WorldStorage::setUniqueIndexEntry(String const& uniqueId, SectorAndPosition
       return;
     p.first->second = sectorAndPosition;
   }
-  m_db.insert(uniqueIndexKey(uniqueId), writeUniqueIndexStore(uniqueIndex));
+  insertStoredValue(uniqueIndexKey(uniqueId), writeUniqueIndexStoreTracked(uniqueIndex));
 }
 
 void WorldStorage::removeUniqueIndexEntry(String const& uniqueId, Sector const& sector) {
@@ -924,9 +1079,9 @@ void WorldStorage::removeUniqueIndexEntry(String const& uniqueId, Sector const& 
       if (sectorAndPosition->first == sector) {
         uniqueIndex->remove(uniqueId);
         if (uniqueIndex->empty())
-          m_db.remove(uniqueIndexKey(uniqueId));
+          removeStoredValue(uniqueIndexKey(uniqueId));
         else
-          m_db.insert(uniqueIndexKey(uniqueId), writeUniqueIndexStore(*uniqueIndex));
+          insertStoredValue(uniqueIndexKey(uniqueId), writeUniqueIndexStoreTracked(*uniqueIndex));
       }
     }
   }

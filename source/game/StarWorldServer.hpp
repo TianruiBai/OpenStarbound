@@ -18,6 +18,7 @@
 #include "StarItemDescriptor.hpp"
 #include "StarServerTiming.hpp"
 #include "StarWorkerPool.hpp"
+#include "StarWorldStorage.hpp"
 
 namespace Star {
 
@@ -231,6 +232,7 @@ public:
   WorldGeometry geometry() const override;
   uint64_t currentStep() const override;
   PacketPreparationStats packetPreparationStats() const;
+  WorldStorageTimingStats storageTimingStats() const;
   List<ServerTimingRecord> updateTimingRecords() const;
   List<ServerTimingStatus> updateTimingStatus() const;
   Phase6WorldParallelismStats phase6WorldParallelismStats() const;
