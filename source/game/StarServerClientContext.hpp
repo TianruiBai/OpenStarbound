@@ -65,6 +65,7 @@ public:
   WorldChunks shipChunks() const;
   ShipChunksSnapshot buildShipChunksSnapshot(WorldChunks newShipChunks) const;
   void applyShipChunksSnapshot(ShipChunksSnapshot shipChunksSnapshot);
+  void applyShipChunksUpdate(WorldChunks shipChunksUpdate);
   void updateShipChunks(WorldChunks newShipChunks);
 
   ByteArray writeInitialState() const;

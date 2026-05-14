@@ -462,13 +462,13 @@ void WorldServerThread::stopFlyingSkyAt(SkyParameters const& destination) {
   }
 }
 
-WorldServerThread::ShipUpgradeApplicationResult WorldServerThread::applyShipUpgrades(String fallbackSpecies, ShipUpgrades shipUpgrades, StringMap<StringList> const& speciesShips) {
+WorldServerThread::ShipUpgradeApplicationResult WorldServerThread::applyShipUpgrades(String fallbackSpecies, ShipUpgrades shipUpgrades, StringMap<StringList> const& speciesShips, WorldChunks oldShipChunks) {
   ShipUpgradeApplicationResult result;
   result.species = fallbackSpecies;
   result.shipUpgrades = shipUpgrades;
 
   try {
-    executeCommand("applyShipUpgrades", [fallbackSpecies = std::move(fallbackSpecies), shipUpgrades = std::move(shipUpgrades), &speciesShips, &result](WorldServerThread*, WorldServer* shipWorld) mutable {
+    executeCommand("applyShipUpgrades", [fallbackSpecies = std::move(fallbackSpecies), shipUpgrades = std::move(shipUpgrades), oldShipChunks = std::move(oldShipChunks), &speciesShips, &result](WorldServerThread*, WorldServer* shipWorld) mutable {
         String species;
         Json jSpecies = shipWorld->getProperty("ship.species");
         if (jSpecies.isType(Json::Type::String))
@@ -491,7 +491,7 @@ WorldServerThread::ShipUpgradeApplicationResult WorldServerThread::applyShipUpgr
               result.shipUpgrades.apply(shipStructure.configValue("shipUpgrades"));
             }
 
-            result.shipChunks = shipWorld->readChunks();
+            result.shipChunkUpdate = shipWorld->readChunkUpdate(oldShipChunks);
           }
         }
 
@@ -541,6 +541,20 @@ WorldChunks WorldServerThread::readChunks() {
         chunks = worldServer->readChunks();
       });
     return chunks;
+  } catch (std::exception const& e) {
+    Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
+    m_errorOccurred = true;
+    return {};
+  }
+}
+
+WorldChunks WorldServerThread::readChunkUpdate(WorldChunks oldChunks) {
+  try {
+    WorldChunks update;
+    executeCommand("readChunkUpdate", [&oldChunks, &update](WorldServerThread*, WorldServer* worldServer) {
+        update = worldServer->readChunkUpdate(oldChunks);
+      });
+    return update;
   } catch (std::exception const& e) {
     Logger::error("WorldServerThread exception caught: {}", outputException(e, true));
     m_errorOccurred = true;

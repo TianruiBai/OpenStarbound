@@ -455,6 +455,7 @@ struct SaveDisconnectStorageCapture {
   size_t dirtyTileEdits = 0;
   size_t syncPasses = 0;
   size_t snapshotExports = 0;
+  size_t chunkUpdateExports = 0;
   size_t chunks = 0;
   int64_t elapsedMicroseconds = 0;
   WorldStorageTimingStats storageTimingStats;
@@ -729,13 +730,19 @@ SaveDisconnectStorageCapture runSaveDisconnectStorageCapture() {
 
   SaveDisconnectStorageCapture capture;
   auto start = Time::monotonicMicroseconds();
+  WorldChunks clientChunks;
 
   worldServer.sync();
   capture.syncPasses += 1;
-  for (size_t i = 0; i < 3; ++i) {
-    auto chunks = worldServer.readChunks();
-    capture.snapshotExports += 1;
-    capture.chunks = chunks.size();
+  clientChunks = worldServer.readChunks();
+  capture.snapshotExports += 1;
+  capture.chunks = clientChunks.size();
+
+  for (size_t i = 0; i < 2; ++i) {
+    auto chunkUpdate = worldServer.readChunkUpdate(clientChunks);
+    capture.chunkUpdateExports += 1;
+    clientChunks = applyWorldChunksUpdate(std::move(clientChunks), chunkUpdate);
+    capture.chunks = clientChunks.size();
   }
 
   for (size_t pass = 0; pass < 4; ++pass) {
@@ -748,15 +755,17 @@ SaveDisconnectStorageCapture runSaveDisconnectStorageCapture() {
 
     worldServer.sync();
     capture.syncPasses += 1;
-    auto chunks = worldServer.readChunks();
-    capture.snapshotExports += 1;
-    capture.chunks = chunks.size();
+    auto chunkUpdate = worldServer.readChunkUpdate(clientChunks);
+    capture.chunkUpdateExports += 1;
+    clientChunks = applyWorldChunksUpdate(std::move(clientChunks), chunkUpdate);
+    capture.chunks = clientChunks.size();
   }
 
   for (size_t i = 0; i < 3; ++i) {
-    auto chunks = worldServer.readChunks();
-    capture.snapshotExports += 1;
-    capture.chunks = chunks.size();
+    auto chunkUpdate = worldServer.readChunkUpdate(clientChunks);
+    capture.chunkUpdateExports += 1;
+    clientChunks = applyWorldChunksUpdate(std::move(clientChunks), chunkUpdate);
+    capture.chunks = clientChunks.size();
   }
 
   capture.elapsedMicroseconds = Time::monotonicMicroseconds() - start;
@@ -765,6 +774,7 @@ SaveDisconnectStorageCapture runSaveDisconnectStorageCapture() {
   std::cout << "SaveDisconnectStorageCapture dirtyTileEdits=" << capture.dirtyTileEdits
             << " syncPasses=" << capture.syncPasses
             << " snapshotExports=" << capture.snapshotExports
+            << " chunkUpdateExports=" << capture.chunkUpdateExports
             << " chunks=" << capture.chunks
             << " sync=" << capture.storageTimingStats.syncs << "/" << capture.storageTimingStats.syncPassSectors << "/" << capture.storageTimingStats.syncedSectors
             << " entity=" << capture.storageTimingStats.entityStoreSectors << "/" << capture.storageTimingStats.entityStoreEntities << "/" << capture.storageTimingStats.entityStoreBytes << "/" << capture.storageTimingStats.entityStoreMicroseconds
@@ -783,6 +793,8 @@ SaveDisconnectStorageCapture runSaveDisconnectStorageCapture() {
             << " commit=" << capture.storageTimingStats.commits << "/" << capture.storageTimingStats.commitMicroseconds
             << " snapshot=" << capture.storageTimingStats.fullSnapshotExports << "/" << capture.storageTimingStats.fullSnapshotChunks << "/" << capture.storageTimingStats.fullSnapshotBytes << "/" << capture.storageTimingStats.fullSnapshotExportMicroseconds
             << " snapshotSync=" << capture.storageTimingStats.fullSnapshotSyncSectors << "/" << capture.storageTimingStats.fullSnapshotSyncMicroseconds
+            << " chunkUpdate=" << capture.storageTimingStats.chunkUpdateExports << "/" << capture.storageTimingStats.chunkUpdateChunks << "/" << capture.storageTimingStats.chunkUpdateRemovedChunks << "/" << capture.storageTimingStats.chunkUpdateBytes << "/" << capture.storageTimingStats.chunkUpdateExportMicroseconds
+            << " chunkUpdateSync=" << capture.storageTimingStats.chunkUpdateSyncSectors << "/" << capture.storageTimingStats.chunkUpdateSyncMicroseconds
             << " elapsedUs=" << capture.elapsedMicroseconds
             << std::endl;
 
@@ -1226,7 +1238,7 @@ TEST(MulticorePhaseTest, Phase4WorldCommandMailboxPropagatesQueuedCommandResults
       {"fuelEfficiency", 0.75},
       {"shipSpeed", 7}});
   StringMap<StringList> speciesShips{{"human", StringList{"/ships/human/humant0.structure"}}};
-  auto result = worldThread.applyShipUpgrades("human", shipUpgrades, speciesShips);
+  auto result = worldThread.applyShipUpgrades("human", shipUpgrades, speciesShips, {});
   auto commandStats = worldThread.commandStats();
 
   EXPECT_GT(commandStats.processed, beforeCommands.processed);
@@ -1511,10 +1523,65 @@ TEST(MulticorePhaseTest, ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent
   EXPECT_TRUE(worldChunksEqual(clientContext.newShipUpdates(), expectedUpdateChunks));
   EXPECT_TRUE(clientContext.newShipUpdates().empty());
 
+  ServerClientContext updateContext(1, {}, NetCompatibilityRules(), Uuid(), "snapshot-test", "human", true, initialChunks);
+  updateContext.applyShipChunksUpdate(expectedUpdateChunks);
+  EXPECT_TRUE(worldChunksEqual(updateContext.shipChunks(), newChunks));
+
+  auto updateOnlyData = updateContext.writeUpdate();
+  EXPECT_FALSE(updateOnlyData.empty());
+
+  ClientContext updateOnlyClientContext{Uuid(), Uuid()};
+  updateOnlyClientContext.readUpdate(updateOnlyData, NetCompatibilityRules());
+  EXPECT_TRUE(worldChunksEqual(updateOnlyClientContext.newShipUpdates(), expectedUpdateChunks));
+  EXPECT_TRUE(updateOnlyClientContext.newShipUpdates().empty());
+
+  updateContext.applyShipChunksUpdate({});
+  EXPECT_TRUE(updateContext.writeUpdate().empty());
+
   auto cleanSnapshot = serverContext.buildShipChunksSnapshot(newChunks);
   EXPECT_TRUE(cleanSnapshot.updateChunks.empty());
   serverContext.applyShipChunksSnapshot(std::move(cleanSnapshot));
   EXPECT_TRUE(serverContext.writeUpdate().empty());
+}
+
+TEST(MulticorePhaseTest, ServerOptimizationWorldStorageChunkUpdateMatchesFullSnapshot) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", false}}}});
+
+  WorldServer worldServer(Vec2U(96, 96), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.generateRegion(RectI::withSize(Vec2I(24, 24), Vec2I(32, 32)));
+
+  worldServer.sync();
+  auto initialChunks = worldServer.readChunks();
+  ASSERT_FALSE(initialChunks.empty());
+  auto initialStats = worldServer.storageTimingStats();
+
+  auto materialId = firstTestMaterialId();
+  ASSERT_TRUE(materialId);
+  EXPECT_TRUE(setSelfWorkloadForegroundMaterial(worldServer, Vec2I(32, 32), *materialId));
+
+  auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(35, 35), Vec2F(), Vec2F(), true);
+  ASSERT_TRUE(itemDrop);
+  worldServer.addEntity(itemDrop, 200);
+
+  auto chunkUpdate = worldServer.readChunkUpdate(initialChunks);
+  EXPECT_FALSE(chunkUpdate.empty());
+  auto updateStats = worldServer.storageTimingStats();
+  EXPECT_EQ(updateStats.fullSnapshotExports, initialStats.fullSnapshotExports);
+  EXPECT_EQ(updateStats.chunkUpdateExports, initialStats.chunkUpdateExports + 1);
+  EXPECT_GT(updateStats.chunkUpdateSyncSectors, initialStats.chunkUpdateSyncSectors);
+  EXPECT_GT(updateStats.chunkUpdateChunks, initialStats.chunkUpdateChunks);
+  EXPECT_GT(updateStats.chunkUpdateBytes, initialStats.chunkUpdateBytes);
+  EXPECT_LT(chunkUpdate.size(), initialChunks.size());
+
+  auto fullChunks = worldServer.readChunks();
+  EXPECT_TRUE(worldChunksEqual(applyWorldChunksUpdate(initialChunks, chunkUpdate), fullChunks));
 }
 
 TEST(MulticorePhaseTest, ServerOptimizationDirtySectorFilteringIsGuarded) {
@@ -1627,13 +1694,16 @@ TEST(ServerMeasurement, DISABLED_SaveDisconnectStorageCapture) {
 
   EXPECT_GT(capture.dirtyTileEdits, 0u);
   EXPECT_EQ(capture.syncPasses, 5u);
-  EXPECT_EQ(capture.snapshotExports, 10u);
+  EXPECT_EQ(capture.snapshotExports, 1u);
+  EXPECT_EQ(capture.chunkUpdateExports, 9u);
   EXPECT_GT(capture.chunks, 0u);
   EXPECT_EQ(capture.storageTimingStats.syncs, capture.syncPasses);
   EXPECT_EQ(capture.storageTimingStats.fullSnapshotExports, capture.snapshotExports);
+  EXPECT_EQ(capture.storageTimingStats.chunkUpdateExports, capture.chunkUpdateExports);
   EXPECT_GT(capture.storageTimingStats.syncPassSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.fullSnapshotSyncSectors, 0u);
-  EXPECT_GE(capture.storageTimingStats.syncedSectors, capture.storageTimingStats.syncPassSectors + capture.storageTimingStats.fullSnapshotSyncSectors);
+  EXPECT_GT(capture.storageTimingStats.chunkUpdateSyncSectors, 0u);
+  EXPECT_GE(capture.storageTimingStats.syncedSectors, capture.storageTimingStats.syncPassSectors + capture.storageTimingStats.fullSnapshotSyncSectors + capture.storageTimingStats.chunkUpdateSyncSectors);
   EXPECT_GT(capture.storageTimingStats.tileStoreSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.sectorCopies, 0u);
   EXPECT_GT(capture.storageTimingStats.btreeInserts, 0u);
@@ -1650,10 +1720,14 @@ TEST(ServerMeasurement, DISABLED_SaveDisconnectStorageCapture) {
   EXPECT_EQ(capture.storageTimingStats.dirtySyncSkippedSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.dirtySnapshotUnmarkedSectors, 0u);
   EXPECT_GT(capture.storageTimingStats.fullSnapshotBytes, 0u);
+  EXPECT_GT(capture.storageTimingStats.chunkUpdateChunks, 0u);
+  EXPECT_GT(capture.storageTimingStats.chunkUpdateBytes, 0u);
 
   RecordProperty("dirtyTileEdits", static_cast<int64_t>(capture.dirtyTileEdits));
   RecordProperty("snapshotSyncSectors", static_cast<int64_t>(capture.storageTimingStats.fullSnapshotSyncSectors));
+  RecordProperty("chunkUpdateSyncSectors", static_cast<int64_t>(capture.storageTimingStats.chunkUpdateSyncSectors));
   RecordProperty("snapshotBytes", static_cast<int64_t>(capture.storageTimingStats.fullSnapshotBytes));
+  RecordProperty("chunkUpdateBytes", static_cast<int64_t>(capture.storageTimingStats.chunkUpdateBytes));
   RecordProperty("elapsedUs", capture.elapsedMicroseconds);
 }
 
@@ -1820,20 +1894,60 @@ TEST(MulticorePhaseTest, Phase6MutationParallelismRequiresExplicitGates) {
     WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
     auto stats = worldServer.phase6WorldParallelismStats();
     uint32_t expectedSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::FallingBlockMutationParallelismSubsystem | WorldServer::WiringMutationParallelismSubsystem | WorldServer::EntityMutationParallelismSubsystem | WorldServer::LuaMutationParallelismSubsystem;
-    uint32_t expectedWorkerSubsystems = WorldServer::LiquidMutationParallelismSubsystem | WorldServer::FallingBlockMutationParallelismSubsystem | WorldServer::WiringMutationParallelismSubsystem;
-    uint32_t expectedBlockedSubsystems = WorldServer::EntityMutationParallelismSubsystem | WorldServer::LuaMutationParallelismSubsystem;
+    uint32_t expectedWorkerSubsystems = expectedSubsystems;
     EXPECT_TRUE(stats.mutationParallelismRequested);
     EXPECT_FALSE(stats.mutationParallelismBlockedByFixedSeedGate);
     EXPECT_FALSE(stats.mutationParallelismBlockedByDependencyGate);
     EXPECT_FALSE(stats.mutationParallelismBlockedByModVisibilityGate);
-    EXPECT_TRUE(stats.mutationParallelismBlockedByImplementationGate);
+    EXPECT_FALSE(stats.mutationParallelismBlockedByImplementationGate);
     EXPECT_EQ(stats.mutationParallelismRequestedSubsystems, expectedSubsystems);
     EXPECT_EQ(stats.mutationParallelismBlockedByFixedSeedGateSubsystems, 0u);
     EXPECT_EQ(stats.mutationParallelismBlockedByDependencyGateSubsystems, 0u);
     EXPECT_EQ(stats.mutationParallelismBlockedByModVisibilityGateSubsystems, 0u);
-    EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, expectedBlockedSubsystems);
+    EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, 0u);
     EXPECT_EQ(stats.mutationParallelismWorkerSubsystems, expectedWorkerSubsystems);
   }
+}
+
+TEST(MulticorePhaseTest, Phase6EntityLuaMutationShadowWorkersRunAfterExplicitGates) {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"packetPreparationSectorPrefill", false},
+      {"subsystemBaselineMetrics", true},
+      {"entityMutationParallelism", true},
+      {"luaMutationParallelism", true},
+      {"mutationParallelismFixedSeedSignatures", true},
+      {"mutationParallelismWorkerThreads", 2},
+      {"mutationParallelismDependencyAnalysis", true},
+      {"mutationParallelismModVisibilityContract", true}}}});
+
+  WorldServer worldServer(Vec2U(64, 64), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.initLua(nullptr);
+  worldServer.generateRegion(RectI::withSize(Vec2I(20, 20), Vec2I(24, 24)));
+
+  auto itemDrop = ItemDrop::throwDrop(ItemDescriptor("perfectlygenericitem", 1), Vec2F(32, 32), Vec2F(), Vec2F(), true);
+  ASSERT_TRUE(itemDrop);
+  worldServer.addEntity(itemDrop, 101);
+
+  WorldServer::Phase6WorldParallelismStats stats;
+  for (size_t i = 0; i < 60; ++i) {
+    worldServer.update(1.0f / 60.0f);
+    stats = worldServer.phase6WorldParallelismStats();
+  }
+
+  uint32_t expectedWorkerSubsystems = WorldServer::EntityMutationParallelismSubsystem | WorldServer::LuaMutationParallelismSubsystem;
+  EXPECT_EQ(stats.mutationParallelismWorkerSubsystems, expectedWorkerSubsystems);
+  EXPECT_FALSE(stats.mutationParallelismBlockedByImplementationGate);
+  EXPECT_EQ(stats.mutationParallelismBlockedByImplementationGateSubsystems, 0u);
+  EXPECT_GT(stats.entityUpdatedEntities, 0u);
+  EXPECT_GT(stats.luaScriptUpdates, 0u);
+  EXPECT_GT(stats.mutationWorkerTicks, 0u);
+  EXPECT_GT(stats.mutationWorkerJobs, 0u);
+  EXPECT_EQ(stats.mutationWorkerDifferentialChecks, stats.mutationWorkerJobs);
+  EXPECT_EQ(stats.mutationWorkerDivergences, 0u);
+  EXPECT_EQ(stats.mutationWorkerFallbacks, 0u);
 }
 
 TEST(MulticorePhaseTest, Phase6MutationWorkersRunAfterExplicitGates) {

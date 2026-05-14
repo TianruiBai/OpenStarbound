@@ -1224,14 +1224,13 @@ void UniverseServer::updateShips() {
     auto newShipUpgrades = p.second->shipUpgrades();
     if (auto shipWorld = getWorld(ClientShipWorldId(p.second->playerUuid()))) {
       locker.unlock();
-      auto result = shipWorld->applyShipUpgrades(p.second->shipSpecies(), newShipUpgrades, m_speciesShips);
+      auto result = shipWorld->applyShipUpgrades(p.second->shipSpecies(), newShipUpgrades, m_speciesShips, p.second->shipChunks());
       locker.lock();
       p.second->setShipSpecies(result.species);
       newShipUpgrades = result.shipUpgrades;
-      if (result.shipChunks) {
+      if (result.shipChunkUpdate) {
         p.second->setShipUpgrades(newShipUpgrades);
-        auto shipChunksSnapshot = p.second->buildShipChunksSnapshot(*result.shipChunks);
-        p.second->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+        p.second->applyShipChunksUpdate(std::move(*result.shipChunkUpdate));
       }
     }
 
@@ -1741,8 +1740,7 @@ void UniverseServer::shutdownInactiveWorlds() {
           world->unloadAll(true);
           if (auto clientId = getClientForUuid(worldId.get<ClientShipWorldId>())) {
             auto clientContext = m_clients.get(*clientId);
-            auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(world->readChunks());
-            clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+            clientContext->applyShipChunksUpdate(world->readChunkUpdate(clientContext->shipChunks()));
           }
         }
 
@@ -1842,8 +1840,7 @@ List<UniverseServer::VersionedJsonStorageSnapshot> UniverseServer::buildClientCo
     locker.unlock();
 
     if (shipWorld) {
-      auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(shipWorld->readChunks());
-      clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+      clientContext->applyShipChunksUpdate(shipWorld->readChunkUpdate(clientContext->shipChunks()));
     }
 
     snapshots.append(buildClientContextStorageSnapshot(clientContext));
@@ -3215,8 +3212,7 @@ void UniverseServer::doDisconnection(ConnectionId clientId, String const& reason
       if (auto shipWorld = getWorld(ClientShipWorldId(clientContext->playerUuid()))) {
         locker.unlock();
         shipWorld->unloadAll(true);
-        auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(shipWorld->readChunks());
-        clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+        clientContext->applyShipChunksUpdate(shipWorld->readChunkUpdate(clientContext->shipChunks()));
         shipWorld->stop();
         locker.lock();
       }
@@ -3409,8 +3405,7 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
 
     auto shipWorldThread = make_shared<WorldServerThread>(shipWorld, ClientShipWorldId(clientShipWorldId));
     shipWorldThread->setPause(m_pause);
-  auto shipChunksSnapshot = clientContext->buildShipChunksSnapshot(shipWorldThread->readChunks());
-  clientContext->applyShipChunksSnapshot(std::move(shipChunksSnapshot));
+    clientContext->applyShipChunksUpdate(shipWorldThread->readChunkUpdate(clientContext->shipChunks()));
     shipWorldThread->start();
     shipWorldThread->setUpdateAction(bind(&UniverseServer::worldUpdated, this, _1));
 

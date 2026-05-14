@@ -39,7 +39,7 @@ The current implementation has useful observability for most of the remaining pe
 - `/serverstatus` reports universe-loop timings, world-thread timings, world-update phase timings, network queued/eager/worker send counters, world packet-prep counters, storage timing counters, Phase 6 parallel helper divergence counters, and Phase 6 subsystem baselines.
 - `/worldstats` reports per-world command stats, packet-prep stats, storage timings, Phase 6 helper counters, and mutation gate states.
 - `/servernetstats` reports per-worker connection ownership, scans, callbacks, wakeups, waits, and queued/eager/worker send counts.
-- `WorldStorageTimingStats` separates sync, sync-pass sector visits, `readChunks()` pre-sync sector/time cost, sector copy, entity/tile store, compression, B-tree insert/skip, per-store-surface write/skip/remove attribution, commit, and full snapshot export work.
+- `WorldStorageTimingStats` separates sync, sync-pass sector visits, `readChunks()` pre-sync sector/time cost, incremental chunk-update pre-sync/export cost, sector copy, entity/tile store, compression, B-tree insert/skip, per-store-surface write/skip/remove attribution, commit, and full snapshot export work.
 
 This means the next pass should not begin with broad instrumentation. It should begin with fixed workload captures using the existing counters, then implement only the tickets whose target workload is visible.
 
@@ -60,7 +60,7 @@ These were real concerns in earlier reviews but should now be treated as impleme
 ## Main Conclusions
 
 1. The next required work is fixed workload capture. The code now has enough counters to compare default/eager networking, queue-only networking, save spikes, packet-prep cost, and subsystem baselines. Without those captures, it will be too easy to optimize a visible code pattern that is not the current p99 cost.
-2. Storage spikes are now measurable, but not solved. Byte-identical B-tree insert skipping avoids redundant leaf rewrites, yet `WorldStorage::sync()` still visits every loaded sector and `readChunks()` still exports the whole B-tree snapshot.
+2. Storage spikes are now measurable, and the first full-export reduction is implemented for ship/client-context paths. Byte-identical B-tree insert skipping avoids redundant leaf rewrites, dirty-sector filtering remains default-off, and `readChunkUpdate()` avoids repeated full B-tree snapshots when the caller already has a client-context baseline.
 3. Network readiness is the next structural networking step. Queue-only sends now remove caller-thread writes by default, but workers still rely on a 1 ms timed fallback and synchronous nonblocking `writeData()` / `readData()` polling under the connection mutex.
 4. First-observation entity net-state work should not be naively cached. `writeNetState(0)` has byte-equivalence tests, but it also advances entity net versions. The safe path is to separate byte generation from owner-thread version advancement, then test a cache or worker path behind differential checks.
 5. The remaining single-world hot path is compatibility-sensitive: entity update, Lua update, wiring, liquid, falling blocks, damage, storage tick/generation, removal, and packet preparation still run in one ordered owner-thread sequence.
@@ -72,7 +72,7 @@ These were real concerns in earlier reviews but should now be treated as impleme
 | 1 | Fixed workload capture and comparison pack | all | enables correct decisions | low | do first |
 | 2 | Queue-only send A/B soak and fallback validation | high fan-out, many clients | medium for caller-thread latency and lock scope | low to medium | keep measuring with `queueOnlyConnectionSend=false/true` |
 | 3 | Dirty-sector sync filtering | save-heavy loaded worlds | medium to high p95/p99 sync reduction | medium | implement after dirty-mark map design |
-| 4 | Reduce full `readChunks()` exports for ship/disconnect saves | save/disconnect spike | high p99 reduction | high | design incremental or cached snapshot path first |
+| 4 | Reduce full `readChunks()` exports for ship/disconnect saves | save/disconnect spike | high p99 reduction | high | first incremental chunk-update path implemented; expand fixtures and fixed workloads before broadening |
 | 5 | Socket readiness abstraction | idle/many connections, latency | high idle CPU and latency improvement | medium to high | design API before implementation |
 | 6 | Liquid no-limit region cache rebuild skip | liquid-heavy static visibility | low to medium | low | safe bookkeeping ticket |
 | 7 | Dirty wiring-network tracker | wiring-heavy bases | high for stable wiring | medium to high | guarded prototype with full-scan fallback |
@@ -199,25 +199,25 @@ Diagnostics still needed before considering the filter default-safe:
 
 ### 6. `readChunks()` Full Exports Are The Save/Disconnect Spike To Watch
 
-`WorldStorage::readChunks()` syncs active sectors and then iterates the full database with `m_db.forAll()` to build a complete `WorldChunks` snapshot. `UniverseServer::buildClientContextStorageSnapshots()` calls `shipWorld->readChunks()` for each connected client's ship world during triggered storage, then stores the result in client context data.
+`WorldStorage::readChunks()` syncs active sectors and then iterates the full database with `m_db.forAll()` to build a complete `WorldChunks` snapshot. That remains the fallback/reference path. The ship/client-context hot paths now use `WorldStorage::readChunkUpdate(oldChunks)` when the server already has the client's chunk baseline: it performs the same snapshot-style pre-sync, emits only changed/new chunks and removals, and lets `ServerClientContext::applyShipChunksUpdate()` update both server-held baseline state and the pending client update stream.
 
-The disabled save/disconnect-style storage capture now exists as `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture`. On 2026-05-14 it produced `sync=5/100/300`, `btree=46/570/4295/41601/614`, `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0`, `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, `dirtySnapshot=0/200`, `snapshot=10/410/32196/220`, and `snapshotSync=200/85782`, which confirms that unchanged B-tree inserts are skipped but default config still visits, serializes, and compresses loaded tile/entity sectors before full exports. The dirty-sector filter now exists behind `storageDirtySectorFiltering=false` by default; the third `dirtySync` value reports clean sectors skipped by that opt-in path.
+The disabled save/disconnect-style storage capture now exists as `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture`. On 2026-05-14 it produced `sync=5/100/300`, `btree=46/570/4300/41629/516`, `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0`, `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, `dirtySnapshot=0/200`, `snapshot=1/41/3176/22`, `snapshotSync=20/8774`, `chunkUpdate=9/4/0/648/271`, and `chunkUpdateSync=180/76696`. That confirms the release path has one baseline full export and nine incremental exports carrying only four changed chunks in this fixture, while the owner-thread pre-sync remains explicit and measurable. The dirty-sector filter now exists behind `storageDirtySectorFiltering=false` by default; the third `dirtySync` value reports clean sectors skipped by that opt-in path.
 
-This is the clearest remaining storage p99 risk:
+This remains a storage p99 risk to validate in fixed workloads:
 
 - it is proportional to connected clients with ship worlds
-- it exports complete ship-world chunks even if little changed
-- it allocates a new `WorldChunks` collection for each export
-- pass 6 measures the cost but does not reduce full exports
+- it still pre-syncs active ship sectors before each export
+- it still allocates update collections and compares against the caller baseline
+- it needs real multi-client ship/disconnect fixed workload data beyond the direct `WorldServer` capture
 
-Possible paths:
+Implemented and remaining paths:
 
-1. Cache the last full ship chunk snapshot and invalidate it when dirty chunks change.
-2. Add incremental chunk deltas to the client-context ship snapshot path.
+1. Done: add incremental chunk deltas to the client-context ship snapshot path.
+2. Expand real ship-world tile/entity/unique/unload/reload fixtures and fixed workload captures.
 3. Queue immutable ship-world snapshot exports from the world owner thread and write them through the persistence worker path.
 4. Keep full `readChunks()` as the serial fallback and byte-compare incremental versus full exports during tests.
 
-This path has higher compatibility risk than dirty-sector sync because the exported chunk set becomes part of durable client context state. The first focused gate, `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent`, now covers current changed, added, removed, and no-op client-context update semantics. Do not change export behavior until that expands across tile edits, entity edits, unique entities, unload, and old-save reload.
+This path has higher compatibility risk than dirty-sector sync because the exported chunk set becomes part of durable client context state. The focused gates now cover current changed/added/removed/no-op client-context update semantics and a real dirty world update versus full snapshot comparison. Do not broaden beyond the existing ship/client-context callsites until fixtures cover entity edits, unique entities, unload, and old-save reload.
 
 ### 7. B-tree Tuning Should Be Measurement-Led
 
@@ -329,7 +329,7 @@ This is the unavoidable compatibility wall for one crowded world. The next usefu
 - add per-script-context update timing
 - correlate those costs with modpack smoke and crowded-world p99
 
-Only after this data exists should the project attempt opt-in mechanism-compatible APIs, entity grouping, or Lua parallelism.
+The latest safe progression adds immutable entity/Lua signature shadow-worker jobs behind the same explicit gates as other mutation experiments: subsystem request, fixed-seed signatures, dependency analysis, mod-visibility contract, and worker threads. These jobs hash scalar post-serial work signatures and compare them with the owner-thread serial signature; they do not run live entity or Lua mutation off-thread. Live entity grouping and Lua execution parallelism still require opt-in mechanism-compatible APIs and staged visibility rules.
 
 ### 14. Universe Loop Is Still Fixed-Sleep Scheduled
 
@@ -357,7 +357,7 @@ Do not tackle this before network readiness and fixed workload captures. A wake-
 
 ### Pass 10: Spike Reduction And Readiness Design
 
-1. Expand incremental or cached ship `readChunks()` export equivalence tests from synthetic chunk updates into real ship world tile/entity/unique/unload/reload cases.
+1. Expand incremental ship chunk-update equivalence tests from the current dirty tile/entity fixture into unique/unload/reload and multi-client ship cases.
 2. Draft and test `SocketPoller` fallback API.
 3. Prototype dirty wiring networks with full-scan differential validation.
 4. Start first-net-state byte-generation API split for future packet-prep worker expansion.
@@ -366,7 +366,7 @@ Do not tackle this before network readiness and fixed workload captures. A wake-
 
 1. Move pending handshakes onto readiness-driven workers.
 2. Add platform socket poller implementations.
-3. Prototype subsystem mutation only after fixed-seed, dependency, and mod-visibility gates exist.
+3. Prototype live subsystem mutation only after fixed-seed, dependency, mod-visibility, and staged API gates exist.
 4. Add mechanism-compatible APIs for batched reads and phase-boundary writes.
 
 ## Validation Matrix For The Next Review

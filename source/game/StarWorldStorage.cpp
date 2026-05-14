@@ -71,6 +71,13 @@ void WorldStorageTimingStats::add(WorldStorageTimingStats const& stats) {
   fullSnapshotChunks += stats.fullSnapshotChunks;
   fullSnapshotBytes += stats.fullSnapshotBytes;
   fullSnapshotExportMicroseconds += stats.fullSnapshotExportMicroseconds;
+  chunkUpdateExports += stats.chunkUpdateExports;
+  chunkUpdateSyncSectors += stats.chunkUpdateSyncSectors;
+  chunkUpdateSyncMicroseconds += stats.chunkUpdateSyncMicroseconds;
+  chunkUpdateChunks += stats.chunkUpdateChunks;
+  chunkUpdateRemovedChunks += stats.chunkUpdateRemovedChunks;
+  chunkUpdateBytes += stats.chunkUpdateBytes;
+  chunkUpdateExportMicroseconds += stats.chunkUpdateExportMicroseconds;
 }
 
 WorldChunks WorldStorage::getWorldChunksUpdate(WorldChunks const& oldChunks, WorldChunks const& newChunks) {
@@ -525,15 +532,11 @@ void WorldStorage::sync() {
 
 WorldChunks WorldStorage::readChunks() {
   try {
-    auto snapshotSyncStart = Time::monotonicMicroseconds();
     uint64_t snapshotSyncSectors = 0;
-    for (auto const& pair : m_sectorMetadata) {
-      recordDirtySectorVisit(pair.first, true);
-      syncSector(pair.first);
-      snapshotSyncSectors += 1;
-    }
+    uint64_t snapshotSyncMicroseconds = 0;
+    syncActiveSectorsForSnapshot(snapshotSyncSectors, snapshotSyncMicroseconds);
     m_storageTimingStats.fullSnapshotSyncSectors += snapshotSyncSectors;
-    m_storageTimingStats.fullSnapshotSyncMicroseconds += static_cast<uint64_t>(Time::monotonicMicroseconds() - snapshotSyncStart);
+    m_storageTimingStats.fullSnapshotSyncMicroseconds += snapshotSyncMicroseconds;
 
     WorldChunks chunks;
     auto exportStart = Time::monotonicMicroseconds();
@@ -555,6 +558,49 @@ WorldChunks WorldStorage::readChunks() {
     m_db.rollback();
     m_db.close();
     throw WorldStorageException("WorldStorage exception during readChunks", e);
+  }
+}
+
+WorldChunks WorldStorage::readChunkUpdate(WorldChunks const& oldChunks) {
+  try {
+    uint64_t snapshotSyncSectors = 0;
+    uint64_t snapshotSyncMicroseconds = 0;
+    syncActiveSectorsForSnapshot(snapshotSyncSectors, snapshotSyncMicroseconds);
+    m_storageTimingStats.chunkUpdateSyncSectors += snapshotSyncSectors;
+    m_storageTimingStats.chunkUpdateSyncMicroseconds += snapshotSyncMicroseconds;
+
+    WorldChunks update;
+    HashSet<ByteArray> seenKeys;
+    auto exportStart = Time::monotonicMicroseconds();
+    m_db.forAll([&](ByteArray key, ByteArray value) {
+        auto oldValue = oldChunks.ptr(key);
+        if (!oldValue || !*oldValue || **oldValue != value)
+          update[key] = value;
+        seenKeys.add(std::move(key));
+      });
+
+    for (auto const& oldChunk : oldChunks) {
+      if (!seenKeys.contains(oldChunk.first))
+        update[oldChunk.first] = {};
+    }
+
+    m_storageTimingStats.chunkUpdateExports += 1;
+    m_storageTimingStats.chunkUpdateExportMicroseconds += Time::monotonicMicroseconds() - exportStart;
+    m_storageTimingStats.chunkUpdateChunks += update.size();
+    for (auto const& chunk : update) {
+      m_storageTimingStats.chunkUpdateBytes += chunk.first.size();
+      if (chunk.second)
+        m_storageTimingStats.chunkUpdateBytes += chunk.second->size();
+      else
+        m_storageTimingStats.chunkUpdateRemovedChunks += 1;
+    }
+
+    return update;
+
+  } catch (std::exception const& e) {
+    m_db.rollback();
+    m_db.close();
+    throw WorldStorageException("WorldStorage exception during readChunkUpdate", e);
   }
 }
 
@@ -817,6 +863,16 @@ bool WorldStorage::removeStoredValue(StoreType storeType, ByteArray const& key) 
     recordStoredValueRemove(storeType);
   }
   return removed;
+}
+
+void WorldStorage::syncActiveSectorsForSnapshot(uint64_t& syncedSectors, uint64_t& syncMicroseconds) {
+  auto snapshotSyncStart = Time::monotonicMicroseconds();
+  for (auto const& pair : m_sectorMetadata) {
+    recordDirtySectorVisit(pair.first, true);
+    syncSector(pair.first);
+    syncedSectors += 1;
+  }
+  syncMicroseconds += static_cast<uint64_t>(Time::monotonicMicroseconds() - snapshotSyncStart);
 }
 
 void WorldStorage::recordDirtySectorVisit(Sector const& sector, bool snapshotSync) {

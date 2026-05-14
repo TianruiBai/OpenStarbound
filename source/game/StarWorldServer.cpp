@@ -1228,6 +1228,13 @@ void WorldServer::update(float dt) {
       m_phase6WorldParallelismStats.entityUpdateMicroseconds += entityUpdateStats.callbackMicroseconds;
       m_phase6WorldParallelismStats.entityMetadataRefreshMicroseconds += entityUpdateStats.metadataRefreshMicroseconds;
     }
+    if (m_phase6MutationFixedSeedSignaturesEnabled) {
+      queueMutationSignatureWorker(Phase6MutationSignatureWorkItem{EntityMutationParallelismSubsystem,
+          updatedEntities,
+          tileEntities,
+          static_cast<uint64_t>(toRemove.size()),
+          static_cast<uint64_t>(m_entityMap->size())});
+    }
   });
 
   timePhase(UpdateTimingPhase::Scripts, [&]() {
@@ -1236,9 +1243,11 @@ void WorldServer::update(float dt) {
     uint64_t scriptUpdateMicroseconds = 0;
     uint64_t maxScriptUpdateMicroseconds = 0;
     for (auto& pair : m_scriptContexts) {
-      bool scriptReady = m_phase6SubsystemBaselineMetricsEnabled && pair.second->updateReady();
+      bool scriptReady = (m_phase6SubsystemBaselineMetricsEnabled || m_phase6MutationFixedSeedSignaturesEnabled) && pair.second->updateReady();
       auto scriptStart = m_phase6SubsystemBaselineMetricsEnabled ? Time::monotonicMicroseconds() : 0;
       pair.second->update(pair.second->updateDt(dt));
+      if (scriptReady)
+        readyScriptUpdates += 1;
       if (m_phase6SubsystemBaselineMetricsEnabled) {
         uint64_t elapsed = Time::monotonicMicroseconds() - scriptStart;
         scriptUpdateMicroseconds += elapsed;
@@ -1247,10 +1256,8 @@ void WorldServer::update(float dt) {
         auto& contextStats = m_phase6WorldParallelismStats.luaScriptContextStats[pair.first];
         contextStats.contextTicks += 1;
         contextStats.updateCalls += 1;
-        if (scriptReady) {
+        if (scriptReady)
           contextStats.readyUpdates += 1;
-          readyScriptUpdates += 1;
-        }
         contextStats.updateMicroseconds += elapsed;
         if (elapsed > contextStats.maxUpdateMicroseconds)
           contextStats.maxUpdateMicroseconds = elapsed;
@@ -1266,6 +1273,13 @@ void WorldServer::update(float dt) {
       m_phase6WorldParallelismStats.luaScriptUpdateMicroseconds += scriptUpdateMicroseconds;
       if (maxScriptUpdateMicroseconds > m_phase6WorldParallelismStats.luaMaxScriptUpdateMicroseconds)
         m_phase6WorldParallelismStats.luaMaxScriptUpdateMicroseconds = maxScriptUpdateMicroseconds;
+    }
+    if (m_phase6MutationFixedSeedSignaturesEnabled) {
+      queueMutationSignatureWorker(Phase6MutationSignatureWorkItem{LuaMutationParallelismSubsystem,
+          m_scriptContexts.size(),
+          scriptUpdates,
+          readyScriptUpdates,
+          static_cast<uint64_t>(m_currentStep)});
     }
   });
 
@@ -1453,7 +1467,7 @@ void WorldServer::update(float dt) {
         m_packetPreparationStats.sectorClientFanoutRecipients,
         m_packetPreparationStats.sectorClientFanoutMisses));
       auto storageTimingStats = m_worldStorage->storageTimingStats();
-      LogMap::set(strf("server_{}_storage_timing", m_worldId), strf("syncs={}, sectors={}, syncPassSectors={}, entity={}/{}/{}, tile={}/{}, copy={}, compress={}/{}/{}, btree={}/{}, storeTypes=m:{}/{}/{} tile:{}/{}/{} entity:{}/{}/{} unique:{}/{}/{} sectorUnique:{}/{}/{}, dirty={}/{}/{}/{}/{}/{}, dirtySync={}/{}/{}, dirtySnapshot={}/{}, commit={}, snapshot={}, snapshotSync={}/{}",
+      LogMap::set(strf("server_{}_storage_timing", m_worldId), strf("syncs={}, sectors={}, syncPassSectors={}, entity={}/{}/{}, tile={}/{}, copy={}, compress={}/{}/{}, btree={}/{}, storeTypes=m:{}/{}/{} tile:{}/{}/{} entity:{}/{}/{} unique:{}/{}/{} sectorUnique:{}/{}/{}, dirty={}/{}/{}/{}/{}/{}, dirtySync={}/{}/{}, dirtySnapshot={}/{}, commit={}, snapshot={}, snapshotSync={}/{}, chunkUpdate={}/{}/{}/{}/{}, chunkUpdateSync={}/{}",
         storageTimingStats.syncs,
         storageTimingStats.syncedSectors,
         storageTimingStats.syncPassSectors,
@@ -1497,7 +1511,14 @@ void WorldServer::update(float dt) {
         storageTimingStats.commits,
         storageTimingStats.fullSnapshotExports,
         storageTimingStats.fullSnapshotSyncSectors,
-        storageTimingStats.fullSnapshotSyncMicroseconds));
+        storageTimingStats.fullSnapshotSyncMicroseconds,
+        storageTimingStats.chunkUpdateExports,
+        storageTimingStats.chunkUpdateChunks,
+        storageTimingStats.chunkUpdateRemovedChunks,
+        storageTimingStats.chunkUpdateBytes,
+        storageTimingStats.chunkUpdateExportMicroseconds,
+        storageTimingStats.chunkUpdateSyncSectors,
+        storageTimingStats.chunkUpdateSyncMicroseconds));
     LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
     if (m_phase6MutationFixedSeedSignaturesEnabled) {
       LogMap::set(strf("server_{}_phase6_signatures", m_worldId), strf("liquid={}/{}/{}/{}, falling={}/{}/{}/{}/{}, wiring={}/{}/{}",
@@ -2245,7 +2266,7 @@ void WorldServer::init(bool firstTime) {
   bool mutationFixedSeedGate = m_phase6MutationFixedSeedSignaturesEnabled;
   bool mutationDependencyGate = phase6Config.getBool("mutationParallelismDependencyAnalysis", false);
   bool mutationModVisibilityGate = phase6Config.getBool("mutationParallelismModVisibilityContract", false);
-  uint32_t mutationWorkerEligibleSubsystems = LiquidMutationParallelismSubsystem | FallingBlockMutationParallelismSubsystem | WiringMutationParallelismSubsystem;
+  uint32_t mutationWorkerEligibleSubsystems = LiquidMutationParallelismSubsystem | FallingBlockMutationParallelismSubsystem | WiringMutationParallelismSubsystem | EntityMutationParallelismSubsystem | LuaMutationParallelismSubsystem;
   if (mutationFixedSeedGate && mutationDependencyGate && mutationModVisibilityGate && m_phase6MutationParallelismWorkerThreads > 1)
     m_phase6MutationWorkerSubsystems = mutationParallelismRequestedSubsystems & mutationWorkerEligibleSubsystems;
   else
@@ -2997,6 +3018,11 @@ void WorldServer::unloadAll(bool force) {
 WorldChunks WorldServer::readChunks() {
   writeMetadata();
   return m_worldStorage->readChunks();
+}
+
+WorldChunks WorldServer::readChunkUpdate(WorldChunks const& oldChunks) {
+  writeMetadata();
+  return m_worldStorage->readChunkUpdate(oldChunks);
 }
 
 void WorldServer::updateDamagedBlocks(float dt) {

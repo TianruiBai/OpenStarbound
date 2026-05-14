@@ -138,7 +138,7 @@ String mutationSubsystemSummary(uint32_t mask) {
 }
 
 String worldStorageTimingSummary(WorldStorageTimingStats const& stats) {
-  return strf("sync:{}/{} syncPass:{} entity:{}/{}/{}/{} tile:{}/{}/{} copy:{}/{} compress:{}/{}/{}/{} btree:{}/{}/{}/{} storeTypes:m:{}/{}/{} tile:{}/{}/{} entity:{}/{}/{} unique:{}/{}/{} sectorUnique:{}/{}/{} dirty:{}/{}/{}/{}/{}/{} dirtySync:{}/{}/{} dirtySnapshot:{}/{} commit:{}/{} snapshot:{}/{}/{}/{} snapshotSync:{}/{}",
+  return strf("sync:{}/{} syncPass:{} entity:{}/{}/{}/{} tile:{}/{}/{} copy:{}/{} compress:{}/{}/{}/{} btree:{}/{}/{}/{} storeTypes:m:{}/{}/{} tile:{}/{}/{} entity:{}/{}/{} unique:{}/{}/{} sectorUnique:{}/{}/{} dirty:{}/{}/{}/{}/{}/{} dirtySync:{}/{}/{} dirtySnapshot:{}/{} commit:{}/{} snapshot:{}/{}/{}/{} snapshotSync:{}/{} chunkUpdate:{}/{}/{}/{}/{} chunkUpdateSync:{}/{}",
       stats.syncs,
       stats.syncedSectors,
       stats.syncPassSectors,
@@ -192,7 +192,14 @@ String worldStorageTimingSummary(WorldStorageTimingStats const& stats) {
       stats.fullSnapshotBytes,
       stats.fullSnapshotExportMicroseconds,
       stats.fullSnapshotSyncSectors,
-      stats.fullSnapshotSyncMicroseconds);
+      stats.fullSnapshotSyncMicroseconds,
+      stats.chunkUpdateExports,
+      stats.chunkUpdateChunks,
+      stats.chunkUpdateRemovedChunks,
+      stats.chunkUpdateBytes,
+      stats.chunkUpdateExportMicroseconds,
+      stats.chunkUpdateSyncSectors,
+      stats.chunkUpdateSyncMicroseconds);
 }
 
 }

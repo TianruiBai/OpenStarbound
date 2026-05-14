@@ -447,6 +447,7 @@ public:
   void unloadAll(bool force = false);
   // Copy full world to in memory representation
   WorldChunks readChunks();
+  WorldChunks readChunkUpdate(WorldChunks const& oldChunks);
 
   bool forceModifyTile(Vec2I const& pos, TileModification const& modification, bool allowEntityOverlap);
   TileModificationList forceApplyTileModifications(TileModificationList const& modificationList, bool allowEntityOverlap);

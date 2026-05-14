@@ -10,6 +10,19 @@
 
 namespace Star {
 
+namespace {
+
+void applyShipChunkUpdateToChunks(WorldChunks& chunks, WorldChunks const& updateChunks) {
+  for (auto const& updateChunk : updateChunks) {
+    if (updateChunk.second)
+      chunks[updateChunk.first] = updateChunk.second;
+    else
+      chunks.remove(updateChunk.first);
+  }
+}
+
+}
+
 ServerClientContext::ServerClientContext(ConnectionId clientId, Maybe<HostAddress> remoteAddress, NetCompatibilityRules netRules, Uuid playerUuid,
     String playerName, String shipSpecies, bool canBecomeAdmin, WorldChunks initialShipChunks)
   : m_clientId(clientId),
@@ -178,6 +191,12 @@ void ServerClientContext::applyShipChunksSnapshot(ShipChunksSnapshot shipChunksS
   RecursiveMutexLocker locker(m_mutex);
   m_shipChunksUpdate.merge(shipChunksSnapshot.updateChunks, true);
   m_shipChunks = std::move(shipChunksSnapshot.chunks);
+}
+
+void ServerClientContext::applyShipChunksUpdate(WorldChunks shipChunksUpdate) {
+  RecursiveMutexLocker locker(m_mutex);
+  applyShipChunkUpdateToChunks(m_shipChunks, shipChunksUpdate);
+  m_shipChunksUpdate.merge(std::move(shipChunksUpdate), true);
 }
 
 void ServerClientContext::updateShipChunks(WorldChunks newShipChunks) {

@@ -1,6 +1,6 @@
 # OpenStarbound 26.5.2a Self-Workload Capture And Compatibility Prep
 
-Capture date: 2026-05-13
+Capture date: 2026-05-13; updated 2026-05-14
 
 This note records the first repeatable in-process game-mechanism workload added after the queue-only networking and liquid cache rebuild-skip pass. It is not a replacement for fixed real-world captures or modpack smoke. Its job is to give the server optimization work a local, fast, repeatable mechanism load that can be run from `game_tests` while preparing the next compatibility-sensitive paths.
 
@@ -33,7 +33,7 @@ The game-mechanism workload builds a direct `WorldServer` fixture and exercises:
 - sector packet prefill and sector fan-out accounting
 - liquid no-processing-limit cache hits and rebuild skips
 - falling-block baseline processing with nonzero moved blocks
-- storage sync and full `readChunks()` snapshot export
+- storage sync, one baseline full `readChunks()` snapshot export, and incremental chunk-update exports
 
 The fixture intentionally stays in-process. It avoids UI automation and keeps the capture stable enough for CI/manual regression runs while still using real `WorldServer` update phases and packet generation paths.
 
@@ -64,17 +64,17 @@ Important reads:
 2026-05-14 local result:
 
 ```text
-SaveDisconnectStorageCapture dirtyTileEdits=64 syncPasses=5 snapshotExports=10 chunks=41 sync=5/100/300 entity=300/0/300/161 tile=300/9524100/64805 copy=300/9210 compress=616/9536032/45666/41688 btree=46/570/4295/41601/614 storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0 dirty=24/24/0/0/20/0 dirtySync=24/76/0 dirtySnapshot=0/200 commit=5/31970 snapshot=10/410/32196/220 snapshotSync=200/85782 elapsedUs=162640
+SaveDisconnectStorageCapture dirtyTileEdits=64 syncPasses=5 snapshotExports=1 chunkUpdateExports=9 chunks=41 sync=5/100/300 entity=300/0/300/173 tile=300/9524100/63571 copy=300/9838 compress=616/9536032/45699/43246 btree=46/570/4300/41629/516 storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0 dirty=24/24/0/0/20/0 dirtySync=24/76/0 dirtySnapshot=0/200 commit=5/32539 snapshot=1/41/3176/22 snapshotSync=20/8774 chunkUpdate=9/4/0/648/271 chunkUpdateSync=180/76696 elapsedUs=164047
 ```
 
 Important reads:
 
-- The fixture exercises repeated ordinary sync passes plus repeated full snapshot exports, which is closer to save/disconnect pressure than the general mechanism capture.
-- `sync=5/100/300` means sync calls/sync-pass sectors/all synced sectors; the difference is mostly `readChunks()` pre-sync work.
-- `snapshot=10/410/32196/220` and `snapshotSync=200/85782` separate B-tree export size/time from the owner-thread sector pre-sync required before exporting chunks.
-- `btree=46/570/4295/41601/614` confirms unchanged-sector insert skipping is active while default config still visits and serializes loaded sectors.
+- The fixture now exercises repeated ordinary sync passes, one baseline full snapshot export, and repeated incremental chunk-update exports, which is closer to the current ship save/disconnect path than the earlier all-full-snapshot capture.
+- `sync=5/100/300` means sync calls/sync-pass sectors/all synced sectors; the difference is the snapshot and chunk-update pre-sync work.
+- `snapshot=1/41/3176/22` and `snapshotSync=20/8774` capture the initial full baseline export. `chunkUpdate=9/4/0/648/271` and `chunkUpdateSync=180/76696` show that the nine follow-up exports carried only four changed chunks and no removals while still preserving snapshot-style sector pre-sync before export.
+- `btree=46/570/4300/41629/516` confirms unchanged-sector insert skipping is active while default config still visits and serializes loaded sectors.
 - `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0` means metadata/tile-sector/entity-sector/unique-index/sector-unique writes/skips/removes. In this fixture, repeated tile and entity sector serialization dominate the skip count, while unique-index surfaces stay quiet.
-- `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, and `dirtySnapshot=0/200` show that the fixture dirtied 24 sectors by tile/generation reasons, then default config serially visited both dirty and clean sectors during sync and saw only clean sectors during post-sync full snapshot pre-sync. The third `dirtySync` value is clean sectors skipped; it stays `0` here because `storageDirtySectorFiltering` is default-off.
+- `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, and `dirtySnapshot=0/200` show that the fixture dirtied 24 sectors by tile/generation reasons, then default config serially visited both dirty and clean sectors during sync and saw only clean sectors during export pre-sync work. The third `dirtySync` value is clean sectors skipped; it stays `0` here because `storageDirtySectorFiltering` is default-off.
 
 ## Compatibility-Sensitive Prep
 
@@ -107,11 +107,14 @@ Entry points:
 - `WorldServer::sync`
 - `WorldStorage::sync`
 - `WorldStorage::readChunks`
+- `WorldStorage::readChunkUpdate`
+- `WorldServerThread::readChunkUpdate`
+- `ServerClientContext::applyShipChunksUpdate`
 - `WorldStorageTimingStats`
 
 Preparation rule: dirty-sector filtering is safer than changing full snapshot export semantics, but dirty reasons must be explicit. Required dirty reasons include tile data, entity store, entity movement across sectors, unique entity index changes, sector-unique stores, generation writes, unload, and expiration.
 
-The dirty-sector implementation now records dirty reason counters and marked/unmarked/skipped ordinary sync visits, with clean-sector skipping kept behind the default-off `storageDirtySectorFiltering` gate. Full `readChunks()` export reduction should stay behind client-context equivalence coverage because ship/disconnect snapshots are durable client-context state; `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent` now verifies that `ServerClientContext::buildShipChunksSnapshot`, server-side apply, client-side `ClientContext` reads, changed chunks, added chunks, removed chunks, and no-op clean snapshots preserve the current update semantics.
+The dirty-sector implementation now records dirty reason counters and marked/unmarked/skipped ordinary sync visits, with clean-sector skipping kept behind the default-off `storageDirtySectorFiltering` gate. Full `readChunks()` export reduction has a compatibility-preserving ship/client-context path: `WorldStorage::readChunkUpdate` pre-syncs active sectors, emits changed/new chunks plus removals relative to the caller's last known chunks, and leaves full `readChunks()` available as the fallback/reference path. `UniverseServer` now uses this update path for ship persistence, disconnect, startup, and ship-upgrade chunk refreshes. `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent` verifies server/client context update semantics, and `MulticorePhaseTest.ServerOptimizationWorldStorageChunkUpdateMatchesFullSnapshot` compares real dirty world updates against a full snapshot.
 
 ### Wiring Dirty-Network Tracking
 
@@ -136,7 +139,7 @@ Entry points:
 
 Preparation rule: keep mutation order serial. The current liquid cache skip is safe because unchanged monitoring regions rebuild an equivalent bucket map. Any future per-cell dirty or mutation experiment needs fixed-seed signatures over active cells, boundary cells, liquid interactions, pending falling positions, processed positions, and moved blocks.
 
-Current preflight slice: `mutationParallelismFixedSeedSignatures=true` now enables deterministic preflight seeds for liquid and falling-block random sources and records serial liquid active-cell/region signatures plus falling pending, processed, moved, and next-pending signatures. If liquid, falling-block, or wiring mutation flags are also requested and the dependency-analysis and mod-visibility gates are explicitly enabled, Phase 6 now runs immutable shadow-worker signature jobs and compares them with the owner-thread serial signature. This validates worker scheduling and divergence/fallback counters, not live off-thread mutation. Boundary/interactions/final-flow signatures and dependency-region classification are still required before worker mutation can graduate.
+Current preflight slice: `mutationParallelismFixedSeedSignatures=true` now enables deterministic preflight seeds for liquid and falling-block random sources and records serial liquid active-cell/region signatures plus falling pending, processed, moved, and next-pending signatures. If liquid, falling-block, wiring, entity, or Lua mutation flags are also requested and the dependency-analysis and mod-visibility gates are explicitly enabled, Phase 6 now runs immutable shadow-worker signature jobs and compares them with the owner-thread serial signature. This validates worker scheduling and divergence/fallback counters, not live off-thread mutation. Boundary/interactions/final-flow signatures and dependency-region classification are still required before worker mutation can graduate.
 
 ### Entity And Lua Mutation
 
@@ -147,14 +150,14 @@ Entry points:
 - `WorldServer` script context update loop
 - `LuaUpdatableComponent`
 
-Preparation rule: entity and Lua mutation remain blocked by the implementation gate. The current safe step is attribution, not parallel mutation: entity phase metrics now split pointer-copy, sort, update callback, and metadata-refresh costs; Lua metrics now record total script-context update time and the maximum single context update time without exposing unbounded per-context names.
+Preparation rule: live entity and Lua mutation remain serial and exact-order. Entity and Lua requests are no longer implementation-blocked for immutable signature shadow-worker diagnostics when all explicit gates are enabled: requested subsystem flag, fixed-seed signatures, dependency-analysis gate, mod-visibility gate, and worker threads. The current safe steps are attribution and immutable scalar signature comparison, not off-thread mutation: entity phase metrics split pointer-copy, sort, update callback, and metadata-refresh costs; Lua metrics record total script-context update time and the maximum single context update time without exposing unbounded per-context names.
 
 Research path for entity/Lua optimization:
 
 1. Keep the legacy entity and Lua update phases serial and exact-order by default.
 2. Add bounded per-entity-type and per-script-context attribution before any behavior change, so mod-heavy worlds can identify whether AI, objects, status effects, or global scripts are dominant.
 3. Define mechanism-compatible script capabilities for snapshot reads, batched queries, and phase-boundary deferred writes. Legacy APIs continue to see immediate owner-thread behavior.
-4. Allow worker execution only for pure read/snapshot work or explicit deferred command buffers, with serial owner-thread merge and fallback when a legacy-sensitive API is used.
+4. Allow worker execution only for pure read/snapshot/signature work or explicit deferred command buffers, with serial owner-thread merge and fallback when a legacy-sensitive API is used.
 5. Treat any Lua API that exposes immediate mutation order, entity iteration order, random-source behavior, or world callbacks as a mod-visibility blocker until an opt-in compatibility contract exists.
 
 ### Asset And Mod Loading
@@ -188,7 +191,7 @@ Keep serial until a stronger contract exists:
 1. Expand the wire-object fixture into stable and toggled networks before changing wiring behavior.
 2. Expand Lua attribution beyond the OpenStarbound worldserver context before changing any script execution behavior.
 3. Expand the falling-material fixture into a taller or cascading stress case before changing falling-block behavior.
-4. Done: add a save/disconnect-style storage workload that captures repeated `sync()` plus `readChunks()` under dirty and unchanged sectors, including dirty-reason counters. Future expansion should add ship/client-context persistence and entity/unique/unload dirty fixtures before changing storage behavior.
+4. Done: add a save/disconnect-style storage workload that captures repeated `sync()`, one baseline full `readChunks()` export, and incremental chunk updates under dirty and unchanged sectors, including dirty-reason counters. Future expansion should add entity/unique/unload dirty fixtures and old-save reload coverage before broadening storage behavior.
 5. Add an A/B variant for default queue-only networking versus `queueOnlyConnectionSend=false` once the mechanism workload is lifted into a full `UniverseServer` dummy-client path.
 6. Add an asset/mod startup capture that records source enumeration, patch parse/application, load-script, preload, and queued worker timings for a vanilla asset set and at least one modpack smoke set.
 

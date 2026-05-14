@@ -39,8 +39,9 @@ Current checklist:
 12. Done: narrow core `SocketPoller` API seed for readable/writable interests, unregister, wake, timed waits, and ready socket handles, with focused loopback TCP coverage and no runtime network-worker integration yet.
 13. Done: dirty wiring-network signature prototype under the existing serial full-scan fallback, reporting clean versus dirty topology/output signatures and clean/dirty entity counts for future skip eligibility.
 14. Done: first opt-in fixed-seed mutation-signature preflight for liquid, falling blocks, and wiring under `mutationParallelismFixedSeedSignatures`, including deterministic random seeds for that preflight mode, serial signature diagnostics, and focused stability coverage. This is still a gate artifact, not mutation parallelism.
-15. Done: first opt-in mutation shadow-worker slice for liquid, falling blocks, and wiring. When the subsystem flag, fixed-seed signature gate, dependency-analysis gate, and mod-visibility gate are all explicitly enabled, the Phase 6 worker pool now runs immutable signature jobs and compares them against the serial owner-thread signature with visible worker/check/divergence/fallback counters. Entity and Lua requests remain implementation-blocked.
-16. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload, queue-only, and save/disconnect storage captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
+15. Done: opt-in mutation shadow-worker slice for liquid, falling blocks, wiring, entity, and Lua. When the subsystem flag, fixed-seed signature gate, dependency-analysis gate, mod-visibility gate, and worker-thread gate are all explicitly enabled, the Phase 6 worker pool runs immutable signature jobs and compares them against the serial owner-thread signature with visible worker/check/divergence/fallback counters. Live mutation remains serial.
+16. Done: real ship/client-context chunk export reduction. `WorldStorage::readChunkUpdate` exports changed/new/removed chunks relative to a caller-held baseline, `UniverseServer` uses it for ship persistence, disconnect, startup, and ship-upgrade chunk refreshes, and focused tests compare update application against full snapshots.
+17. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload, queue-only, and save/disconnect storage captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
 
 ## 2. Current Bottleneck Statement
 
@@ -49,7 +50,7 @@ The remaining jam is a hot authoritative world thread:
 - one `WorldServerThread` still owns one `WorldServer::update()` sequence
 - entity updates, Lua/script contexts, damage, wiring, liquid, falling blocks, storage tick/generation, entity removal, and packet ordering decisions remain serial
 - Phase 0-6 has relieved surrounding pressure, especially handshakes, async persistence, connection-worker ownership, packet-sector prefill, storage-generation planning, and diagnostics
-- Phase 6 mutation-parallelism flags now either remain blocked by explicit gates or, for liquid/falling/wiring only, run shadow-worker signature checks after fixed-seed, dependency-analysis, and mod-visibility gates are all enabled
+- Phase 6 mutation-parallelism flags now either remain blocked by explicit gates or run immutable shadow-worker signature checks after fixed-seed, dependency-analysis, mod-visibility, and worker-thread gates are all enabled; live mutation remains serial
 
 The practical goal for `26.5.2a` is therefore not full single-world multicore scaling. The goal is to reduce the serial work that does not need to be serial, then prepare the data contracts needed for later subsystem experiments.
 
@@ -77,7 +78,7 @@ Tasks:
 2. Record baseline p50/p95/p99 for universe loop, world thread, world-update subphases, packet preparation, persistence queue, network worker wakeups, and Phase 6 worker helpers.
 3. Add or update command output notes for collecting `/serverstatus`, `/worldstats`, and `/servernetstats` during the workloads.
 4. Done: add `ServerMeasurement.DISABLED_GameMechanismSelfWorkloadCapture`, a direct `WorldServer` mechanism capture covering client windows, liquid edits/collection, tile damage, falling blocks, wire objects, item-drop replication, packet prep, storage sync, dirty-sector diagnostics, entity/Lua attribution, and full snapshot export. Latest local result on 2026-05-14 with opt-in empty update-set suppression enabled in the harness: `packets=22085`, `tile=3116`, `liquid=15944`, `tileDamage=1008`, `falling=30/1216/1539/324`, `wiring=48/144/144/144/144`, `wiringDirty=144/141/3/3/3/141/3`, `entityCreate=92`, `entityUpdate=784`, `entityUpdateDeltas=4800`, `updateSets=784/4800/0/176`, `sectorFanout=5044/20176/0`, `netStateCache=7968/7464`, `entity=240/3891/720/10/3891/3891/230/162/14890/622`, `entityTypes=object=720/720/0/1047/75,itemDrop=3171/0/10/13441/113`, `lua=240/240/240/240/569/12`, `luaContexts=OpenStarbound=240/240/240/569/12`, `storage=1/64/64/64/66/65/1/65/6286`, `dirty=32/32/3/0/32/0`, `dirtySync=32/0/0`, `dirtySnapshot=0/32`, `snapshotSync=32/18360`, `elapsedUs=166491`.
-5. Done: add `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture`, a direct `WorldServer` storage capture covering repeated ordinary `sync()` passes and repeated full `readChunks()` exports under unchanged and dirty tile sectors. Latest local result on 2026-05-14: `dirtyTileEdits=64`, `syncPasses=5`, `snapshotExports=10`, `sync=5/100/300`, `btree=46/570/4295/41601/614`, `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0`, `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, `dirtySnapshot=0/200`, `snapshot=10/410/32196/220`, `snapshotSync=200/85782`, `elapsedUs=162640`.
+5. Done: add `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture`, a direct `WorldServer` storage capture covering repeated ordinary `sync()` passes, one baseline full `readChunks()` export, and repeated incremental chunk updates under unchanged and dirty tile sectors. Latest local result on 2026-05-14: `dirtyTileEdits=64`, `syncPasses=5`, `snapshotExports=1`, `chunkUpdateExports=9`, `sync=5/100/300`, `btree=46/570/4300/41629/516`, `storeTypes=2/14/0:24/276/0:20/280/0:0/0/0:0/0/0`, `dirty=24/24/0/0/20/0`, `dirtySync=24/76/0`, `dirtySnapshot=0/200`, `snapshot=1/41/3176/22`, `snapshotSync=20/8774`, `chunkUpdate=9/4/0/648/271`, `chunkUpdateSync=180/76696`, `elapsedUs=164047`.
 6. Re-enable or document the `world_benchmark` utility target only if it can run without disturbing normal builds; otherwise keep it as a manual profiling harness.
 7. Store benchmark world setup notes with enough detail that future releases can rerun the same workload.
 
@@ -135,8 +136,8 @@ Goal: reduce save, disconnect, and sync spikes without weakening durability.
 Priority tickets:
 
 1. Done: default-off dirty-sector write filtering for ordinary world storage `sync()`, using dirty marks for generation, tile edits, entity changes, unload, and unique-index updates. The `storageDirtySectorFiltering` gate requires one committed full sync before it can skip clean sectors, reports skipped clean sectors in `dirtySync=marked/unmarked/skipped`, and leaves `readChunks()` full snapshot pre-sync serial.
-2. Started: reduce avoidable `readChunks()` full exports in ship/disconnect paths where incremental chunk updates are available. The first gate is now covered by `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent`, which verifies current `ServerClientContext` changed/added/removed/no-op chunk update semantics before any export shortcut is implemented.
-3. Done: add storage timing counters for sector copy, entity store, tile store, compression, B-tree insert, commit, full snapshot export, `readChunks()` pre-sync work, per-store-surface write/skip/remove attribution, and dirty-sector reason/visit attribution. Diagnostics: `storageTiming=sync:... entity:... tile:... copy:... compress:... btree:... storeTypes:... dirty:... dirtySync:marked/unmarked/skipped dirtySnapshot:... commit:... snapshot:... snapshotSync:...` in `/serverstatus`, `/worldstats`, and `LogMap`.
+2. Done: reduce avoidable `readChunks()` full exports in ship/disconnect paths where the server already has a client-context chunk baseline. `WorldStorage::readChunkUpdate` pre-syncs active sectors, exports only changed/new chunks and removals relative to the baseline, and leaves full `readChunks()` as the fallback/reference path. `UniverseServer` now uses the update path for ship persistence, disconnect, startup, and ship-upgrade chunk refreshes. `MulticorePhaseTest.ServerOptimizationShipChunkSnapshotsAreUpdateEquivalent` covers server/client-context update semantics, and `MulticorePhaseTest.ServerOptimizationWorldStorageChunkUpdateMatchesFullSnapshot` compares real dirty updates against a full snapshot.
+3. Done: add storage timing counters for sector copy, entity store, tile store, compression, B-tree insert, commit, full snapshot export, `readChunks()` pre-sync work, incremental chunk-update export/pre-sync work, per-store-surface write/skip/remove attribution, and dirty-sector reason/visit attribution. Diagnostics: `storageTiming=sync:... entity:... tile:... copy:... compress:... btree:... storeTypes:... dirty:... dirtySync:marked/unmarked/skipped dirtySnapshot:... commit:... snapshot:... snapshotSync:... chunkUpdate:... chunkUpdateSync:...` in `/serverstatus`, `/worldstats`, and `LogMap`.
 4. Done: skip byte-identical B-tree inserts during world storage writes. This keeps the serialized compatibility surface unchanged while avoiding repeated leaf rewrites when periodic sync serializes unchanged sectors or metadata.
 5. Evaluate async compression only from immutable sector snapshots; do not expose live `WorldStorage` or `BTreeDatabase` to workers.
 6. Profile `BTreeDatabase` cache size and commit cadence before considering any backend change.
@@ -188,14 +189,14 @@ Must-ship acceptance:
 
 ## 10. Workstream G: Mutation Experiment Preflight
 
-Goal: prepare liquid, falling-block, and wiring experiments without enabling mutation workers by default.
+Goal: prepare liquid, falling-block, wiring, entity, and Lua experiments without enabling mutation workers by default.
 
 Priority tickets:
 
 1. Started: liquid fixed-seed signature preflight now records active-cell count/hash and no-processing-limit region hash under the existing serial update path when `mutationParallelismFixedSeedSignatures=true`. Boundary/interactions/final-flow signatures remain future expansion before any liquid worker can graduate.
 2. Started: falling-block fixed-seed signature preflight now records pending-position, processed-position, moved-block, and next-pending signatures under the existing serial update path when `mutationParallelismFixedSeedSignatures=true`. Dependency-region classification remains future expansion before any falling-block worker can graduate.
 3. Started: wiring signature preflight now exposes aggregate loaded-network topology and output hashes in addition to the existing clean/dirty network counters. Dirty-component skip or worker evaluation still requires differential output checks and fallback behavior.
-4. Started: opt-in mutation shadow workers now run immutable signature jobs for liquid, falling blocks, and wiring when all explicit gates are enabled. This proves worker-pool wiring, diagnostics, and serial comparison behavior; it does not move live subsystem mutation off the world owner thread yet.
+4. Done: opt-in mutation shadow workers now run immutable signature jobs for liquid, falling blocks, wiring, entity, and Lua when all explicit gates are enabled. This proves worker-pool wiring, diagnostics, and serial comparison behavior; it does not move live subsystem mutation off the world owner thread.
 5. Region/component boundary stress tests for each subsystem.
 6. Done: compatibility-sensitive entity/Lua attribution. `subsystemBaselineMetrics` now reports entity iteration copy/sort/update/metadata-refresh timing, bounded per-entity-type callback counts/timing, and bounded Lua script-context update/readiness timing while preserving the serial execution path.
 7. Done: per-subsystem gate reporting. `/serverstatus` and `/worldstats` now render requested mutation experiments, active shadow-worker subsystems, fixed-seed/dependency/mod-visibility blockers, implementation blockers, and worker/check/divergence/fallback counters.
@@ -206,7 +207,7 @@ Must-ship acceptance:
 - serial baseline metrics remain default-enabled
 - every experiment can fall back to serial on divergence or unsupported mod/API use
 - worker jobs consume immutable signatures or snapshots only; live liquid, falling-block, wiring, entity, Lua, or storage state stays on the owner thread
-- entity and Lua mutation stay research-only
+- live entity and Lua mutation stay research-only until staged APIs and mod-visibility contracts exist
 
 ## 11. Release Tiers
 
@@ -231,12 +232,12 @@ Stretch only:
 - dirty wiring-network tracking enabled by default
 - async sector compression
 - first mechanism-compatible API prototype exposed to scripts
-- disabled-by-default liquid/falling/wiring mutation worker prototypes
+- disabled-by-default liquid/falling/wiring/entity/Lua immutable mutation-signature worker prototypes
 
 Explicitly defer:
 
 - Vulkan backend work
-- entity/Lua mutation parallelism
+- live entity/Lua mutation parallelism
 - storage backend replacement
 - removal of compatibility fallbacks
 
@@ -253,7 +254,7 @@ Minimum local validation before the release branch is considered healthy:
 7. Run fixed workload captures and compare p50/p95/p99 against the `26.5.1a` baseline.
 8. Run modpack smoke with default config and with every new optimization explicitly disabled.
 
-Latest local validation on 2026-05-14: `starbound`, `starbound_server`, and `game_tests` built from the VS 2022 developer environment; full `game_tests` passed 62/62; `core_tests.exe --gtest_filter=NetElements.*` passed 17/17; the disabled queue-only and game-mechanism captures passed with `--gtest_also_run_disabled_tests`.
+Latest local validation on 2026-05-14: `starbound`, `starbound_server`, and `game_tests` built from the VS 2022 developer environment; focused incremental storage/entity-Lua shadow-worker gates plus `ServerMeasurement.DISABLED_SaveDisconnectStorageCapture` passed 8/8; broader `MulticorePhaseTest.*:ServerTest.*:UniverseConnections.*:UniverseConnectionServer.*` passed 58/58; full `game_tests` passed 69/69; `core_tests.exe --gtest_filter=NetElements.*` passed 17/17.
 
 ## 13. Go/No-Go Rules
 

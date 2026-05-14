@@ -74,6 +74,13 @@ struct WorldStorageTimingStats {
   uint64_t fullSnapshotChunks = 0;
   uint64_t fullSnapshotBytes = 0;
   uint64_t fullSnapshotExportMicroseconds = 0;
+  uint64_t chunkUpdateExports = 0;
+  uint64_t chunkUpdateSyncSectors = 0;
+  uint64_t chunkUpdateSyncMicroseconds = 0;
+  uint64_t chunkUpdateChunks = 0;
+  uint64_t chunkUpdateRemovedChunks = 0;
+  uint64_t chunkUpdateBytes = 0;
+  uint64_t chunkUpdateExportMicroseconds = 0;
 
   void add(WorldStorageTimingStats const& stats);
 };
@@ -247,6 +254,7 @@ public:
   // Syncs all active sectors to disk and stores the full content of the world
   // into memory.
   WorldChunks readChunks();
+  WorldChunks readChunkUpdate(WorldChunks const& oldChunks);
 
   WorldStorageTimingStats storageTimingStats() const;
 
@@ -358,6 +366,7 @@ private:
   ByteArray writeSectorUniqueStoreTracked(SectorUniqueStore const& store);
   bool insertStoredValue(StoreType storeType, ByteArray const& key, ByteArray const& value);
   bool removeStoredValue(StoreType storeType, ByteArray const& key);
+  void syncActiveSectorsForSnapshot(uint64_t& syncedSectors, uint64_t& syncMicroseconds);
   void recordDirtySectorVisit(Sector const& sector, bool snapshotSync);
   void clearDirtySectorMarks();
   void recordStoredValueWrite(StoreType storeType);
