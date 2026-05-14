@@ -116,6 +116,8 @@ Entry points:
 
 Preparation rule: keep mutation order serial. The current liquid cache skip is safe because unchanged monitoring regions rebuild an equivalent bucket map. Any future per-cell dirty or mutation experiment needs fixed-seed signatures over active cells, boundary cells, liquid interactions, pending falling positions, processed positions, and moved blocks.
 
+Current preflight slice: `mutationParallelismFixedSeedSignatures=true` now enables deterministic preflight seeds for liquid and falling-block random sources and records serial liquid active-cell/region signatures plus falling pending, processed, moved, and next-pending signatures. This is diagnostic coverage only; boundary/interactions/final-flow signatures and dependency-region classification are still required before worker mutation can graduate.
+
 ### Entity And Lua Mutation
 
 Entry points:

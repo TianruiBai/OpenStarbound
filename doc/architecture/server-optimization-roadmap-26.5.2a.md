@@ -38,7 +38,8 @@ Current checklist:
 11. Done: per-subsystem mutation gate reporting for requested liquid/falling/wiring/entity/Lua experiments, including fixed-seed, dependency-analysis, mod-visibility, and implementation blockers.
 12. Done: narrow core `SocketPoller` API seed for readable/writable interests, unregister, wake, timed waits, and ready socket handles, with focused loopback TCP coverage and no runtime network-worker integration yet.
 13. Done: dirty wiring-network signature prototype under the existing serial full-scan fallback, reporting clean versus dirty topology/output signatures and clean/dirty entity counts for future skip eligibility.
-14. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
+14. Done: first opt-in fixed-seed mutation-signature preflight for liquid, falling blocks, and wiring under `mutationParallelismFixedSeedSignatures`, including deterministic random seeds for that preflight mode, serial signature diagnostics, and focused stability coverage. This is still a gate artifact, not mutation parallelism.
+15. Active: fixed workload captures, release validation, and metric comparison against the `26.5.1a` baseline. The repeatable self-workload and queue-only captures are available as disabled `ServerMeasurement` tests, and the current local validation build is green.
 
 ## 2. Current Bottleneck Statement
 
@@ -189,9 +190,9 @@ Goal: prepare liquid, falling-block, and wiring experiments without enabling mut
 
 Priority tickets:
 
-1. Liquid fixed-seed state signatures for active cells, boundary regions, interactions, and final flow cells.
-2. Falling-block dependency-region signatures for pending positions, processed positions, moved blocks, and newly added positions.
-3. Wiring component signatures for loaded networks, evaluated entities, output states, and topology changes.
+1. Started: liquid fixed-seed signature preflight now records active-cell count/hash and no-processing-limit region hash under the existing serial update path when `mutationParallelismFixedSeedSignatures=true`. Boundary/interactions/final-flow signatures remain future expansion before any liquid worker can graduate.
+2. Started: falling-block fixed-seed signature preflight now records pending-position, processed-position, moved-block, and next-pending signatures under the existing serial update path when `mutationParallelismFixedSeedSignatures=true`. Dependency-region classification remains future expansion before any falling-block worker can graduate.
+3. Started: wiring signature preflight now exposes aggregate loaded-network topology and output hashes in addition to the existing clean/dirty network counters. Dirty-component skip or worker evaluation still requires differential output checks and fallback behavior.
 4. Region/component boundary stress tests for each subsystem.
 5. Done: compatibility-sensitive entity/Lua attribution. `subsystemBaselineMetrics` now reports entity iteration copy/sort/update/metadata-refresh timing and bounded Lua script-context update timing while preserving the serial execution path.
 6. Done: per-subsystem gate reporting. `/serverstatus` and `/worldstats` now render requested mutation experiments and fixed-seed, dependency-analysis, mod-visibility, and implementation blockers as subsystem names, e.g. `liquid|entity`, instead of only coarse booleans.

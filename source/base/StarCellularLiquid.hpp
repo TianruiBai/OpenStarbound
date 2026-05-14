@@ -7,6 +7,7 @@
 #include "StarOrderedSet.hpp"
 #include "StarRandom.hpp"
 #include "StarBlockAllocator.hpp"
+#include "StarHash.hpp"
 
 namespace Star {
 
@@ -83,7 +84,15 @@ public:
     uint64_t hits = 0;
   };
 
+  struct StateSignature {
+    uint64_t activeCellCount = 0;
+    uint64_t activeCellHash = 0;
+    uint64_t noProcessingLimitRegionHash = 0;
+  };
+
   LiquidCellEngine(LiquidCellEngineParameters parameters, CellularLiquidWorldPtr cellWorld);
+
+  void setRandomSeed(uint64_t seed);
 
   unsigned liquidTickDelta(LiquidId liquid);
   void setLiquidTickDelta(LiquidId liquid, unsigned tickDelta);
@@ -102,6 +111,7 @@ public:
   size_t activeCells() const;
   size_t activeCells(LiquidId liquid) const;
   bool isActive(Vec2I const& pos) const;
+  StateSignature stateSignature() const;
 
 private:
   enum class Adjacency {
@@ -199,6 +209,11 @@ LiquidCellEngine<LiquidId>::LiquidCellEngine(LiquidCellEngineParameters paramete
   : m_engineParameters(parameters), m_cellWorld(cellWorld), m_step(0) {}
 
 template <typename LiquidId>
+void LiquidCellEngine<LiquidId>::setRandomSeed(uint64_t seed) {
+  m_random.init(seed);
+}
+
+template <typename LiquidId>
 unsigned LiquidCellEngine<LiquidId>::liquidTickDelta(LiquidId liquid) {
   return m_liquidTickDeltas.value(liquid, 1);
 }
@@ -282,6 +297,49 @@ bool LiquidCellEngine<LiquidId>::isActive(Vec2I const& pos) const {
       return true;
   }
   return false;
+}
+
+template <typename LiquidId>
+auto LiquidCellEngine<LiquidId>::stateSignature() const -> typename LiquidCellEngine<LiquidId>::StateSignature {
+  StateSignature signature;
+
+  List<pair<LiquidId, Vec2I>> activeCells;
+  for (auto const& activeCellsPair : m_activeCells) {
+    signature.activeCellCount += activeCellsPair.second.size();
+    for (auto const& position : activeCellsPair.second.values())
+      activeCells.append({activeCellsPair.first, position});
+  }
+
+  activeCells.sort([](auto const& lhs, auto const& rhs) {
+      if (lhs.first != rhs.first)
+        return lhs.first < rhs.first;
+      if (lhs.second[0] != rhs.second[0])
+        return lhs.second[0] < rhs.second[0];
+      return lhs.second[1] < rhs.second[1];
+    });
+
+  size_t activeCellHash = 0;
+  for (auto const& activeCell : activeCells)
+    hashCombine(activeCellHash, hashOf(activeCell.first, activeCell.second));
+  signature.activeCellHash = activeCellHash;
+
+  auto noProcessingLimitRegions = m_noProcessingLimitRegions;
+  noProcessingLimitRegions.sort([](RectI const& lhs, RectI const& rhs) {
+      if (lhs.xMin() != rhs.xMin())
+        return lhs.xMin() < rhs.xMin();
+      if (lhs.yMin() != rhs.yMin())
+        return lhs.yMin() < rhs.yMin();
+      if (lhs.xMax() != rhs.xMax())
+        return lhs.xMax() < rhs.xMax();
+      return lhs.yMax() < rhs.yMax();
+    });
+
+  size_t regionHash = 0;
+  for (auto const& region : noProcessingLimitRegions)
+    hashCombine(regionHash, hashOf(region.xMin(), region.yMin(), region.xMax(), region.yMax()));
+  signature.noProcessingLimitRegionHash = regionHash;
+
+  return signature;
 }
 
 template <typename LiquidId>

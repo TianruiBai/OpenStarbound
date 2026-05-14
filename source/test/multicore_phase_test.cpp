@@ -307,6 +307,7 @@ struct PacketCaptureCounts {
 LiquidId firstTestLiquidId();
 Maybe<MaterialId> firstTestMaterialId();
 Maybe<MaterialId> firstTestFallingMaterialId();
+Maybe<MaterialId> firstTestVerticalFallingMaterialId();
 Maybe<String> firstTestObjectName();
 
 void addPacketCaptureCounts(PacketCaptureCounts& counts, List<PacketPtr> const& packets) {
@@ -631,6 +632,17 @@ Maybe<MaterialId> firstTestFallingMaterialId() {
   return {};
 }
 
+Maybe<MaterialId> firstTestVerticalFallingMaterialId() {
+  auto materialDatabase = Root::singleton().materialDatabase();
+  for (auto const& materialName : materialDatabase->materialNames()) {
+    auto materialId = materialDatabase->materialId(materialName);
+    if (materialId != EmptyMaterialId && materialDatabase->canPlaceInLayer(materialId, TileLayer::Foreground)
+        && materialDatabase->isFallingMaterial(materialId))
+      return materialId;
+  }
+  return firstTestFallingMaterialId();
+}
+
 Maybe<String> firstTestObjectName() {
   auto objectDatabase = Root::singleton().objectDatabase();
   for (auto const& objectName : objectDatabase->allObjects()) {
@@ -741,6 +753,112 @@ List<uint64_t> phase6SubsystemBaselineSignature() {
       stats.luaBaselineTicks,
       stats.luaScriptContexts,
       stats.luaScriptUpdates};
+}
+
+List<uint64_t> phase6MutationFixedSeedSignature() {
+  ConfigurationValueGuard configGuard("worldServerConfigOverrides", JsonObject{{"phase6WorldParallelism", JsonObject{
+      {"storageGenerationPlanning", false},
+      {"storageGenerationPlanningDifferentialCheck", false},
+      {"packetPreparationSectorPrefill", false},
+      {"packetPreparationSectorPrefillDifferentialCheck", false},
+      {"subsystemBaselineMetrics", true},
+      {"mutationParallelismFixedSeedSignatures", true}}}});
+
+  WorldServer worldServer(Vec2U(128, 96), File::ephemeralFile());
+  worldServer.setFidelity(WorldServerFidelity::Minimum);
+  worldServer.setSpawningEnabled(false);
+  worldServer.initLua(nullptr);
+  worldServer.generateRegion(RectI::withSize(Vec2I(32, 24), Vec2I(72, 48)));
+
+  if (!worldServer.addClient(1, SpawnTargetPosition(Vec2F(64, 48)), true)) {
+    ADD_FAILURE() << "Could not add fixed-seed signature test client";
+    return {};
+  }
+  acknowledgeClientWindow(worldServer, 1, RectI::withSize(Vec2I(48, 32), Vec2I(36, 32)));
+
+  auto liquidId = firstTestLiquidId();
+  EXPECT_NE(liquidId, EmptyLiquidId);
+  if (liquidId != EmptyLiquidId) {
+    for (int x = 54; x < 60; ++x) {
+      for (int y = 44; y < 48; ++y)
+        worldServer.modifyLiquid(Vec2I(x, y), liquidId, 1.0f);
+    }
+  }
+
+  auto supportMaterialId = firstTestMaterialId();
+  auto fallingMaterialId = firstTestVerticalFallingMaterialId();
+  EXPECT_TRUE((bool)supportMaterialId);
+  EXPECT_TRUE((bool)fallingMaterialId);
+  if (supportMaterialId && fallingMaterialId) {
+    for (int x = 66; x < 70; ++x) {
+      for (int y = 38; y < 44; ++y) {
+        if (!setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, y), EmptyMaterialId)) {
+          ADD_FAILURE() << "Could not clear fixed-seed signature falling shaft";
+          return {};
+        }
+      }
+      if (!setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, 43), *supportMaterialId)
+          || !setSelfWorkloadForegroundMaterial(worldServer, Vec2I(x, 44), *fallingMaterialId)) {
+        ADD_FAILURE() << "Could not seed fixed-seed signature falling blocks";
+        return {};
+      }
+    }
+  }
+
+  auto wireObjectName = firstTestObjectName();
+  EXPECT_TRUE((bool)wireObjectName);
+  if (wireObjectName) {
+    Vec2I sourcePosition(74, 42);
+    Vec2I relayPosition(76, 42);
+    Vec2I sinkPosition(78, 42);
+    for (auto position : {sourcePosition, relayPosition, sinkPosition}) {
+      if (!setSelfWorkloadForegroundMaterial(worldServer, position, EmptyMaterialId)) {
+        ADD_FAILURE() << "Could not clear fixed-seed signature wire object position";
+        return {};
+      }
+    }
+    worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, sourcePosition, false, true), 6000);
+    worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, relayPosition, true, true), 6001);
+    worldServer.addEntity(createSelfWorkloadWireObject(*wireObjectName, sinkPosition, true, false), 6002);
+    worldServer.wire(sourcePosition, 0, relayPosition, 0);
+    worldServer.wire(relayPosition, 0, sinkPosition, 0);
+  }
+
+  WorldServer::Phase6WorldParallelismStats stats;
+  for (size_t tick = 0; tick < 120; ++tick) {
+    if (supportMaterialId && fallingMaterialId && tick == 8) {
+      for (int x = 66; x < 70; ++x)
+        worldServer.destroyBlock(TileLayer::Foreground, Vec2I(x, 43), false, true);
+    }
+    worldServer.update(1.0f / 60.0f);
+    stats = worldServer.phase6WorldParallelismStats();
+  }
+
+  EXPECT_TRUE(stats.mutationFixedSeedSignaturesEnabled);
+  EXPECT_GT(stats.liquidSignatureTicks, 0u);
+  EXPECT_GT(stats.liquidSignatureActiveCells, 0u);
+  EXPECT_GT(stats.liquidSignatureActiveCellHash, 0u);
+  EXPECT_GT(stats.liquidSignatureRegionHash, 0u);
+  EXPECT_GT(stats.fallingBlocksSignatureTicks, 0u);
+  EXPECT_GT(stats.fallingBlocksProcessedPositionSignature, 0u);
+  EXPECT_GT(stats.fallingBlocksMovedBlockSignature, 0u);
+  EXPECT_GT(stats.wiringSignatureTicks, 0u);
+  EXPECT_GT(stats.wiringTopologySignatureHash, 0u);
+  EXPECT_GT(stats.wiringOutputSignatureHash, 0u);
+
+  return List<uint64_t>{
+      stats.liquidSignatureTicks,
+      stats.liquidSignatureActiveCells,
+      stats.liquidSignatureActiveCellHash,
+      stats.liquidSignatureRegionHash,
+      stats.fallingBlocksSignatureTicks,
+      stats.fallingBlocksPendingPositionSignature,
+      stats.fallingBlocksProcessedPositionSignature,
+      stats.fallingBlocksMovedBlockSignature,
+      stats.fallingBlocksNextPendingPositionSignature,
+      stats.wiringSignatureTicks,
+      stats.wiringTopologySignatureHash,
+      stats.wiringOutputSignatureHash};
 }
 
 }
@@ -1377,6 +1495,13 @@ TEST(MulticorePhaseTest, Phase6PacketSectorPrefillIsGuarded) {
 TEST(MulticorePhaseTest, Phase6SubsystemBaselineMetricsAreGuardedAndStable) {
   auto firstSignature = phase6SubsystemBaselineSignature();
   auto secondSignature = phase6SubsystemBaselineSignature();
+
+  EXPECT_EQ(firstSignature, secondSignature);
+}
+
+TEST(MulticorePhaseTest, Phase6MutationFixedSeedSignaturesAreGuardedAndStable) {
+  auto firstSignature = phase6MutationFixedSeedSignature();
+  auto secondSignature = phase6MutationFixedSeedSignature();
 
   EXPECT_EQ(firstSignature, secondSignature);
 }

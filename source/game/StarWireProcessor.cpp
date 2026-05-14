@@ -156,6 +156,8 @@ void WireProcessor::recordNetworkSignature(ProcessStats& stats, List<Vec2I> netw
   auto signature = buildNetworkSignature(networkPositions);
   nextNetworkSignatures.set(rootPosition, signature);
   stats.networkSignatureChecks += 1;
+  hashCombine(stats.topologySignatureHash, hashOf(rootPosition, signature.topologyHash, signature.entityCount));
+  hashCombine(stats.outputSignatureHash, hashOf(rootPosition, signature.outputHash, signature.entityCount));
 
   bool topologyDirty = true;
   bool outputDirty = true;

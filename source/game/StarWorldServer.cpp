@@ -26,10 +26,14 @@
 #include "StarUniverseSettings.hpp"
 #include "StarUniverseServerLuaBindings.hpp"
 #include "StarTime.hpp"
+#include "StarHash.hpp"
 
 namespace Star {
 
 namespace {
+
+uint64_t const Phase6LiquidFixedSeed = 0x2652A11A51A7E5D1ULL;
+uint64_t const Phase6FallingBlocksFixedSeed = 0x2652FA11B10C5EEDULL;
 
 Json readWorldServerConfig() {
   auto& root = Root::singleton();
@@ -42,6 +46,12 @@ Json readWorldServerConfig() {
   }
 
   return worldServerConfig;
+}
+
+void recordPhase6Signature(uint64_t& accumulator, uint64_t signature) {
+  size_t hash = accumulator;
+  hashCombine(hash, static_cast<size_t>(signature));
+  accumulator = hash;
 }
 
 float distanceToClosestPlayer(Vec2F const& sectorCenter, List<Vec2F> const& playerPositions) {
@@ -1170,6 +1180,11 @@ void WorldServer::update(float dt) {
   timePhase(UpdateTimingPhase::Wiring, [&]() {
     if (shouldRunThisStep("wiringUpdate")) {
       auto wiringStats = m_wireProcessor->process();
+      if (m_phase6MutationFixedSeedSignaturesEnabled) {
+        m_phase6WorldParallelismStats.wiringSignatureTicks += 1;
+        recordPhase6Signature(m_phase6WorldParallelismStats.wiringTopologySignatureHash, wiringStats.topologySignatureHash);
+        recordPhase6Signature(m_phase6WorldParallelismStats.wiringOutputSignatureHash, wiringStats.outputSignatureHash);
+      }
       if (m_phase6SubsystemBaselineMetricsEnabled) {
         m_phase6WorldParallelismStats.wiringBaselineTicks += 1;
         m_phase6WorldParallelismStats.wiringInitialEntities += wiringStats.initialEntities;
@@ -1209,6 +1224,13 @@ void WorldServer::update(float dt) {
       m_liquidEngine->setNoProcessingLimitRegions(tickSnapshot.monitoringRegions);
       tickSnapshot.packetPreparationStats.monitoringRegionReuses += tickSnapshot.monitoringRegions.size();
       m_liquidEngine->update();
+      if (m_phase6MutationFixedSeedSignaturesEnabled) {
+        auto liquidSignature = m_liquidEngine->stateSignature();
+        m_phase6WorldParallelismStats.liquidSignatureTicks += 1;
+        m_phase6WorldParallelismStats.liquidSignatureActiveCells += liquidSignature.activeCellCount;
+        recordPhase6Signature(m_phase6WorldParallelismStats.liquidSignatureActiveCellHash, liquidSignature.activeCellHash);
+        recordPhase6Signature(m_phase6WorldParallelismStats.liquidSignatureRegionHash, liquidSignature.noProcessingLimitRegionHash);
+      }
       if (m_phase6SubsystemBaselineMetricsEnabled) {
         auto liquidRegionCacheStatsAfter = m_liquidEngine->noProcessingLimitRegionCacheStats();
         m_phase6WorldParallelismStats.liquidBaselineTicks += 1;
@@ -1227,7 +1249,16 @@ void WorldServer::update(float dt) {
 
   timePhase(UpdateTimingPhase::FallingBlocks, [&]() {
     if (shouldRunThisStep("fallingBlocksUpdate")) {
-      auto fallingBlocksStats = m_fallingBlocksAgent->update();
+      auto fallingBlocksStats = m_fallingBlocksAgent->update(m_phase6MutationFixedSeedSignaturesEnabled);
+      if (m_phase6MutationFixedSeedSignaturesEnabled) {
+        m_phase6WorldParallelismStats.fallingBlocksSignatureTicks += 1;
+        recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksPendingPositionSignature, fallingBlocksStats.pendingPositionSignature);
+        recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksProcessedPositionSignature, fallingBlocksStats.processedPositionSignature);
+        recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksMovedBlockSignature, fallingBlocksStats.movedBlockSignature);
+        recordPhase6Signature(m_phase6WorldParallelismStats.fallingBlocksNextPendingPositionSignature, fallingBlocksStats.nextPendingPositionSignature);
+      }
+      if (m_phase6SubsystemBaselineMetricsEnabled || m_phase6MutationFixedSeedSignaturesEnabled)
+        m_phase6WorldParallelismStats.fallingBlocksNextPendingPositions += fallingBlocksStats.nextPendingPositions;
       if (m_phase6SubsystemBaselineMetricsEnabled) {
         m_phase6WorldParallelismStats.fallingBlocksBaselineTicks += 1;
         m_phase6WorldParallelismStats.fallingBlocksPendingPositions += fallingBlocksStats.pendingPositions;
@@ -1323,6 +1354,21 @@ void WorldServer::update(float dt) {
         storageTimingStats.commits,
         storageTimingStats.fullSnapshotExports));
     LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
+    if (m_phase6MutationFixedSeedSignaturesEnabled) {
+      LogMap::set(strf("server_{}_phase6_signatures", m_worldId), strf("liquid={}/{}/{}/{}, falling={}/{}/{}/{}/{}, wiring={}/{}/{}",
+          m_phase6WorldParallelismStats.liquidSignatureTicks,
+          m_phase6WorldParallelismStats.liquidSignatureActiveCells,
+          m_phase6WorldParallelismStats.liquidSignatureActiveCellHash,
+          m_phase6WorldParallelismStats.liquidSignatureRegionHash,
+          m_phase6WorldParallelismStats.fallingBlocksSignatureTicks,
+          m_phase6WorldParallelismStats.fallingBlocksPendingPositionSignature,
+          m_phase6WorldParallelismStats.fallingBlocksProcessedPositionSignature,
+          m_phase6WorldParallelismStats.fallingBlocksMovedBlockSignature,
+          m_phase6WorldParallelismStats.fallingBlocksNextPendingPositionSignature,
+          m_phase6WorldParallelismStats.wiringSignatureTicks,
+          m_phase6WorldParallelismStats.wiringTopologySignatureHash,
+          m_phase6WorldParallelismStats.wiringOutputSignatureHash));
+    }
     LogMap::set(strf("server_{}_lua_mem", m_worldId), m_luaRoot->luaMemoryUsage());
   });
 }
@@ -2031,6 +2077,7 @@ void WorldServer::init(bool firstTime) {
   m_phase6PacketPreparationSectorPrefillMinimumSectors = phase6Config.getUInt("packetPreparationSectorPrefillMinimumSectors", 8);
   m_phase6PacketPreparationSectorPrefillDifferentialCheck = phase6Config.getBool("packetPreparationSectorPrefillDifferentialCheck", false);
   m_phase6SubsystemBaselineMetricsEnabled = phase6Config.getBool("subsystemBaselineMetrics", false);
+  m_phase6MutationFixedSeedSignaturesEnabled = phase6Config.getBool("mutationParallelismFixedSeedSignatures", false);
   m_skipEmptyEntityUpdateSets = m_serverConfig.getBool("skipEmptyEntityUpdateSets", false);
   uint32_t mutationParallelismRequestedSubsystems = 0;
   if (phase6Config.getBool("liquidMutationParallelism", false))
@@ -2044,7 +2091,7 @@ void WorldServer::init(bool firstTime) {
   if (phase6Config.getBool("luaMutationParallelism", false))
     mutationParallelismRequestedSubsystems |= LuaMutationParallelismSubsystem;
   bool mutationParallelismRequested = mutationParallelismRequestedSubsystems != 0;
-  bool mutationFixedSeedGate = phase6Config.getBool("mutationParallelismFixedSeedSignatures", false);
+  bool mutationFixedSeedGate = m_phase6MutationFixedSeedSignaturesEnabled;
   bool mutationDependencyGate = phase6Config.getBool("mutationParallelismDependencyAnalysis", false);
   bool mutationModVisibilityGate = phase6Config.getBool("mutationParallelismModVisibilityContract", false);
   m_phase6WorldParallelismStats.storageGenerationPlanningEnabled = m_phase6StorageGenerationPlanningEnabled;
@@ -2052,6 +2099,7 @@ void WorldServer::init(bool firstTime) {
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillEnabled = m_phase6PacketPreparationSectorPrefillEnabled;
   m_phase6WorldParallelismStats.packetPreparationSectorPrefillDifferentialCheckEnabled = m_phase6PacketPreparationSectorPrefillDifferentialCheck;
   m_phase6WorldParallelismStats.subsystemBaselineMetricsEnabled = m_phase6SubsystemBaselineMetricsEnabled;
+  m_phase6WorldParallelismStats.mutationFixedSeedSignaturesEnabled = m_phase6MutationFixedSeedSignaturesEnabled;
   m_phase6WorldParallelismStats.mutationParallelismRequested = mutationParallelismRequested;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByFixedSeedGate = mutationParallelismRequested && !mutationFixedSeedGate;
   m_phase6WorldParallelismStats.mutationParallelismBlockedByDependencyGate = mutationParallelismRequested && !mutationDependencyGate;
@@ -2103,10 +2151,14 @@ void WorldServer::init(bool firstTime) {
   m_tileEntityBreakCheckTimer = GameTimer(m_serverConfig.getFloat("tileEntityBreakCheckInterval"));
 
   m_liquidEngine = make_shared<LiquidCellEngine<LiquidId>>(liquidsDatabase->liquidEngineParameters(), make_shared<LiquidWorld>(this));
+  if (m_phase6MutationFixedSeedSignaturesEnabled)
+    m_liquidEngine->setRandomSeed(Phase6LiquidFixedSeed);
   for (auto liquidSettings : liquidsDatabase->allLiquidSettings())
     m_liquidEngine->setLiquidTickDelta(liquidSettings->id, liquidSettings->tickDelta);
 
   m_fallingBlocksAgent = make_shared<FallingBlocksAgent>(make_shared<FallingBlocksWorld>(this));
+  if (m_phase6MutationFixedSeedSignaturesEnabled)
+    m_fallingBlocksAgent->setRandomSeed(Phase6FallingBlocksFixedSeed);
 
   setupForceRegions();
 

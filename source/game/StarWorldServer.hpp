@@ -136,6 +136,7 @@ public:
     uint64_t packetPreparationSectorPrefillDifferentialMicroseconds = 0;
     uint64_t packetPreparationSectorPrefillDivergences = 0;
     bool subsystemBaselineMetricsEnabled = false;
+    bool mutationFixedSeedSignaturesEnabled = false;
     bool mutationParallelismRequested = false;
     bool mutationParallelismBlockedByFixedSeedGate = false;
     bool mutationParallelismBlockedByDependencyGate = false;
@@ -156,10 +157,20 @@ public:
     uint64_t liquidNoProcessingLimitRegionCacheLookups = 0;
     uint64_t liquidNoProcessingLimitRegionCacheCandidates = 0;
     uint64_t liquidNoProcessingLimitRegionCacheHits = 0;
+    uint64_t liquidSignatureTicks = 0;
+    uint64_t liquidSignatureActiveCells = 0;
+    uint64_t liquidSignatureActiveCellHash = 0;
+    uint64_t liquidSignatureRegionHash = 0;
     uint64_t fallingBlocksBaselineTicks = 0;
     uint64_t fallingBlocksPendingPositions = 0;
+    uint64_t fallingBlocksNextPendingPositions = 0;
     uint64_t fallingBlocksProcessedPositions = 0;
     uint64_t fallingBlocksMovedBlocks = 0;
+    uint64_t fallingBlocksSignatureTicks = 0;
+    uint64_t fallingBlocksPendingPositionSignature = 0;
+    uint64_t fallingBlocksProcessedPositionSignature = 0;
+    uint64_t fallingBlocksMovedBlockSignature = 0;
+    uint64_t fallingBlocksNextPendingPositionSignature = 0;
     uint64_t wiringBaselineTicks = 0;
     uint64_t wiringInitialEntities = 0;
     uint64_t wiringLoadedEntities = 0;
@@ -172,6 +183,9 @@ public:
     uint64_t wiringOutputDirtyNetworkSignatures = 0;
     uint64_t wiringCleanNetworkEntities = 0;
     uint64_t wiringDirtyNetworkEntities = 0;
+    uint64_t wiringSignatureTicks = 0;
+    uint64_t wiringTopologySignatureHash = 0;
+    uint64_t wiringOutputSignatureHash = 0;
     uint64_t entityBaselineTicks = 0;
     uint64_t entityUpdatedEntities = 0;
     uint64_t entityTileEntities = 0;
@@ -623,6 +637,7 @@ private:
   size_t m_phase6PacketPreparationSectorPrefillMinimumSectors;
   bool m_phase6PacketPreparationSectorPrefillDifferentialCheck;
   bool m_phase6SubsystemBaselineMetricsEnabled;
+  bool m_phase6MutationFixedSeedSignaturesEnabled;
   bool m_skipEmptyEntityUpdateSets;
   OrderedHashMap<ConnectionId, shared_ptr<ClientInfo>> m_clientInfo;
   HashMap<ServerTileSectorArray::Sector, HashSet<ConnectionId>> m_sectorClientSubscriptions;

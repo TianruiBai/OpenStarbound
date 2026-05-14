@@ -434,10 +434,22 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6LiquidNoProcessingLimitRegionCacheLookups += phase6Stats.liquidNoProcessingLimitRegionCacheLookups;
           status.phase6LiquidNoProcessingLimitRegionCacheCandidates += phase6Stats.liquidNoProcessingLimitRegionCacheCandidates;
           status.phase6LiquidNoProcessingLimitRegionCacheHits += phase6Stats.liquidNoProcessingLimitRegionCacheHits;
+          if (phase6Stats.mutationFixedSeedSignaturesEnabled)
+            status.phase6MutationFixedSeedSignaturesEnabledWorlds += 1;
+          status.phase6LiquidSignatureTicks += phase6Stats.liquidSignatureTicks;
+          status.phase6LiquidSignatureActiveCells += phase6Stats.liquidSignatureActiveCells;
+          status.phase6LiquidSignatureActiveCellHash ^= phase6Stats.liquidSignatureActiveCellHash;
+          status.phase6LiquidSignatureRegionHash ^= phase6Stats.liquidSignatureRegionHash;
           status.phase6FallingBlocksBaselineTicks += phase6Stats.fallingBlocksBaselineTicks;
           status.phase6FallingBlocksPendingPositions += phase6Stats.fallingBlocksPendingPositions;
+          status.phase6FallingBlocksNextPendingPositions += phase6Stats.fallingBlocksNextPendingPositions;
           status.phase6FallingBlocksProcessedPositions += phase6Stats.fallingBlocksProcessedPositions;
           status.phase6FallingBlocksMovedBlocks += phase6Stats.fallingBlocksMovedBlocks;
+          status.phase6FallingBlocksSignatureTicks += phase6Stats.fallingBlocksSignatureTicks;
+          status.phase6FallingBlocksPendingPositionSignature ^= phase6Stats.fallingBlocksPendingPositionSignature;
+          status.phase6FallingBlocksProcessedPositionSignature ^= phase6Stats.fallingBlocksProcessedPositionSignature;
+          status.phase6FallingBlocksMovedBlockSignature ^= phase6Stats.fallingBlocksMovedBlockSignature;
+          status.phase6FallingBlocksNextPendingPositionSignature ^= phase6Stats.fallingBlocksNextPendingPositionSignature;
           status.phase6WiringBaselineTicks += phase6Stats.wiringBaselineTicks;
           status.phase6WiringInitialEntities += phase6Stats.wiringInitialEntities;
           status.phase6WiringLoadedEntities += phase6Stats.wiringLoadedEntities;
@@ -450,6 +462,9 @@ UniverseServer::ServerStatus UniverseServer::serverStatus() const {
           status.phase6WiringOutputDirtyNetworkSignatures += phase6Stats.wiringOutputDirtyNetworkSignatures;
           status.phase6WiringCleanNetworkEntities += phase6Stats.wiringCleanNetworkEntities;
           status.phase6WiringDirtyNetworkEntities += phase6Stats.wiringDirtyNetworkEntities;
+          status.phase6WiringSignatureTicks += phase6Stats.wiringSignatureTicks;
+          status.phase6WiringTopologySignatureHash ^= phase6Stats.wiringTopologySignatureHash;
+          status.phase6WiringOutputSignatureHash ^= phase6Stats.wiringOutputSignatureHash;
           status.phase6EntityBaselineTicks += phase6Stats.entityBaselineTicks;
           status.phase6EntityUpdatedEntities += phase6Stats.entityUpdatedEntities;
           status.phase6EntityTileEntities += phase6Stats.entityTileEntities;

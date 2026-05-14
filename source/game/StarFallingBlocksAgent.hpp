@@ -6,6 +6,7 @@
 #include "StarRandom.hpp"
 #include "StarGameTypes.hpp"
 #include "StarWorldTiles.hpp"
+#include "StarHash.hpp"
 
 namespace Star {
 
@@ -32,13 +33,20 @@ class FallingBlocksAgent {
 public:
   struct UpdateStats {
     size_t pendingPositions = 0;
+    size_t nextPendingPositions = 0;
     uint64_t processedPositions = 0;
     uint64_t movedBlocks = 0;
+    uint64_t pendingPositionSignature = 0;
+    uint64_t processedPositionSignature = 0;
+    uint64_t movedBlockSignature = 0;
+    uint64_t nextPendingPositionSignature = 0;
   };
 
   FallingBlocksAgent(FallingBlocksFacadePtr worldFacade);
 
-  UpdateStats update();
+  void setRandomSeed(uint64_t seed);
+
+  UpdateStats update(bool collectSignatures = false);
 
   void visitLocation(Vec2I const& location);
   void visitRegion(RectI const& region);

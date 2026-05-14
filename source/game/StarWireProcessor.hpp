@@ -25,6 +25,8 @@ public:
     uint64_t outputDirtyNetworkSignatures = 0;
     uint64_t cleanNetworkEntities = 0;
     uint64_t dirtyNetworkEntities = 0;
+    uint64_t topologySignatureHash = 0;
+    uint64_t outputSignatureHash = 0;
   };
 
   WireProcessor(WorldStoragePtr worldStorage);
