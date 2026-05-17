@@ -131,6 +131,7 @@ if(STAR_COMPILER STREQUAL "msvc")
 endif()
 
 option(STAR_BUILD_GUI "Build GUI utilities and Client" ON)
+option(STAR_PLATFORM_N3DS "Build with Nintendo 3DS platform constraints" OFF)
 
 option(STAR_N3DS_BOOTSTRAP_ONLY "Configure only minimal Nintendo 3DS bootstrap targets" OFF)
 
@@ -145,6 +146,13 @@ option(STAR_USE_JEMALLOC "Use jemalloc allocators" OFF)
 option(STAR_USE_MIMALLOC "Use mimalloc allocators" OFF)
 option(STAR_USE_RPMALLOC "Use rpmalloc allocators" OFF)
 
+if(STAR_PLATFORM_N3DS)
+  # Phase 1 policy: desktop service integrations stay off on Nintendo 3DS.
+  set(STAR_ENABLE_STEAM_INTEGRATION OFF CACHE BOOL "Use Steam platform services" FORCE)
+  set(STAR_ENABLE_DISCORD_INTEGRATION OFF CACHE BOOL "Use Discord platform services" FORCE)
+  set(STAR_BUILD_QT_TOOLS OFF CACHE BOOL "Build GUI utilities that require Qt" FORCE)
+endif()
+
 # Report all the discovered system / environment settings and all options.
 
 message(STATUS "Source ID: ${STAR_SOURCE_IDENTIFIER}")
@@ -153,6 +161,7 @@ message(STATUS "Little Endian: ${STAR_LITTLE_ENDIAN}")
 message(STATUS "System: ${STAR_SYSTEM}")
 message(STATUS "System family: ${STAR_SYSTEM_FAMILY}")
 message(STATUS "C/C++ compiler: ${STAR_COMPILER}")
+message(STATUS "Nintendo 3DS platform mode: ${STAR_PLATFORM_N3DS}")
 
 if(DEFINED STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX)
   message(STATUS "Statically linking to libgcc / libstdc++: ${STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX}")
@@ -238,8 +247,16 @@ elseif(STAR_COMPILER STREQUAL "msvc")
   set_flag(STAR_COMPILER_MSVC)
 endif()
 
+if(STAR_PLATFORM_N3DS)
+  set_flag(STAR_PLATFORM_N3DS)
+endif()
+
 if(STAR_LUA_APICHECK)
   add_definitions(-DLUA_USE_APICHECK)
+endif()
+
+if(STAR_PLATFORM_N3DS)
+  add_definitions(-DLUA_32BITS)
 endif()
 
 if(STAR_SYSTEM_WINDOWS)
@@ -271,15 +288,20 @@ endif()
 # Set C/C++ compiler flags based on build environment...
 
 if(STAR_COMPILER_GNU)
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -rdynamic -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough -no-pie")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -rdynamic -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough -no-pie")
-
-  if(STAR_SYSTEM_FAMILY_WINDOWS)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mthreads")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mthreads")
+  if(STAR_PLATFORM_N3DS)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough")
   else()
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -D_REENTRANT")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -D_REENTRANT")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -rdynamic -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough -no-pie")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -rdynamic -Wall -Wextra -Wno-unused -Wno-implicit-fallthrough -no-pie")
+
+    if(STAR_SYSTEM_FAMILY_WINDOWS)
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mthreads")
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mthreads")
+    else()
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -D_REENTRANT")
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -D_REENTRANT")
+    endif()
   endif()
 
   if(STAR_ENABLE_STATIC_LIBGCC_LIBSTDCXX)
@@ -499,32 +521,68 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(Freetype REQUIRED)
-find_package(cpr CONFIG REQUIRED)
-find_package(OggVorbis REQUIRED)
-find_package(zstd CONFIG REQUIRED)
-find_package(imgui CONFIG REQUIRED)
-if (NOT STAR_SYSTEM_HAIKU)
+if(NOT STAR_PLATFORM_N3DS)
+  find_package(cpr CONFIG REQUIRED)
+endif()
+if(NOT STAR_PLATFORM_N3DS)
+  find_package(OggVorbis REQUIRED)
+endif()
+if(STAR_PLATFORM_N3DS)
+  find_path(STAR_N3DS_ZSTD_INCLUDE_DIR
+    NAMES zstd.h
+    HINTS "$ENV{DEVKITPRO}/portlibs/3ds/include"
+  )
+  find_library(STAR_N3DS_ZSTD_LIBRARY
+    NAMES zstd libzstd
+    HINTS "$ENV{DEVKITPRO}/portlibs/3ds/lib"
+  )
+
+  if(NOT STAR_N3DS_ZSTD_INCLUDE_DIR OR NOT STAR_N3DS_ZSTD_LIBRARY)
+    message(FATAL_ERROR "Could NOT find Nintendo 3DS zstd headers/libs in devkitPro portlibs")
+  endif()
+
+  include_directories(SYSTEM ${STAR_N3DS_ZSTD_INCLUDE_DIR})
+else()
+  find_package(zstd CONFIG REQUIRED)
+endif()
+if(NOT STAR_PLATFORM_N3DS)
+  find_package(imgui CONFIG REQUIRED)
+endif()
+if (NOT STAR_SYSTEM_HAIKU AND NOT STAR_PLATFORM_N3DS)
 	find_package(Opus CONFIG REQUIRED)
 	find_package(re2 CONFIG REQUIRED)
 endif()
 include_directories(SYSTEM
     ${FREETYPE_INCLUDE_DIRS}
-    ${OGGVORBIS_INCLUDE_DIR}
 )
+
+if(NOT STAR_PLATFORM_N3DS)
+  include_directories(SYSTEM ${OGGVORBIS_INCLUDE_DIR})
+endif()
 
 set(STAR_EXT_LIBS ${STAR_EXT_LIBS}
     ZLIB::ZLIB
     PNG::PNG
-    cpr::cpr
     $<IF:$<TARGET_EXISTS:Freetype::Freetype>,Freetype::Freetype,freetype>
-    $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
-    $<IF:$<TARGET_EXISTS:Opus::opus>,Opus::opus,opus>
-    $<IF:$<TARGET_EXISTS:re2::re2>,re2::re2,re2>
-    imgui::imgui
-    ${VORBISFILE_LIBRARY}
-    ${VORBIS_LIBRARY}
-    ${OGG_LIBRARY}
 )
+
+if(NOT STAR_PLATFORM_N3DS)
+  # PLACEHOLDER: STAR_PLATFORM_N3DS currently excludes desktop-first dependency stack.
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS}
+      cpr::cpr
+      $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+  )
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS}
+      $<IF:$<TARGET_EXISTS:Opus::opus>,Opus::opus,opus>
+      $<IF:$<TARGET_EXISTS:re2::re2>,re2::re2,re2>
+      imgui::imgui
+      ${VORBISFILE_LIBRARY}
+      ${VORBIS_LIBRARY}
+      ${OGG_LIBRARY}
+  )
+else()
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} ${STAR_N3DS_ZSTD_LIBRARY})
+endif()
 
 pkg_check_modules(PKG_WAYLAND "wayland-client>=1.18" wayland-egl wayland-cursor egl "xkbcommon>=0.5.0")
 if (PKG_WAYLAND_FOUND)

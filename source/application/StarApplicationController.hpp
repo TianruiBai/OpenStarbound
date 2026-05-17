@@ -12,6 +12,15 @@ namespace Star {
 
 STAR_CLASS(ApplicationController);
 
+struct PlatformServiceCapabilities {
+  bool statistics = false;
+  bool p2pNetworking = false;
+  bool userGeneratedContent = false;
+  bool desktopUrlOpen = false;
+  bool clipboard = false;
+  bool audioInput = true;
+};
+
 // Audio format is always 16 bit signed integer samples
 struct AudioFormat {
   unsigned sampleRate;
@@ -80,6 +89,22 @@ public:
   virtual P2PNetworkingServicePtr p2pNetworkingService() const = 0;
   virtual UserGeneratedContentServicePtr userGeneratedContentService() const = 0;
   virtual DesktopServicePtr desktopService() const = 0;
+
+  virtual bool supportsAudioInput() const {
+    return true;
+  }
+
+  virtual PlatformServiceCapabilities platformServiceCapabilities() {
+    PlatformServiceCapabilities caps;
+    caps.statistics = (bool)statisticsService();
+    caps.p2pNetworking = (bool)p2pNetworkingService();
+    caps.userGeneratedContent = (bool)userGeneratedContentService();
+    if (auto service = desktopService())
+      caps.desktopUrlOpen = service->supportsOpenUrl();
+    caps.clipboard = hasClipboard();
+    caps.audioInput = supportsAudioInput();
+    return caps;
+  }
 
   // Signals the application to quit
   virtual void quit() = 0;

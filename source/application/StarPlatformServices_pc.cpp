@@ -1,5 +1,6 @@
 #include "StarLogging.hpp"
 #include "StarPlatformServices_pc.hpp"
+#include "StarPlatformServices_stub.hpp"
 #include "StarP2PNetworkingService_pc.hpp"
 
 #ifdef STAR_ENABLE_STEAM_INTEGRATION
@@ -176,6 +177,14 @@ PcPlatformServicesUPtr PcPlatformServices::create([[maybe_unused]] String const&
 
     services->m_p2pNetworkingService = p2pNetworkingService;
   }
+
+#ifdef STAR_PLATFORM_N3DS
+  // STUB: Nintendo 3DS profile intentionally uses placeholder platform services
+  // until native integrations are implemented.
+  services->m_statisticsService = makePlaceholderStatisticsService();
+  services->m_userGeneratedContentService = makePlaceholderUserGeneratedContentService();
+  services->m_desktopService = makePlaceholderDesktopService();
+#endif
 
 #ifdef STAR_ENABLE_STEAM_INTEGRATION
   if (services->m_state->steamAvailable) {

@@ -59,6 +59,7 @@ private:
   LabelWidgetPtr m_sfxLabel;
   LabelWidgetPtr m_musicLabel;
   LabelWidgetPtr m_p2pJoinableLabel;
+  ButtonWidgetPtr m_voiceSettingsButton;
 
   //TODO: add instrument range (or just use one range for all 3, it's kinda silly.)
   Vec2I m_sfxRange;

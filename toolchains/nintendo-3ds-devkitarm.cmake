@@ -31,6 +31,24 @@ if(NOT EXISTS "${ARM_GCC}")
   message(FATAL_ERROR "arm-none-eabi-gcc not found at ${ARM_GCC}. Install devkitARM (3ds-dev group).")
 endif()
 
+if(NOT DEFINED PKG_CONFIG_EXECUTABLE)
+  find_program(N3DS_PKG_CONFIG_EXECUTABLE
+    NAMES pkg-config pkg-config.exe
+    HINTS
+      "${DEVKITPRO}/msys2/usr/bin"
+  )
+
+  if(N3DS_PKG_CONFIG_EXECUTABLE)
+    set(PKG_CONFIG_EXECUTABLE "${N3DS_PKG_CONFIG_EXECUTABLE}" CACHE FILEPATH "pkg-config executable" FORCE)
+  endif()
+endif()
+
+if(PKG_CONFIG_EXECUTABLE)
+  set(ENV{PKG_CONFIG_PATH}
+    "${DEVKITPRO}/portlibs/3ds/lib/pkgconfig;${DEVKITPRO}/libctru/lib/pkgconfig"
+  )
+endif()
+
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_VERSION 1)
 set(CMAKE_SYSTEM_PROCESSOR armv6k)
@@ -51,6 +69,11 @@ set(CMAKE_CXX_FLAGS_INIT "${N3DS_ARCH_FLAGS} -D_3DS")
 
 # Allow CMake to find headers/libs in the devkitPro sysroots first.
 set(CMAKE_FIND_ROOT_PATH
+  "${DEVKITPRO}/portlibs/3ds"
+  "${DEVKITPRO}/libctru"
+)
+
+set(CMAKE_PREFIX_PATH
   "${DEVKITPRO}/portlibs/3ds"
   "${DEVKITPRO}/libctru"
 )

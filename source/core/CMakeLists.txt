@@ -140,13 +140,11 @@ SET (star_core_HEADERS
   )
 
 SET (star_core_SOURCES
-    StarAudio.cpp
     StarAssetPath.cpp
     StarBTreeDatabase.cpp
     StarBuffer.cpp
     StarByteArray.cpp
     StarColor.cpp
-    StarIODeviceCallbacks.cpp
     StarCompression.cpp
     StarCurve25519.cpp
     StarDataStream.cpp
@@ -157,7 +155,6 @@ SET (star_core_SOURCES
     StarFile.cpp
     StarFont.cpp
     StarHostAddress.cpp
-    StarHttpClient.cpp
     StarIODevice.cpp
     StarImage.cpp
     StarImageProcessing.cpp
@@ -202,6 +199,27 @@ SET (star_core_SOURCES
     StarZSTDCompression.cpp
     scripting/StarUtilityLuaBindings.cpp
   )
+
+IF (STAR_PLATFORM_N3DS)
+  SET (star_core_SOURCES ${star_core_SOURCES}
+      StarAudio_stub.cpp
+    )
+ELSE()
+  SET (star_core_SOURCES ${star_core_SOURCES}
+      StarAudio.cpp
+      StarIODeviceCallbacks.cpp
+    )
+ENDIF()
+
+IF (STAR_PLATFORM_N3DS)
+  SET (star_core_SOURCES ${star_core_SOURCES}
+      StarHttpClient_stub.cpp
+    )
+ELSE()
+  SET (star_core_SOURCES ${star_core_SOURCES}
+      StarHttpClient.cpp
+    )
+ENDIF()
 
 IF (STAR_SYSTEM_FAMILY_UNIX)
   SET (star_core_SOURCES ${star_core_SOURCES}

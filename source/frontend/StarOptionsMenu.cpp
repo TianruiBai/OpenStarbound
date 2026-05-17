@@ -87,6 +87,7 @@ OptionsMenu::OptionsMenu(PaneManager* manager, UniverseClientPtr client)
   m_sfxLabel = fetchChild<LabelWidget>("sfxValueLabel");
   m_musicLabel = fetchChild<LabelWidget>("musicValueLabel");
   m_p2pJoinableLabel = fetchChild<LabelWidget>("clientP2PJoinableLabel");
+  m_voiceSettingsButton = findChild<ButtonWidget>("showVoiceSettings");
 
   m_instrumentSlider->setRange(m_sfxRange, assets->json("/interface/optionsmenu/optionsmenu.config:sfxDelta").toInt());
   m_sfxSlider->setRange(m_sfxRange, assets->json("/interface/optionsmenu/optionsmenu.config:sfxDelta").toInt());
@@ -195,10 +196,16 @@ void OptionsMenu::syncGuiToConf() {
   m_headRotationButton->setChecked(m_localChanges.get("humanoidHeadRotation").optBool().value(true));
 
   auto appController = GuiContext::singleton().applicationController();
+  auto capabilities = appController->platformServiceCapabilities();
   if (!appController->p2pNetworkingService()) {
     m_p2pJoinableLabel->setColor(Color::DarkGray);
     m_clientP2PJoinableButton->setEnabled(false);
     m_clientP2PJoinableButton->setChecked(false);
+  }
+
+  if (m_voiceSettingsButton && !capabilities.audioInput) {
+    // STUB: Voice settings are disabled until handheld audio input capture is implemented.
+    m_voiceSettingsButton->setEnabled(false);
   }
 }
 
@@ -207,6 +214,11 @@ void OptionsMenu::displayControls() {
 }
 
 void OptionsMenu::displayVoiceSettings() {
+  if (!GuiContext::singleton().applicationController()->supportsAudioInput()) {
+    // PLACEHOLDER: No modal fallback yet for unsupported audio input on constrained platforms.
+    return;
+  }
+
   m_paneManager->displayPane(PaneLayer::ModalWindow, m_voiceSettingsMenu);
 }
 

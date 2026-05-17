@@ -1041,12 +1041,35 @@ private:
     }
 
     bool openAudioInputDevice(uint32_t deviceId, int freq, int channels, AudioCallback callback) override {
+    #ifdef STAR_PLATFORM_N3DS
+      // STUB: 3DS microphone capture path is not implemented yet.
+      (void)deviceId;
+      (void)freq;
+      (void)channels;
+      (void)callback;
+      return false;
+    #else
       return parent->openAudioInputDevice(deviceId, freq, channels, callback);
+    #endif
     };
 
     bool closeAudioInputDevice() override {
+    #ifdef STAR_PLATFORM_N3DS
+      // PLACEHOLDER: close operation is unsupported until 3DS input capture is implemented.
+      return false;
+    #else
       return parent->closeAudioInputDevice();
+    #endif
     };
+
+        bool supportsAudioInput() const override {
+    #ifdef STAR_PLATFORM_N3DS
+      // STUB: capability explicitly disabled while microphone integration is pending.
+      return false;
+    #else
+      return true;
+    #endif
+        }
 
     float updateRate() const override {
       return parent->m_updateRate;

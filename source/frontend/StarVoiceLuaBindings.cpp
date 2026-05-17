@@ -11,6 +11,23 @@ LuaCallbacks LuaBindings::makeVoiceCallbacks() {
 
   auto voice = Voice::singletonPtr();
 
+  if (!voice) {
+    // STUB: Voice backend is unavailable on this platform/runtime path.
+    callbacks.registerCallback("devices", []() -> StringList { return {}; });
+    callbacks.registerCallback("getSettings", []() -> Json {
+      return JsonObject{{"enabled", false}, {"inputEnabled", false}};
+    });
+    callbacks.registerCallback("mergeSettings", [](Json const&) {});
+    callbacks.registerCallback("setSpeakerMuted", [](SpeakerId, bool) {});
+    callbacks.registerCallback("speakerMuted", [](SpeakerId) { return false; });
+    callbacks.registerCallback("setSpeakerVolume", [](SpeakerId, float) {});
+    callbacks.registerCallback("speakerVolume", [](SpeakerId) { return 0.0f; });
+    callbacks.registerCallback("speakerPosition", [](SpeakerId) { return Vec2F{}; });
+    callbacks.registerCallback("speaker", [](Maybe<SpeakerId>) { return JsonObject{}; });
+    callbacks.registerCallback("speakers", [](Maybe<bool>) -> List<Json> { return {}; });
+    return callbacks;
+  }
+
   callbacks.registerCallbackWithSignature<StringList>("devices", bind(&Voice::availableDevices, voice));
   callbacks.registerCallback(  "getSettings", [voice]() -> Json      { return voice->saveJson();         });
   callbacks.registerCallback("mergeSettings", [voice](Json const& settings) { voice->loadJson(settings); });

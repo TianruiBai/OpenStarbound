@@ -44,7 +44,8 @@ ModsMenu::ModsMenu() {
   auto workshopLinkButton = fetchChild<ButtonWidget>("workshopbutton");
 
   auto& guiContext = GuiContext::singleton();
-  bool hasDesktopService = (bool)guiContext.applicationController()->desktopService();
+  auto capabilities = guiContext.applicationController()->platformServiceCapabilities();
+  bool hasDesktopService = capabilities.desktopUrlOpen;
 
   workshopLinkButton->setEnabled(hasDesktopService);
 
@@ -110,17 +111,25 @@ void ModsMenu::openLink() {
     return;
 
   auto& guiContext = GuiContext::singleton();
-  if (auto desktopService = guiContext.applicationController()->desktopService())
-    desktopService->openUrl(link);
-  else
+  auto capabilities = guiContext.applicationController()->platformServiceCapabilities();
+  if (capabilities.desktopUrlOpen) {
+    auto desktopService = guiContext.applicationController()->desktopService();
+    if (desktopService)
+      desktopService->openUrl(link);
+  } else {
     guiContext.setClipboard(link);
+  }
 }
 
 void ModsMenu::openWorkshop() {
   auto assets = Root::singleton().assets();
   auto& guiContext = GuiContext::singleton();
-  if (auto desktopService = guiContext.applicationController()->desktopService())
-    desktopService->openUrl(assets->json("/interface/modsmenu/modsmenu.config:workshopLink").toString());
+  auto capabilities = guiContext.applicationController()->platformServiceCapabilities();
+  if (capabilities.desktopUrlOpen) {
+    auto desktopService = guiContext.applicationController()->desktopService();
+    if (desktopService)
+      desktopService->openUrl(assets->json("/interface/modsmenu/modsmenu.config:workshopLink").toString());
+  }
 }
 
 }

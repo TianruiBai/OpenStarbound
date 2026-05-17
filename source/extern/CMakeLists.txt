@@ -38,7 +38,6 @@ SET (star_extern_SOURCES
     curve25519/source/ed25519_verify.c
     xxhash.c
     fmt/format.cc
-    imgui_lua_bindings.cpp
     lua/lapi.c
     lua/lauxlib.c
     lua/lbaselib.c
@@ -73,6 +72,12 @@ SET (star_extern_SOURCES
     lua/lvm.c
     lua/lzio.c
   )
+
+IF (NOT STAR_PLATFORM_N3DS)
+  SET (star_extern_SOURCES ${star_extern_SOURCES}
+      imgui_lua_bindings.cpp
+    )
+ENDIF()
 
   
 IF (STAR_USE_RPMALLOC)
