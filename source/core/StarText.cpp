@@ -1,6 +1,10 @@
 #include "StarText.hpp"
 #include "StarJsonExtra.hpp"
+#if defined(STAR_PLATFORM_N3DS)
+#include <regex>
+#else
 #include <re2/re2.h>
+#endif
 
 namespace Star {
 
@@ -34,12 +38,23 @@ namespace Text {
   std::string const AllEsc = strf("{:c}{:c}", CmdEsc, StartEsc);
   std::string const AllEscEnd = strf("{:c}{:c}{:c}", CmdEsc, StartEsc, EndEsc);
 
+#if defined(STAR_PLATFORM_N3DS)
+  static std::regex stripEscapeRegex(strf("\\{:c}[^;]*{:c}", CmdEsc, EndEsc));
+#else
   static RE2 stripEscapeRegex = strf("\\{:c}[^;]*{:c}", CmdEsc, EndEsc);
+#endif
+
   String stripEscapeCodes(String const& s) {
     if (s.empty())
       return s;
+
     std::string result = s.utf8();
+#if defined(STAR_PLATFORM_N3DS)
+    // PLACEHOLDER: std::regex replacement for N3DS until RE2 is integrated.
+    result = std::regex_replace(result, stripEscapeRegex, "");
+#else
     RE2::GlobalReplace(&result, stripEscapeRegex, "");
+#endif
     return String(std::move(result));
   }
 

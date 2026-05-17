@@ -256,7 +256,9 @@ if(STAR_LUA_APICHECK)
 endif()
 
 if(STAR_PLATFORM_N3DS)
-  add_definitions(-DLUA_32BITS)
+  add_definitions(-DLUA_INT_TYPE=LUA_INT_LONGLONG)
+  add_definitions(-DLLONG_MAX=9223372036854775807LL)
+  add_definitions(-DLLONG_MIN=(-9223372036854775807LL-1LL))
 endif()
 
 if(STAR_SYSTEM_WINDOWS)

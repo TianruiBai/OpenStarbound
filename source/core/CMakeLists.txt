@@ -201,8 +201,16 @@ SET (star_core_SOURCES
   )
 
 IF (STAR_PLATFORM_N3DS)
+  LIST(REMOVE_ITEM star_core_SOURCES
+      StarHostAddress.cpp
+      StarSocket.cpp
+      StarTcp.cpp
+      StarUdp.cpp
+    )
+
   SET (star_core_SOURCES ${star_core_SOURCES}
       StarAudio_stub.cpp
+      StarNetwork_stub.cpp
     )
 ELSE()
   SET (star_core_SOURCES ${star_core_SOURCES}

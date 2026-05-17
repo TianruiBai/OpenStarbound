@@ -417,6 +417,9 @@ Stub Inventory (current):
 - frontend/StarVoiceLuaBindings.cpp: fallback voice callback set when Voice singleton is unavailable (STUB)
 - core/StarHttpClient_stub.cpp: HTTP request path replaced with platform placeholder responses for STAR_PLATFORM_N3DS (STUB)
 - core/StarAudio_stub.cpp: handheld phase1 audio decode path is placeholder-only, returning empty reads (STUB/PLACEHOLDER)
+- core/StarNetwork_stub.cpp: hostname/socket/tcp/udp behavior replaced with explicit placeholder failures/no-ops for STAR_PLATFORM_N3DS phase1 (STUB/PLACEHOLDER)
+- core/StarString.cpp: regex path uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
+- core/StarText.cpp: escape-code strip regex uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 
 Next in Phase 1:
 - Expand capability-gated UI affordances in options/voice/settings panes.
