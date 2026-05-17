@@ -149,6 +149,30 @@
         "VCPKG_TARGET_TRIPLET": "arm64-osx-mixed",
         "CMAKE_LIBRARY_PATH": "${sourceParentDir}/lib/osx/arm64;${sourceParentDir}/lib/osx"
       }
+    },
+    {
+      "name": "n3ds-devkitarm-bootstrap",
+      "displayName": "Nintendo 3DS (devkitARM bootstrap)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceParentDir}/build/n3ds-bootstrap",
+      "toolchainFile": "${sourceParentDir}/toolchains/nintendo-3ds-devkitarm.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STAR_BUILD_GUI": false,
+        "STAR_N3DS_BOOTSTRAP_ONLY": true,
+        "BUILD_TESTING": false,
+        "STAR_ENABLE_STEAM_INTEGRATION": false,
+        "STAR_ENABLE_DISCORD_INTEGRATION": false,
+        "STAR_USE_JEMALLOC": false,
+        "STAR_USE_MIMALLOC": false,
+        "STAR_USE_RPMALLOC": false,
+        "STAR_PLATFORM_N3DS": true
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": [ "Windows", "Linux" ]
+        }
+      }
     }
   ],
   "buildPresets": [
@@ -193,6 +217,10 @@
     {
       "name": "macos-arm-release",
       "configurePreset": "macos-arm-release"
+    },
+    {
+      "name": "n3ds-devkitarm-bootstrap",
+      "configurePreset": "n3ds-devkitarm-bootstrap"
     }
   ],
   "testPresets": [

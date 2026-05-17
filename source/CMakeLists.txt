@@ -132,6 +132,8 @@ endif()
 
 option(STAR_BUILD_GUI "Build GUI utilities and Client" ON)
 
+option(STAR_N3DS_BOOTSTRAP_ONLY "Configure only minimal Nintendo 3DS bootstrap targets" OFF)
+
 if(STAR_BUILD_GUI)
   option(STAR_BUILD_QT_TOOLS "Build GUI utilities that require Qt" OFF)
   option(STAR_ENABLE_STEAM_INTEGRATION "Use Steam platform services" OFF)
@@ -176,6 +178,10 @@ endif()
 
 if(DEFINED STAR_ENABLE_DISCORD_INTEGRATION)
   message(STATUS "Using Discord platform services: ${STAR_ENABLE_DISCORD_INTEGRATION}")
+endif()
+
+if(STAR_N3DS_BOOTSTRAP_ONLY)
+  message(STATUS "Nintendo 3DS bootstrap-only configure is enabled")
 endif()
 
 message(STATUS "Using Lua API checks: ${STAR_LUA_APICHECK}")
@@ -462,6 +468,15 @@ elseif(STAR_SYSTEM_HAIKU)
   set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES} -lpthread -lexecinfo -lnetwork")
   set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lpthread -lexecinfo -lnetwork")
 
+endif()
+
+# Minimal configure mode used for early 3DS toolchain bring-up.
+if(STAR_PLATFORM_N3DS AND STAR_N3DS_BOOTSTRAP_ONLY)
+  add_custom_target(star_n3ds_bootstrap
+    COMMAND ${CMAKE_COMMAND} -E echo "OpenStarbound Nintendo 3DS bootstrap configure is ready"
+    VERBATIM
+  )
+  return()
 endif()
 
 # Find all required external libraries, based on build settings...
