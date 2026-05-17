@@ -234,7 +234,7 @@ bool ServerQueryThread::RequestChallenge::before(uint64_t time) {
   return m_time < time;
 }
 
-int ServerQueryThread::RequestChallenge::getChallenge() {
+int32_t ServerQueryThread::RequestChallenge::getChallenge() {
   return m_challenge;
 }
 

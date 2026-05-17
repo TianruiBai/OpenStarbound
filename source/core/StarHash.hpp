@@ -15,6 +15,10 @@ inline void hashCombine(size_t& hash, size_t comb) {
   hash ^= comb * 2654435761 + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 }
 
+inline void hashCombine(uint64_t& hash, size_t comb) {
+  hash ^= static_cast<uint64_t>(comb) * 2654435761ULL + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+}
+
 // Paul Larson hashing algorithm, very very *cheap* hashing function.
 class PLHasher {
 public:

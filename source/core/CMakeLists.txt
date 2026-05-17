@@ -229,7 +229,18 @@ ELSE()
     )
 ENDIF()
 
-IF (STAR_SYSTEM_FAMILY_UNIX)
+IF (STAR_PLATFORM_N3DS)
+  SET (star_core_SOURCES ${star_core_SOURCES}
+      StarException_n3ds_stub.cpp
+      StarFile_n3ds_stub.cpp
+      StarLockFile_n3ds_stub.cpp
+      StarSecureRandom_unix.cpp
+      StarSignalHandler_n3ds_stub.cpp
+      StarThread_n3ds_stub.cpp
+      StarTime_n3ds_stub.cpp
+      StarTls_n3ds_stub.cpp
+    )
+ELSEIF (STAR_SYSTEM_FAMILY_UNIX)
   SET (star_core_SOURCES ${star_core_SOURCES}
       StarDynamicLib_unix.cpp
       StarException_unix.cpp

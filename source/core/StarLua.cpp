@@ -594,6 +594,10 @@ void LuaEngine::setNullTerminated(bool nullTerminated) {
 }
 
 void LuaEngine::addImGui() {
+#if STAR_PLATFORM_N3DS
+  // STUB: ImGui Lua bindings are not available on N3DS phase 1.
+  return;
+#else
   lua_checkstack(m_state, 1);
 
   lua_rawgeti(m_state, LUA_REGISTRYINDEX, m_scriptDefaultEnvRegistryId);
@@ -601,6 +605,7 @@ void LuaEngine::addImGui() {
   lua_setfield(m_state, -2, "imgui");
 
   lua_pop(m_state, 1);
+#endif
 }
 
 LuaEngine* LuaEngine::luaEnginePtr(lua_State* state) {

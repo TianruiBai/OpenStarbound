@@ -255,11 +255,6 @@ if(STAR_LUA_APICHECK)
   add_definitions(-DLUA_USE_APICHECK)
 endif()
 
-if(STAR_PLATFORM_N3DS)
-  add_definitions(-DLUA_INT_TYPE=LUA_INT_LONGLONG)
-  add_definitions(-DLLONG_MAX=9223372036854775807LL)
-  add_definitions(-DLLONG_MIN=(-9223372036854775807LL-1LL))
-endif()
 
 if(STAR_SYSTEM_WINDOWS)
   # LUA_USE_WINDOWS is automatically defined in luaconf if _WIN32 is defined
@@ -538,9 +533,13 @@ if(STAR_PLATFORM_N3DS)
     NAMES zstd libzstd
     HINTS "$ENV{DEVKITPRO}/portlibs/3ds/lib"
   )
+  find_library(STAR_N3DS_BZ2_LIBRARY
+    NAMES bz2 libbz2
+    HINTS "$ENV{DEVKITPRO}/portlibs/3ds/lib"
+  )
 
-  if(NOT STAR_N3DS_ZSTD_INCLUDE_DIR OR NOT STAR_N3DS_ZSTD_LIBRARY)
-    message(FATAL_ERROR "Could NOT find Nintendo 3DS zstd headers/libs in devkitPro portlibs")
+  if(NOT STAR_N3DS_ZSTD_INCLUDE_DIR OR NOT STAR_N3DS_ZSTD_LIBRARY OR NOT STAR_N3DS_BZ2_LIBRARY)
+    message(FATAL_ERROR "Could NOT find Nintendo 3DS zstd/bz2 headers/libs in devkitPro portlibs")
   endif()
 
   include_directories(SYSTEM ${STAR_N3DS_ZSTD_INCLUDE_DIR})
@@ -583,7 +582,7 @@ if(NOT STAR_PLATFORM_N3DS)
       ${OGG_LIBRARY}
   )
 else()
-  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} ${STAR_N3DS_ZSTD_LIBRARY})
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} ${STAR_N3DS_ZSTD_LIBRARY} ${STAR_N3DS_BZ2_LIBRARY})
 endif()
 
 pkg_check_modules(PKG_WAYLAND "wayland-client>=1.18" wayland-egl wayland-cursor egl "xkbcommon>=0.5.0")

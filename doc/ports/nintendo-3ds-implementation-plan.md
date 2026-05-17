@@ -418,6 +418,14 @@ Stub Inventory (current):
 - core/StarHttpClient_stub.cpp: HTTP request path replaced with platform placeholder responses for STAR_PLATFORM_N3DS (STUB)
 - core/StarAudio_stub.cpp: handheld phase1 audio decode path is placeholder-only, returning empty reads (STUB/PLACEHOLDER)
 - core/StarNetwork_stub.cpp: hostname/socket/tcp/udp behavior replaced with explicit placeholder failures/no-ops for STAR_PLATFORM_N3DS phase1 (STUB/PLACEHOLDER)
+- core/StarThread_n3ds_stub.cpp: thread/mutex/condition-variable behavior is single-thread placeholder logic for STAR_PLATFORM_N3DS phase1 (STUB/PLACEHOLDER)
+- core/StarTime_n3ds_stub.cpp: monotonic/epoch time and date-format path use minimal handheld placeholders pending native timing backend (STUB/PLACEHOLDER)
+- core/StarException_n3ds_stub.cpp: exception stacktrace/fatal reporting path is reduced placeholder behavior pending N3DS diagnostics integration (STUB/PLACEHOLDER)
+- core/StarFile_n3ds_stub.cpp: file path/IO backend uses phase1 placeholder implementations where full 3DS filesystem semantics are not yet wired (STUB/PLACEHOLDER)
+- core/StarLockFile_n3ds_stub.cpp: lockfile API is phase1 placeholder behavior without inter-process locking guarantees (STUB/PLACEHOLDER)
+- core/StarSignalHandler_n3ds_stub.cpp: fatal/interrupt signal API is phase1 placeholder behavior pending handheld-native signal strategy (STUB/PLACEHOLDER)
+- core/StarLua.cpp: addImGui registration is disabled under STAR_PLATFORM_N3DS until handheld UI bindings are available (STUB)
+- core/StarTls_n3ds_stub.cpp: TLS runtime entrypoint is a single-thread placeholder to satisfy ARM EABI runtime references in phase1 (STUB/PLACEHOLDER)
 - core/StarString.cpp: regex path uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 - core/StarText.cpp: escape-code strip regex uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 
@@ -429,7 +437,32 @@ Next in Phase 1:
 Phase 1 preset set:
 - n3ds-devkitarm-bootstrap: toolchain/bootstrap-only validation path.
 - n3ds-devkitarm-phase1: non-bootstrap dependency-gating path used to progressively replace desktop assumptions.
+- n3ds-devkitarm-phase1-server: targeted server-only phase1 build path for rapid blocker iteration.
+- n3ds-devkitarm-phase1-utilities: targeted utility-tools phase1 build path for warning/isolation checks.
+
+Latest validation status (2026-05-17):
+- n3ds-devkitarm-phase1 configure+build now completes without hard compile/link errors in current branch state.
+- Build output still contains linker warnings on generated executables (for example missing _start entry and GNU-stack notes) that require dedicated linker/startup hardening.
+
+Current warning triage focus (phase1.1):
+- Classify warning-only items into:
+	- expected-for-now in cross-compile utility executables
+	- must-fix before first handheld runtime execution
+- Introduce target-specific build presets so day-to-day bring-up can focus on selected deliverables (server-first) while utility/tool warnings are tracked separately.
+- Add startup/runtime-link design notes for N3DS binaries before moving from build bring-up to runtime smoke tests.
 
 Current phase1 dependency blockers (if preset fails):
 - pkg-config not found in PATH (requires devkitPro msys2/usr/bin visibility).
 - missing 3ds portlibs packages (zlib/libpng/freetype/curl/libogg/libopus/libvorbisidec/libzstd).
+
+Immediate continuation steps (next pass):
+1. Add targeted n3ds phase1 build presets for server-only and utilities-only matrices.
+2. Keep STUB/PLACEHOLDER inventory current while replacing high-risk placeholders (thread/file/signal) with handheld-native implementations.
+3. Begin runtime bring-up checklist draft (entrypoint, startup objects, filesystem root assumptions, crash capture strategy).
+
+Runtime bring-up checklist draft (phase1.2):
+- Confirm intended N3DS executable format/link startup chain and required crt objects for real device launch.
+- Replace placeholder TLS entry shim with proper runtime-compatible thread pointer handling.
+- Define filesystem root mapping policy (romfs/sdmc) and migrate file stubs accordingly.
+- Replace placeholder signal/fatal pathways with handheld-appropriate crash reporting and safe abort semantics.
+- Validate minimum server startup path on hardware/emulator with deterministic config and logging enabled.

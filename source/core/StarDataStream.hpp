@@ -50,6 +50,10 @@ public:
   DataStream& operator<<(float d);
   DataStream& operator<<(double d);
 
+  // ARM EABI may map int to a distinct type from int32_t, so provide explicit bridges.
+  DataStream& operator<<(int d) { return *this << static_cast<int32_t>(d); }
+  DataStream& operator<<(unsigned int d) { return *this << static_cast<uint32_t>(d); }
+
   DataStream& operator>>(bool& d);
   DataStream& operator>>(char& c);
   DataStream& operator>>(int8_t& d);
@@ -62,6 +66,20 @@ public:
   DataStream& operator>>(uint64_t& d);
   DataStream& operator>>(float& d);
   DataStream& operator>>(double& d);
+
+  DataStream& operator>>(int& d) {
+    int32_t v;
+    *this >> v;
+    d = static_cast<int>(v);
+    return *this;
+  }
+
+  DataStream& operator>>(unsigned int& d) {
+    uint32_t v;
+    *this >> v;
+    d = static_cast<unsigned int>(v);
+    return *this;
+  }
 
   // Writes and reads a VLQ encoded integer.  Can write / read anywhere from 1
   // to 10 bytes of data, with integers of smaller (absolute) value taking up
@@ -203,15 +221,73 @@ private:
 
 template <typename EnumType, typename>
 DataStream& DataStream::operator<<(EnumType const& e) {
-  *this << (typename std::underlying_type<EnumType>::type)e;
+  using Underlying = typename std::underlying_type<EnumType>::type;
+
+  if constexpr (std::is_signed<Underlying>::value) {
+    if constexpr (sizeof(Underlying) == 1)
+      *this << static_cast<int8_t>(e);
+    else if constexpr (sizeof(Underlying) == 2)
+      *this << static_cast<int16_t>(e);
+    else if constexpr (sizeof(Underlying) == 4)
+      *this << static_cast<int32_t>(e);
+    else
+      *this << static_cast<int64_t>(e);
+  } else {
+    if constexpr (sizeof(Underlying) == 1)
+      *this << static_cast<uint8_t>(e);
+    else if constexpr (sizeof(Underlying) == 2)
+      *this << static_cast<uint16_t>(e);
+    else if constexpr (sizeof(Underlying) == 4)
+      *this << static_cast<uint32_t>(e);
+    else
+      *this << static_cast<uint64_t>(e);
+  }
+
   return *this;
 }
 
 template <typename EnumType, typename>
 DataStream& DataStream::operator>>(EnumType& e) {
-  typename std::underlying_type<EnumType>::type i;
-  *this >> i;
-  e = (EnumType)i;
+  using Underlying = typename std::underlying_type<EnumType>::type;
+
+  if constexpr (std::is_signed<Underlying>::value) {
+    if constexpr (sizeof(Underlying) == 1) {
+      int8_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    } else if constexpr (sizeof(Underlying) == 2) {
+      int16_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    } else if constexpr (sizeof(Underlying) == 4) {
+      int32_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    } else {
+      int64_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    }
+  } else {
+    if constexpr (sizeof(Underlying) == 1) {
+      uint8_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    } else if constexpr (sizeof(Underlying) == 2) {
+      uint16_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    } else if constexpr (sizeof(Underlying) == 4) {
+      uint32_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    } else {
+      uint64_t i;
+      *this >> i;
+      e = static_cast<EnumType>(i);
+    }
+  }
+
   return *this;
 }
 

@@ -569,6 +569,15 @@
 #define LUA_MAXINTEGER		LLONG_MAX
 #define LUA_MININTEGER		LLONG_MIN
 
+#elif defined(__GNUC__) /* }{ */
+/* GCC-compatible fallback for toolchains that omit LLONG_* macros in strict modes. */
+
+#define LUA_INTEGER		long long
+#define LUA_INTEGER_FRMLEN	"ll"
+
+#define LUA_MAXINTEGER		9223372036854775807LL
+#define LUA_MININTEGER		(-9223372036854775807LL - 1LL)
+
 #elif defined(LUA_USE_WINDOWS) /* }{ */
 /* in Windows, can use specific Windows types */
 

@@ -249,6 +249,24 @@
     {
       "name": "n3ds-devkitarm-phase1",
       "configurePreset": "n3ds-devkitarm-phase1"
+    },
+    {
+      "name": "n3ds-devkitarm-phase1-server",
+      "configurePreset": "n3ds-devkitarm-phase1",
+      "targets": [
+        "starbound_server"
+      ]
+    },
+    {
+      "name": "n3ds-devkitarm-phase1-utilities",
+      "configurePreset": "n3ds-devkitarm-phase1",
+      "targets": [
+        "asset_packer",
+        "asset_unpacker",
+        "btree_repacker",
+        "make_versioned_json",
+        "dump_versioned_json"
+      ]
     }
   ],
   "testPresets": [
