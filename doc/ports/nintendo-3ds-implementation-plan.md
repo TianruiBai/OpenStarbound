@@ -391,6 +391,7 @@ Common verification:
 2. Add a first platform macro integration pass in CMake/source headers.
 3. Create a small compile target matrix for "core + base + platform stubs" under 3DS preset.
 4. Begin renderer abstraction extraction plan before any full backend implementation.
+5. Verify the Citra launch path for .3dsx homebrew entrypoints; direct-open currently stops at loader time with "Failed to find title id for ROM (Error 0)" even though the packaged 3DSX and SMDH are valid.
 
 ## Phase 1 Progress Snapshot (Branch 3ds-port)
 
@@ -425,7 +426,8 @@ Stub Inventory (current):
 - core/StarLockFile_n3ds_stub.cpp: lockfile API is phase1 placeholder behavior without inter-process locking guarantees (STUB/PLACEHOLDER)
 - core/StarSignalHandler_n3ds_stub.cpp: fatal/interrupt signal API is phase1 placeholder behavior pending handheld-native signal strategy (STUB/PLACEHOLDER)
 - core/StarLua.cpp: addImGui registration is disabled under STAR_PLATFORM_N3DS until handheld UI bindings are available (STUB)
-- core/StarTls_n3ds_stub.cpp: TLS runtime entrypoint is a single-thread placeholder to satisfy ARM EABI runtime references in phase1 (STUB/PLACEHOLDER)
+- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — all Renderer abstract methods are no-op stubs; no GPU output; screenSize() returns 400x240 (top screen) placeholder (STUB/PLACEHOLDER)
+- application/StarMainApplication_n3ds_stub.cpp: N3dsApplicationController — all ApplicationController abstract methods stubbed without SDL3/desktop deps; runMainApplication() uses aptMainLoop 3DS main loop skeleton (STUB/PLACEHOLDER)
 - core/StarString.cpp: regex path uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 - core/StarText.cpp: escape-code strip regex uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 
@@ -437,18 +439,28 @@ Next in Phase 1:
 Phase 1 preset set:
 - n3ds-devkitarm-bootstrap: toolchain/bootstrap-only validation path.
 - n3ds-devkitarm-phase1: non-bootstrap dependency-gating path used to progressively replace desktop assumptions.
-- n3ds-devkitarm-phase1-server: targeted server-only phase1 build path for rapid blocker iteration.
+- n3ds-devkitarm-phase1-gamecore: game+core+base linkage check using the server executable as a compile proxy (not a deliverable — the server will not run on 3DS). This preset exists only to validate core/game compilation before the client's GUI dependencies are wired.
 - n3ds-devkitarm-phase1-utilities: targeted utility-tools phase1 build path for warning/isolation checks.
+- n3ds-devkitarm-phase1-client: primary client build path targeting starbound ELF with STAR_BUILD_GUI=ON, N3DS renderer stub, and citro2d/citro3d linked. STATUS: links successfully (ARM32 hard-float ELF).
 
 Latest validation status (2026-05-17):
 - n3ds-devkitarm-phase1 configure+build now completes without hard compile/link errors in current branch state.
-- Build output still contains linker warnings on generated executables (for example missing _start entry and GNU-stack notes) that require dedicated linker/startup hardening.
+- Targeted presets n3ds-devkitarm-phase1-gamecore and n3ds-devkitarm-phase1-utilities both build successfully after N3DS startup/link updates.
+- NOTE: starbound_server in the gamecore preset is a compile proxy only. The 3DS does not run a server — the deliverable is the client (starbound).
+- n3ds-devkitarm-phase1-client preset added: starbound client ELF (ARM32, hard-float, 3dsx.specs) links successfully as of 2026-05-17.
+- Client build required: N3DS renderer stub (N3dsStubRenderer), N3DS application controller stub (N3dsApplicationController), and N3DS main application loop (StarMainApplication_n3ds_stub.cpp) replacing SDL3/OpenGL/GLEW/PC-platform files.
+- N3DS entrypoint now initializes gfx and RomFS before application startup so the next runtime pass has explicit handheld mounts instead of assuming loader-provided state.
+- libopus from devkitPro portlibs linked for frontend voice subsystem.
+- citro2d/citro3d from devkitPro libctru linked as STAR_EXT_GUI_LIBS for the client build path.
+- _start entrypoint warning class has been eliminated by applying 3DS specs linking and explicit libctru linkage in N3DS mode.
+- Remaining warning focus is now primarily GNU-stack note warnings from toolchain startup objects.
+- Citra direct-open of the generated .3dsx still stops at loader time with "Failed to find title id for ROM (Error 0)"; packaged 3DSX metadata/RomFS are present, so the remaining blocker is launcher semantics rather than the game binary.
 
 Current warning triage focus (phase1.1):
 - Classify warning-only items into:
 	- expected-for-now in cross-compile utility executables
 	- must-fix before first handheld runtime execution
-- Introduce target-specific build presets so day-to-day bring-up can focus on selected deliverables (server-first) while utility/tool warnings are tracked separately.
+- Introduce target-specific build presets so day-to-day bring-up can focus on game/core linkage (using server executable as compile proxy) while utility/tool warnings are tracked separately.
 - Add startup/runtime-link design notes for N3DS binaries before moving from build bring-up to runtime smoke tests.
 
 Current phase1 dependency blockers (if preset fails):
@@ -456,13 +468,17 @@ Current phase1 dependency blockers (if preset fails):
 - missing 3ds portlibs packages (zlib/libpng/freetype/curl/libogg/libopus/libvorbisidec/libzstd).
 
 Immediate continuation steps (next pass):
-1. Add targeted n3ds phase1 build presets for server-only and utilities-only matrices.
-2. Keep STUB/PLACEHOLDER inventory current while replacing high-risk placeholders (thread/file/signal) with handheld-native implementations.
-3. Begin runtime bring-up checklist draft (entrypoint, startup objects, filesystem root assumptions, crash capture strategy).
+1. Runtime smoke test: convert the linked starbound ELF to a .3dsx and run on Citra/real hardware to identify first crash/hang point.
+2. Implement filesystem root mapping (romfs vs sdmc) in StarFile_n3ds_stub.cpp so asset loading can begin.
+3. Replace placeholder main loop timing (gspWaitForVBlank) with a proper fixed-timestep scheduler.
+4. Begin Phase 3 rendering: replace N3dsStubRenderer with a citro3d-backed implementation drawing the first frame.
+5. Keep STUB/PLACEHOLDER inventory current while replacing high-risk placeholders (thread/file/signal) with handheld-native implementations.
 
-Runtime bring-up checklist draft (phase1.2):
-- Confirm intended N3DS executable format/link startup chain and required crt objects for real device launch.
+Runtime bring-up checklist draft (phase1.2 — client focused):
+- Confirm intended N3DS executable format/link startup chain and required crt objects for real device launch. (completed: initial path established)
+- Convert starbound ELF to .3dsx with makerom/bannertool and validate it boots on Citra emulator.
 - Replace placeholder TLS entry shim with proper runtime-compatible thread pointer handling.
 - Define filesystem root mapping policy (romfs/sdmc) and migrate file stubs accordingly.
 - Replace placeholder signal/fatal pathways with handheld-appropriate crash reporting and safe abort semantics.
-- Validate minimum server startup path on hardware/emulator with deterministic config and logging enabled.
+- Wire aptMainLoop input polling (hidScanInput / hidKeysDown / hidTouchRead) and translate to InputEvent for Application::processInput.
+- Validate minimum client startup path (remote-only, no local server) on hardware/emulator with deterministic config and logging enabled.

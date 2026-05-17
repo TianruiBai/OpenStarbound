@@ -6,7 +6,13 @@
 namespace Star {
 
 void File::makeDirectoryRecursive(String const& fileName) {
+  if (fileName.empty() || fileName == "." || fileName == "/" || fileName.regexMatch("^[A-Za-z]+:/?$", false, false))
+    return;
+
   auto parent = dirName(fileName);
+  if (parent == fileName)
+    return;
+
   if (!isDirectory(parent))
     makeDirectoryRecursive(parent);
   if (!isDirectory(fileName))

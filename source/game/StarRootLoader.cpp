@@ -116,6 +116,30 @@ R"JSON(
     }
   )JSON");
 
+#ifdef STAR_PLATFORM_N3DS
+Json const N3dsBootConfiguration = Json::parseJson(R"JSON(
+    {
+      "assetDirectories" : [
+        "romfs:/"
+      ],
+
+      "storageDirectory" : "romfs:/",
+
+      "assetsSettings" : {
+        "pathIgnore" : [],
+        "digestIgnore" : [
+          ".*"
+        ]
+      },
+
+      "defaultConfiguration" : {
+        "allowAdminCommandsFromAnyone" : true,
+        "anonymousConnectionsAreAdmin" : true
+      }
+    }
+  )JSON");
+#endif
+
 RootLoader::RootLoader(Defaults defaults) {
   String baseConfigFile;
   Maybe<String> userConfigFile;
@@ -162,7 +186,13 @@ pair<RootUPtr, RootLoader::Options> RootLoader::commandInitOrDie(int argc, char*
 Root::Settings RootLoader::rootSettingsForOptions(Options const& options) const {
   try {
     String bootConfigFile = options.parameters.value("bootconfig").maybeFirst().value("sbinit.config");
-    Json bootConfig = Json::parseJson(File::readFileString(bootConfigFile));
+    Json bootConfig;
+#ifdef STAR_PLATFORM_N3DS
+    if (bootConfigFile == "romfs:/sbinit.config")
+      bootConfig = N3dsBootConfiguration;
+    else
+#endif
+      bootConfig = Json::parseJson(File::readFileString(bootConfigFile));
 
     Json assetsSettings = jsonMerge(
         BaseAssetsSettings,

@@ -66,6 +66,8 @@ set(CMAKE_STRIP "${ARM_STRIP}")
 set(N3DS_ARCH_FLAGS "-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft")
 set(CMAKE_C_FLAGS_INIT "${N3DS_ARCH_FLAGS} -D_3DS")
 set(CMAKE_CXX_FLAGS_INIT "${N3DS_ARCH_FLAGS} -D_3DS")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "${N3DS_ARCH_FLAGS} -specs=3dsx.specs")
+set(CMAKE_EXE_LINKER_FLAGS "${N3DS_ARCH_FLAGS} -specs=3dsx.specs" CACHE STRING "N3DS executable linker flags" FORCE)
 
 # Allow CMake to find headers/libs in the devkitPro sysroots first.
 set(CMAKE_FIND_ROOT_PATH

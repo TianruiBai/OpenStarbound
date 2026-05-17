@@ -1,0 +1,82 @@
+[   0.000366] Config <Info> citra\config.cpp:Config::LoadINI:46: Successfully loaded C:\Users\weyst\AppData\Roaming/Citra/config/sdl2-config.ini
+[   0.129064] Input <Info> input_common\udp\client.cpp:InputCommon::CemuhookUDP::Client::StartCommunication:206: Starting communication with UDP input server on 127.0.0.1:26760
+[   0.743159] Frontend <Info> citra\citra.cpp:main:404: Citra Version: Nightly 2104 | HEAD-0ff3440
+[   0.743168] Config <Info> common\settings.cpp:Settings::LogSettings:83: Citra Configuration:
+[   0.743172] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Core_UseCpuJit: true
+[   0.743173] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Core_CPUClockPercentage: 100
+[   0.743174] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseGLES: false
+[   0.743175] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_GraphicsAPI: OpenGL
+[   0.743177] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_AsyncShaders: false
+[   0.743180] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_AsyncPresentation: true
+[   0.743181] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_SpirvShaderGen: true
+[   0.743183] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_Debug: false
+[   0.743185] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseHwShader: true
+[   0.743185] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_ShadersAccurateMul: true
+[   0.743186] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseShaderJit: true
+[   0.743187] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseResolutionFactor: 1
+[   0.743187] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_FrameLimit: 100
+[   0.743188] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_VSyncNew: true
+[   0.743189] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_PostProcessingShader: none (builtin)
+[   0.743189] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_FilterMode: true
+[   0.743190] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_TextureFilter: None
+[   0.743191] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_TextureSampling: GameControlled
+[   0.743192] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Stereoscopy_Render3d: 0
+[   0.743193] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Stereoscopy_Factor3d: 0
+[   0.743194] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Stereoscopy_MonoRenderOption: 0
+[   0.743195] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_LayoutOption: 0
+[   0.743195] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_SwapScreen: false
+[   0.743196] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_UprightScreen: false
+[   0.743208] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_LargeScreenProportion: 4
+[   0.743209] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_DumpTextures: false
+[   0.743209] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_CustomTextures: false
+[   0.743210] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_PreloadTextures: false
+[   0.743210] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_AsyncCustomLoading: true
+[   0.743211] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_UseDiskShaderCache: true
+[   0.743212] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_Emulation: HLE
+[   0.743212] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_OutputType: 0
+[   0.743213] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_OutputDevice: auto
+[   0.743213] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_InputType: 0
+[   0.743214] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_InputDevice: auto
+[   0.743214] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_EnableAudioStretching: true
+[   0.743218] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterRightName: blank
+[   0.743218] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterRightConfig: 
+[   0.743219] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterRightFlip: 0
+[   0.743219] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_InnerName: blank
+[   0.743220] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_InnerConfig: 
+[   0.743220] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_InnerFlip: 0
+[   0.743221] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterLeftName: blank
+[   0.743221] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterLeftConfig: 
+[   0.743221] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterLeftFlip: 0
+[   0.743222] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: DataStorage_UseVirtualSd: true
+[   0.743223] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: DataStorage_UseCustomStorage: false
+[   0.743223] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_IsNew3ds: true
+[   0.743224] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_LLEApplets: false
+[   0.743225] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_RegionValue: -1
+[   0.743225] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_PluginLoader: false
+[   0.743226] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_PluginLoaderAllowed: true
+[   0.743226] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Debugging_DelayStartForLLEModules: true
+[   0.743227] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Debugging_UseGdbstub: false
+[   0.743227] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Debugging_GdbstubPort: 24689
+[   0.831401] Audio.DSP <Info> audio_core\hle\aac_decoder.cpp:AudioCore::HLE::AACDecoder::AACDecoder:27: Created FAAD2 AAC decoder.
+[   0.906965] Audio.Sink <Info> audio_core\cubeb_sink.cpp:AudioCore::CubebSink::Impl::StateCallback:135: Cubeb Audio Stream Started
+[   0.907003] RPC_Server <Info> core\rpc\rpc_server.cpp:Core::RPC::RPCServer::RPCServer:14: Starting RPC server.
+[   0.907329] RPC_Server <Info> core\rpc\rpc_server.cpp:Core::RPC::RPCServer::HandleRequestsLoop:104: Request handler started.
+[   0.910050] Service.HTTP <Error> core\hle\service\http\http_c.cpp:Service::HTTP::HTTP_C::DecryptClCertA:1974: ClCertA file missing
+[   0.910204] Render.OpenGL <Info> video_core\renderer_opengl\gl_driver.cpp:OpenGL::Driver::ReportDriverInfo:135: GL_VERSION: 4.3.0 NVIDIA 591.74
+[   0.910205] Render.OpenGL <Info> video_core\renderer_opengl\gl_driver.cpp:OpenGL::Driver::ReportDriverInfo:136: GL_VENDOR: NVIDIA Corporation
+[   0.910207] Render.OpenGL <Info> video_core\renderer_opengl\gl_driver.cpp:OpenGL::Driver::ReportDriverInfo:137: GL_RENDERER: NVIDIA GeForce RTX 4050 Laptop GPU/PCIe/SSE2
+[   1.083505] Loader <Info> core\loader\ncch.cpp:Loader::AppLoader_NCCH::Load:268: Program ID: 0004000000F0A100
+[   1.083624] Service.FS <Warning> core\file_sys\ncch_container.cpp:FileSys::NCCHContainer::OpenFile:126: Failed to open C:\Users\weyst\AppData\Roaming/Citra/sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/0004000e/00f0a100/content/00000000.app
+[   1.180005] Loader <Info> core\hle\kernel\process.cpp:Kernel::Process::ParseKernelCaps:196: ExHeader kernel version: 2.33
+[   1.192804] Render.OpenGL <Info> video_core\renderer_opengl\gl_shader_disk_cache.cpp:OpenGL::ShaderDiskCache::LoadTransferable:175: Found a transferable disk cache with 0 entries
+[   1.192819] Render.OpenGL <Info> video_core\renderer_opengl\gl_shader_disk_cache.cpp:OpenGL::ShaderDiskCache::LoadPrecompiled:186: No precompiled shader cache found for game with title id=0004000000F0A100
+[   3.746384] Service.SRV <Warning> core\hle\service\sm\srv.cpp:Service::SM::SRV::RegisterClient:63: (STUBBED) called. Caller PID=11
+[   3.766950] Service.APT <Warning> core\hle\service\apt\apt.cpp:Service::APT::Module::APTInterface::NotifyToWait:343: (STUBBED) app_id=768
+[   3.767730] Service.APT <Warning> core\hle\service\apt\apt.cpp:Service::APT::Module::APTInterface::AppletUtility:694: (STUBBED) called command=0X00000007, input_size=0X00000004, output_size=0X00000001
+[   3.767813] Service.APT <Warning> core\hle\service\apt\apt.cpp:Service::APT::Module::APTInterface::AppletUtility:694: (STUBBED) called command=0X00000004, input_size=0X00000001, output_size=0X00000001
+[   3.959347] Service.FS <Error> core/file_sys/archive_backend.h:FileSys::ArchiveBackend::GetOpenDelayNs:194: Delay generator was not initalized. Using default
+[   4.074561] RPC_Server <Info> core\rpc\server.cpp:Core::RPC::Server::NewRequestCallback:36: Received end packet
+[   4.075174] Audio.DSP <Info> audio_core\hle\aac_decoder.cpp:AudioCore::HLE::AACDecoder::~AACDecoder:35: Destroyed FAAD2 AAC decoder.
+[   4.075598] Audio.Sink <Info> audio_core\cubeb_sink.cpp:AudioCore::CubebSink::Impl::StateCallback:138: Cubeb Audio Stream Stopped
+[   4.088860] Kernel <Info> core\hle\kernel\process.cpp:Kernel::Process::~Process:634: Cleaning up process 11
+[   4.088860] Kernel <Info> core\hle\kernel\process.cpp:Kernel::Process::~Process:634: Cleaning up process 11

@@ -205,6 +205,9 @@ void CompressedFile::sync() {
 }
 
 void CompressedFile::open(IOMode mode) {
+  if (m_filename.empty())
+    throw IOException("Cannot open compressed file, no filename set");
+
   setMode(mode);
   String modeString;
 

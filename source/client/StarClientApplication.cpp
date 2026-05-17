@@ -32,8 +32,10 @@
 #include "StarHttpTrustDialog.hpp"
 #include "StarMainInterfaceTypes.hpp"
 
+#ifndef STAR_PLATFORM_N3DS
 #include "imgui.h"
 #include "imgui_freetype.h"
+#endif
 
 #if defined STAR_SYSTEM_WINDOWS
 #include <windows.h>
@@ -157,7 +159,11 @@ Json const AdditionalDefaultConfiguration = Json::parseJson(R"JSON(
   )JSON");
 
 void ClientApplication::startup(StringList const& cmdLineArgs) {
+#ifdef STAR_PLATFORM_N3DS
+  RootLoader rootLoader({AdditionalAssetsSettings, AdditionalDefaultConfiguration, {}, LogLevel::Info, false, {}});
+#else
   RootLoader rootLoader({AdditionalAssetsSettings, AdditionalDefaultConfiguration, String("starbound.log"), LogLevel::Info, false, String("starbound.config")});
+#endif
   m_root = rootLoader.initOrDie(cmdLineArgs).first;
 
   Logger::info("OpenStarbound Client v{} ({}) for v{} ({}) Source ID: {} Protocol: {}", OpenStarVersionString, OpenStarReleaseNameString, StarVersionString, StarArchitectureString, StarSourceIdentifierString, StarProtocolVersion);
@@ -246,6 +252,8 @@ void ClientApplication::applicationInit(ApplicationControllerPtr appController) 
   auto assets = m_root->assets();
 
   {
+#ifndef STAR_PLATFORM_N3DS
+    // STUB: ImGui font/config setup disabled on N3DS until handheld UI bindings are available.
     auto& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     m_immediateFont = *assets->bytes("/hobo.ttf");
@@ -254,6 +262,7 @@ void ClientApplication::applicationInit(ApplicationControllerPtr appController) 
     config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_ForceAutoHint;
     io.Fonts->AddFontFromMemoryTTF(m_immediateFont.ptr(), m_immediateFont.size(),
       16, &config, io.Fonts->GetGlyphRangesDefault());
+#endif
   }
 
   m_minInterfaceScale = assets->json("/interface.config:minInterfaceScale").toFloat();
@@ -376,6 +385,7 @@ void ClientApplication::processInput(InputEvent const& event) {
 void ClientApplication::update() {
   float dt = GlobalTimestep * GlobalTimescale;
   auto& app = appController();
+
   if (m_state >= MainAppState::Title) {
     if (auto p2pNetworkingService = app->p2pNetworkingService()) {
       if (auto join = p2pNetworkingService->pullPendingJoin()) {
@@ -600,10 +610,43 @@ unsigned ClientApplication::framesSkipped() const {
 void ClientApplication::changeState(MainAppState newState) {
   MainAppState oldState = m_state;
   m_state = newState;
+#ifdef STAR_PLATFORM_N3DS
+  auto mainAppStateName = [](MainAppState state) {
+    switch (state) {
+    case MainAppState::Quit:
+      return "Quit";
+    case MainAppState::Startup:
+      return "Startup";
+    case MainAppState::SteamFlatpakWarning:
+      return "SteamFlatpakWarning";
+    case MainAppState::Mods:
+      return "Mods";
+    case MainAppState::ModsWarning:
+      return "ModsWarning";
+    case MainAppState::Splash:
+      return "Splash";
+    case MainAppState::Error:
+      return "Error";
+    case MainAppState::Title:
+      return "Title";
+    case MainAppState::SinglePlayer:
+      return "SinglePlayer";
+    case MainAppState::MultiPlayer:
+      return "MultiPlayer";
+    }
+
+    return "Unknown";
+  };
+  Logger::info("OSBN3DSState: {} -> {}", mainAppStateName(oldState), mainAppStateName(newState));
+#endif
   auto& app = appController();
 
-  if (m_state == MainAppState::Quit)
+  if (m_state == MainAppState::Quit) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("OSBN3DSState: forwarding Quit to app controller");
+#endif
     app->quit();
+  }
 
   if (newState == MainAppState::Mods)
     m_cinematicOverlay->load(m_root->assets()->json("/cinematics/mods/modloading.cinematic"));
@@ -1044,7 +1087,14 @@ void ClientApplication::updateTitle(float dt) {
     }
 
   } else if (m_titleScreen->currentState() == TitleState::Quit) {
+#ifdef STAR_PLATFORM_N3DS
+    // N3DS phase1: keep the client alive while title/menu input is still
+    // being ported. Manual app exit is handled by L+R+START in the N3DS loop.
+    Logger::info("OSBN3DSState: intercepted TitleState::Quit, resetting title state");
+    m_titleScreen->resetState();
+#else
     changeState(MainAppState::Quit);
+#endif
   }
 }
 

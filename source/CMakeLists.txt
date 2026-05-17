@@ -537,9 +537,20 @@ if(STAR_PLATFORM_N3DS)
     NAMES bz2 libbz2
     HINTS "$ENV{DEVKITPRO}/portlibs/3ds/lib"
   )
+  find_library(STAR_N3DS_CTRU_LIBRARY
+    NAMES ctru libctru
+    HINTS "$ENV{DEVKITPRO}/libctru/lib"
+  )
+  find_library(STAR_N3DS_OPUS_LIBRARY
+    NAMES opus libopus
+    HINTS "$ENV{DEVKITPRO}/portlibs/3ds/lib"
+  )
 
-  if(NOT STAR_N3DS_ZSTD_INCLUDE_DIR OR NOT STAR_N3DS_ZSTD_LIBRARY OR NOT STAR_N3DS_BZ2_LIBRARY)
-    message(FATAL_ERROR "Could NOT find Nintendo 3DS zstd/bz2 headers/libs in devkitPro portlibs")
+  if(NOT STAR_N3DS_ZSTD_INCLUDE_DIR OR NOT STAR_N3DS_ZSTD_LIBRARY OR NOT STAR_N3DS_BZ2_LIBRARY OR NOT STAR_N3DS_CTRU_LIBRARY)
+    message(FATAL_ERROR "Could NOT find Nintendo 3DS zstd/bz2/ctru headers/libs in devkitPro paths")
+  endif()
+  if(NOT STAR_N3DS_OPUS_LIBRARY)
+    message(WARNING "libopus not found in devkitPro portlibs — voice/audio encode-decode will fail at runtime")
   endif()
 
   include_directories(SYSTEM ${STAR_N3DS_ZSTD_INCLUDE_DIR})
@@ -582,7 +593,10 @@ if(NOT STAR_PLATFORM_N3DS)
       ${OGG_LIBRARY}
   )
 else()
-  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} ${STAR_N3DS_ZSTD_LIBRARY} ${STAR_N3DS_BZ2_LIBRARY})
+  set(STAR_EXT_LIBS ${STAR_EXT_LIBS} ${STAR_N3DS_ZSTD_LIBRARY} ${STAR_N3DS_BZ2_LIBRARY} ${STAR_N3DS_CTRU_LIBRARY})
+  if(STAR_N3DS_OPUS_LIBRARY)
+    set(STAR_EXT_LIBS ${STAR_EXT_LIBS} ${STAR_N3DS_OPUS_LIBRARY})
+  endif()
 endif()
 
 pkg_check_modules(PKG_WAYLAND "wayland-client>=1.18" wayland-egl wayland-cursor egl "xkbcommon>=0.5.0")
@@ -600,35 +614,70 @@ if(STAR_SYSTEM_FAMILY STREQUAL "unix" AND NOT STAR_SYSTEM_HAIKU)
 endif()
 
 if(STAR_BUILD_GUI)
-  find_package(SDL3 CONFIG REQUIRED)
+  if(STAR_PLATFORM_N3DS)
+    # Nintendo 3DS: skip SDL3/OpenGL/GLEW — the 3DS GPU is accessed via citro3d/citro2d.
+    # Phase 1 wires the libraries; the actual rendering backend is implemented in Phase 3.
+    set(N3DS_PORTLIBS_LIB "$ENV{DEVKITPRO}/portlibs/3ds/lib")
+    set(N3DS_PORTLIBS_INC "$ENV{DEVKITPRO}/portlibs/3ds/include")
+    set(N3DS_CTRU_LIB "$ENV{DEVKITPRO}/libctru/lib")
+    set(N3DS_CTRU_INC "$ENV{DEVKITPRO}/libctru/include")
 
-  set(STAR_EXT_GUI_LIBS
-    $<TARGET_NAME_IF_EXISTS:SDL3::SDL3main>
-    $<IF:$<TARGET_EXISTS:SDL3::SDL3>,SDL3::SDL3,SDL3::SDL3-static>
-  )
+    find_library(STAR_N3DS_CITRO3D_LIBRARY citro3d PATHS "${N3DS_PORTLIBS_LIB}" "${N3DS_CTRU_LIB}" NO_DEFAULT_PATH)
+    find_library(STAR_N3DS_CITRO2D_LIBRARY citro2d PATHS "${N3DS_PORTLIBS_LIB}" "${N3DS_CTRU_LIB}" NO_DEFAULT_PATH)
 
-  find_package(OpenGL REQUIRED)
-  find_package(GLEW REQUIRED)
+    if(STAR_N3DS_CITRO3D_LIBRARY)
+      message(STATUS "Found citro3d: ${STAR_N3DS_CITRO3D_LIBRARY}")
+    else()
+      message(WARNING "citro3d not found in ${N3DS_PORTLIBS_LIB} — 3DS rendering will be stubbed only")
+    endif()
+    if(STAR_N3DS_CITRO2D_LIBRARY)
+      message(STATUS "Found citro2d: ${STAR_N3DS_CITRO2D_LIBRARY}")
+    else()
+      message(WARNING "citro2d not found in ${N3DS_PORTLIBS_LIB} — 2D sprite rendering will be stubbed only")
+    endif()
 
-  include_directories(SYSTEM ${GLEW_INCLUDE_DIR})
-  set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
-      ${OPENGL_LIBRARY}
-      $<IF:$<TARGET_EXISTS:GLEW::glew_s>,GLEW::glew_s,GLEW>
-  )
+    include_directories(SYSTEM "${N3DS_CTRU_INC}" "${N3DS_PORTLIBS_INC}")
 
-  if(STAR_SYSTEM_MACOS)
-    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} "-framework CoreAudio")
-  endif()
+    set(STAR_EXT_GUI_LIBS "")
+    foreach(_n3ds_gui_lib
+        "${STAR_N3DS_CITRO2D_LIBRARY}"
+        "${STAR_N3DS_CITRO3D_LIBRARY}")
+      if(_n3ds_gui_lib)
+        list(APPEND STAR_EXT_GUI_LIBS "${_n3ds_gui_lib}")
+      endif()
+    endforeach()
+    message(STATUS "N3DS GUI libs: ${STAR_EXT_GUI_LIBS}")
+  else()
+    find_package(SDL3 CONFIG REQUIRED)
 
-  if(STAR_ENABLE_STEAM_INTEGRATION)
-    find_package(SteamApi REQUIRED)
-    include_directories(SYSTEM ${STEAM_API_INCLUDE_DIR})
-    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} ${STEAM_API_LIBRARY})
-  endif()
+    set(STAR_EXT_GUI_LIBS
+      $<TARGET_NAME_IF_EXISTS:SDL3::SDL3main>
+      $<IF:$<TARGET_EXISTS:SDL3::SDL3>,SDL3::SDL3,SDL3::SDL3-static>
+    )
 
-  if(STAR_ENABLE_DISCORD_INTEGRATION)
-    find_package(DiscordApi REQUIRED)
-    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} ${DISCORD_API_LIBRARY})
+    find_package(OpenGL REQUIRED)
+    find_package(GLEW REQUIRED)
+
+    include_directories(SYSTEM ${GLEW_INCLUDE_DIR})
+    set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS}
+        ${OPENGL_LIBRARY}
+        $<IF:$<TARGET_EXISTS:GLEW::glew_s>,GLEW::glew_s,GLEW>
+    )
+
+    if(STAR_SYSTEM_MACOS)
+      set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} "-framework CoreAudio")
+    endif()
+
+    if(STAR_ENABLE_STEAM_INTEGRATION)
+      find_package(SteamApi REQUIRED)
+      include_directories(SYSTEM ${STEAM_API_INCLUDE_DIR})
+      set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} ${STEAM_API_LIBRARY})
+    endif()
+
+    if(STAR_ENABLE_DISCORD_INTEGRATION)
+      find_package(DiscordApi REQUIRED)
+      set(STAR_EXT_GUI_LIBS ${STAR_EXT_GUI_LIBS} ${DISCORD_API_LIBRARY})
+    endif()
   endif()
 endif()
 

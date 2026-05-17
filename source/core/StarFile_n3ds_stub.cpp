@@ -5,15 +5,37 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace Star {
 
 namespace {
   std::atomic<uint64_t> sTempCounter{0};
+  String sCurrentDirectory = "sdmc:/OpenStarbound";
+  bool isAbsolutePath(String const& path);
+
+  String normalizeIoPath(String const& inputPath) {
+    auto normalized = File::convertDirSeparators(inputPath).trim();
+    if (normalized.empty())
+      throw IOException("Invalid empty path");
+
+    if (normalized.regexMatch("^[A-Za-z]+:$", false, false))
+      normalized += "/";
+
+    if (!isAbsolutePath(normalized))
+      normalized = File::relativeTo(File::currentDirectory(), normalized);
+
+    return normalized;
+  }
 
   bool statPath(char const* path, struct stat& st) {
     return ::stat(path, &st) == 0;
+  }
+
+  bool isAbsolutePath(String const& path) {
+    return path.beginsWith("/") || path.regexMatch("^[A-Za-z]+:/", false, false);
   }
 
   char const* modeString(IOMode mode) {
@@ -40,22 +62,54 @@ String File::convertDirSeparators(String const& path) {
 }
 
 String File::currentDirectory() {
-  // PLACEHOLDER: no cwd query API is wired for N3DS phase 1.
-  return ".";
+  return sCurrentDirectory;
 }
 
-void File::changeDirectory(String const&) {
-  // STUB: directory switching is not implemented for N3DS phase 1.
+void File::changeDirectory(String const& dirName) {
+  auto normalized = convertDirSeparators(dirName);
+  if (normalized.empty())
+    return;
+
+  String nextDirectory;
+  if (isAbsolutePath(normalized))
+    nextDirectory = normalized.trimEnd("/");
+  else
+    nextDirectory = relativeTo(sCurrentDirectory, normalized).trimEnd("/");
+
+  if (nextDirectory.regexMatch("^[A-Za-z]+:$", false, false))
+    nextDirectory += "/";
+
+  sCurrentDirectory = std::move(nextDirectory);
 }
 
 void File::makeDirectory(String const& dirName) {
-  if (::mkdir(dirName.utf8Ptr(), 0777) != 0 && errno != EEXIST)
+  auto path = normalizeIoPath(dirName);
+  if (::mkdir(path.utf8Ptr(), 0777) != 0 && errno != EEXIST)
     throw IOException::format("could not create directory '{}', {}", dirName, std::strerror(errno));
 }
 
-List<pair<String, bool>> File::dirList(String const&, bool) {
-  // PLACEHOLDER: directory enumeration is deferred for N3DS phase 1.
-  return {};
+List<pair<String, bool>> File::dirList(String const& dirName, bool skipDots) {
+  List<pair<String, bool>> fileList;
+  auto path = normalizeIoPath(dirName);
+  DIR* directory = ::opendir(path.utf8Ptr());
+  if (directory == nullptr)
+    throw IOException::format("dirList failed on dir: '{}'", dirName.utf8Ptr());
+
+  for (dirent* entry = ::readdir(directory); entry != nullptr; entry = ::readdir(directory)) {
+    String entryString = entry->d_name;
+    if (!skipDots || (entryString != "." && entryString != "..")) {
+      bool isDirectory = false;
+      if (entry->d_type == DT_DIR) {
+        isDirectory = true;
+      } else if (entry->d_type == DT_LNK || entry->d_type == DT_UNKNOWN) {
+        isDirectory = File::isDirectory(File::relativeTo(dirName, entryString));
+      }
+      fileList.append({entryString, isDirectory});
+    }
+  }
+
+  ::closedir(directory);
+  return fileList;
 }
 
 String File::baseName(String const& fileName) {
@@ -77,7 +131,10 @@ String File::dirName(String const& fileName) {
 }
 
 String File::relativeTo(String const& relativeBase, String const& path) {
-  if (path.beginsWith("/"))
+  if (path.empty())
+    return relativeBase.trimEnd("/");
+
+  if (isAbsolutePath(path))
     return path;
 
   if (relativeBase.empty())
@@ -87,8 +144,13 @@ String File::relativeTo(String const& relativeBase, String const& path) {
 }
 
 String File::fullPath(String const& path) {
-  // PLACEHOLDER: realpath canonicalization deferred for N3DS phase 1.
-  return path;
+  if (path.empty())
+    return currentDirectory();
+
+  if (isAbsolutePath(path))
+    return path;
+
+  return relativeTo(currentDirectory(), path);
 }
 
 String File::temporaryFileName() {
@@ -112,27 +174,36 @@ String File::temporaryDirectory() {
 }
 
 bool File::exists(String const& path) {
+  if (path.empty())
+    return false;
   struct stat st;
-  return statPath(path.utf8Ptr(), st);
+  return statPath(normalizeIoPath(path).utf8Ptr(), st);
 }
 
 bool File::isFile(String const& path) {
+  if (path.empty())
+    return false;
   struct stat st;
-  return statPath(path.utf8Ptr(), st) && S_ISREG(st.st_mode);
+  return statPath(normalizeIoPath(path).utf8Ptr(), st) && S_ISREG(st.st_mode);
 }
 
 bool File::isDirectory(String const& path) {
+  if (path.empty())
+    return false;
   struct stat st;
-  return statPath(path.utf8Ptr(), st) && S_ISDIR(st.st_mode);
+  return statPath(normalizeIoPath(path).utf8Ptr(), st) && S_ISDIR(st.st_mode);
 }
 
 void File::remove(String const& filename) {
-  if (::remove(filename.utf8Ptr()) != 0 && errno != ENOENT)
+  auto path = normalizeIoPath(filename);
+  if (::remove(path.utf8Ptr()) != 0 && errno != ENOENT)
     throw IOException::format("remove error: {}", std::strerror(errno));
 }
 
 void File::rename(String const& source, String const& target) {
-  if (::rename(source.utf8Ptr(), target.utf8Ptr()) != 0)
+  auto sourcePath = normalizeIoPath(source);
+  auto targetPath = normalizeIoPath(target);
+  if (::rename(sourcePath.utf8Ptr(), targetPath.utf8Ptr()) != 0)
     throw IOException::format("rename error: {}", std::strerror(errno));
 }
 
@@ -143,14 +214,24 @@ void File::overwriteFileWithRename(char const* data, size_t len, String const& f
 }
 
 void* File::fopen(char const* filename, IOMode mode) {
-  FILE* file = std::fopen(filename, modeString(mode));
+  if (!filename || filename[0] == '\0')
+    throw IOException("Error opening file with empty path");
+
+  auto path = normalizeIoPath(filename);
+#ifdef STAR_PLATFORM_N3DS
+  static std::atomic<unsigned> sFopenTraceCount{0};
+  unsigned traceIndex = ++sFopenTraceCount;
+  if (traceIndex <= 256)
+    std::fprintf(stderr, "OSBN3DS fopen[%u] mode=%d path=%s\n", traceIndex, static_cast<int>(mode), path.utf8Ptr());
+#endif
+  FILE* file = std::fopen(path.utf8Ptr(), modeString(mode));
 
   if (!file && (mode & IOMode::Read) && (mode & IOMode::Write) && !(mode & IOMode::Truncate) && !(mode & IOMode::Append)) {
-    file = std::fopen(filename, "wb+");
+    file = std::fopen(path.utf8Ptr(), "wb+");
   }
 
   if (!file)
-    throw IOException::format("Error opening file '{}', error: {}", filename, std::strerror(errno));
+    throw IOException::format("Error opening file '{}', error: {}", path, std::strerror(errno));
 
   if (mode & IOMode::Append)
     std::fseek(file, 0, SEEK_END);

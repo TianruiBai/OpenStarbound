@@ -32,6 +32,30 @@ SET (star_application_SOURCES ${star_application_SOURCES}
     StarRenderer_opengl.cpp
   )
 
+IF (STAR_PLATFORM_N3DS)
+  # Nintendo 3DS: replace desktop SDL/OpenGL/PC-platform files with N3DS stubs.
+  # StarPlatformServices_stub is already included above and kept for N3DS too.
+  LIST (REMOVE_ITEM star_application_HEADERS
+      StarP2PNetworkingService_pc.hpp
+      StarPlatformServices_pc.hpp
+      StarRenderer_opengl.hpp
+  )
+  LIST (REMOVE_ITEM star_application_SOURCES
+      StarMainApplication_sdl.cpp
+      StarP2PNetworkingService_pc.cpp
+      StarPlatformServices_pc.cpp
+      StarRenderer_opengl.cpp
+  )
+  LIST (APPEND star_application_HEADERS
+      StarRenderer_n3ds_stub.hpp
+  )
+  LIST (APPEND star_application_SOURCES
+      StarMainApplication_n3ds_stub.cpp
+      StarN3dsCitraCompat.cpp
+      StarRenderer_n3ds_stub.cpp
+  )
+ENDIF ()
+
 IF (STAR_ENABLE_STEAM_INTEGRATION)
   SET (star_application_HEADERS ${star_application_HEADERS}
       StarDesktopService_pc_steam.hpp

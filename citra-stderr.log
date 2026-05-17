@@ -1,0 +1,63 @@
+[   0.000312] Config <Info> citra\config.cpp:Config::LoadINI:46: Successfully loaded C:\Users\weyst\AppData\Roaming/Citra/config/sdl2-config.ini
+[   0.273878] Input <Info> input_common\udp\client.cpp:InputCommon::CemuhookUDP::Client::StartCommunication:206: Starting communication with UDP input server on 127.0.0.1:26760
+[   0.855871] Frontend <Info> citra\citra.cpp:main:404: Citra Version: Nightly 2104 | HEAD-0ff3440
+[   0.855879] Config <Info> common\settings.cpp:Settings::LogSettings:83: Citra Configuration:
+[   0.855882] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Core_UseCpuJit: true
+[   0.855882] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Core_CPUClockPercentage: 100
+[   0.855883] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseGLES: false
+[   0.855884] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_GraphicsAPI: OpenGL
+[   0.855885] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_AsyncShaders: false
+[   0.855885] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_AsyncPresentation: true
+[   0.855886] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_SpirvShaderGen: true
+[   0.855886] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_Debug: false
+[   0.855889] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseHwShader: true
+[   0.855889] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_ShadersAccurateMul: true
+[   0.855890] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseShaderJit: true
+[   0.855890] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_UseResolutionFactor: 1
+[   0.855891] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_FrameLimit: 100
+[   0.855891] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_VSyncNew: true
+[   0.855892] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_PostProcessingShader: none (builtin)
+[   0.855892] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_FilterMode: true
+[   0.855893] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_TextureFilter: None
+[   0.855893] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Renderer_TextureSampling: GameControlled
+[   0.855895] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Stereoscopy_Render3d: 0
+[   0.855896] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Stereoscopy_Factor3d: 0
+[   0.855896] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Stereoscopy_MonoRenderOption: 0
+[   0.855897] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_LayoutOption: 0
+[   0.855897] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_SwapScreen: false
+[   0.855897] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_UprightScreen: false
+[   0.855907] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Layout_LargeScreenProportion: 4
+[   0.855908] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_DumpTextures: false
+[   0.855908] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_CustomTextures: false
+[   0.855909] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_PreloadTextures: false
+[   0.855909] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_AsyncCustomLoading: true
+[   0.855910] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Utility_UseDiskShaderCache: true
+[   0.855910] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_Emulation: HLE
+[   0.855911] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_OutputType: 0
+[   0.855911] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_OutputDevice: auto
+[   0.855911] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_InputType: 0
+[   0.855912] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_InputDevice: auto
+[   0.855912] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Audio_EnableAudioStretching: true
+[   0.855913] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterRightName: blank
+[   0.855913] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterRightConfig: 
+[   0.855913] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterRightFlip: 0
+[   0.855914] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_InnerName: blank
+[   0.855915] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_InnerConfig: 
+[   0.855915] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_InnerFlip: 0
+[   0.855916] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterLeftName: blank
+[   0.855916] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterLeftConfig: 
+[   0.855916] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Camera_OuterLeftFlip: 0
+[   0.855917] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: DataStorage_UseVirtualSd: true
+[   0.855917] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: DataStorage_UseCustomStorage: false
+[   0.855918] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_IsNew3ds: true
+[   0.855918] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_LLEApplets: false
+[   0.855919] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_RegionValue: -1
+[   0.855920] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_PluginLoader: false
+[   0.855920] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: System_PluginLoaderAllowed: true
+[   0.855921] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Debugging_DelayStartForLLEModules: true
+[   0.855921] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Debugging_UseGdbstub: false
+[   0.855921] Config <Info> common\settings.cpp:Settings::LogSettings::<lambda_1>::operator ():80: Debugging_GdbstubPort: 24689
+[   0.856016] Loader <Warning> core\loader\loader.cpp:Loader::GetLoader:130: File C:\Users\weyst\OpenStarbound\dist\starbound.cia has a different type than its extension.
+[   0.856035] Core <Critical> core\core.cpp:Core::System::Load:262: Failed to obtain loader for C:\Users\weyst\OpenStarbound\dist\starbound.cia!
+[   0.856037] Frontend <Critical> citra\citra.cpp:main:412: Failed to obtain loader for C:\Users\weyst\OpenStarbound\dist\starbound.cia!
+[   0.856037] Frontend <Critical> citra\citra.cpp:main:412: Failed to obtain loader for C:\Users\weyst\OpenStarbound\dist\starbound.cia!

@@ -46,3 +46,10 @@ IF (STAR_SYSTEM_MACOS)
 ENDIF()
 
 TARGET_LINK_LIBRARIES (starbound ${STAR_EXT_LIBS} ${STAR_EXT_GUI_LIBS})
+
+IF (STAR_PLATFORM_N3DS)
+  TARGET_LINK_OPTIONS (starbound PRIVATE
+      "-Wl,--wrap=PTMSYSM_ConfigureNew3DSCPU"
+      "-Wl,--wrap=APT_SetAppCpuTimeLimit"
+  )
+ENDIF ()

@@ -9,7 +9,9 @@
 #include "StarAudio.hpp"
 #include "opus/opus.h"
 
+#ifndef STAR_PLATFORM_N3DS
 #include "SDL3/SDL.h"
+#endif
 
 constexpr int VOICE_SAMPLE_RATE = 48000;
 constexpr int VOICE_FRAME_SIZE = 960;
@@ -65,20 +67,26 @@ class VoiceAudioStream {
 public:
   // TODO: This should really be a ring buffer instead.
   std::queue<int16_t> samples;
+#ifndef STAR_PLATFORM_N3DS
   SDL_AudioStream* sdlAudioStreamMono;
   SDL_AudioStream* sdlAudioStreamStereo;
+#endif
   Mutex mutex;
 
   VoiceAudioStream() {
+#ifndef STAR_PLATFORM_N3DS
     SDL_AudioSpec srcSpec = {SDL_AUDIO_S16LE, 1, 48000};
     SDL_AudioSpec dstSpec = {SDL_AUDIO_S16,   1, 44100};
     sdlAudioStreamMono = SDL_CreateAudioStream(&srcSpec, &dstSpec);
     srcSpec.channels = dstSpec.channels = 2;
     sdlAudioStreamStereo = SDL_CreateAudioStream(&srcSpec, &dstSpec);
+#endif
   }
   ~VoiceAudioStream() {
+#ifndef STAR_PLATFORM_N3DS
     SDL_DestroyAudioStream(sdlAudioStreamMono);
     SDL_DestroyAudioStream(sdlAudioStreamStereo);
+#endif
   }
 
   inline int16_t take() {
@@ -91,6 +99,7 @@ public:
   }
 
   size_t resample(int16_t* in, size_t inSamples, std::vector<int16_t>& out, bool mono) {
+#ifndef STAR_PLATFORM_N3DS
     SDL_AudioStream* stream = mono ? sdlAudioStreamMono : sdlAudioStreamStereo;
     SDL_PutAudioStreamData(stream, in, inSamples * sizeof(int16_t));
     if (int available = SDL_GetAudioStreamAvailable(stream)) {
@@ -99,6 +108,11 @@ public:
       return available;
     }
     return 0;
+#else
+    // STUB: no audio resampling on N3DS phase1; return input as-is.
+    out.assign(in, in + inSamples);
+    return inSamples;
+#endif
   }
 };
 
@@ -440,7 +454,12 @@ void Voice::mix(int16_t* buffer, size_t frameCount, unsigned channels) {
     for (size_t i = 0; i != sharedBuffer.size(); ++i)
       finalBuffer[i] = (int16_t)clamp<int>(sharedBuffer[i] * vol, INT16_MIN, INT16_MAX);
 
+#ifndef STAR_PLATFORM_N3DS
     SDL_MixAudio((Uint8*)buffer, (Uint8*)finalBuffer.data(), SDL_AUDIO_S16LE, finalBuffer.size() * sizeof(int16_t), 1.0f);
+#else
+    // STUB: no SDL audio mix on N3DS phase1; copy directly.
+    memcpy(buffer, finalBuffer.data(), finalBuffer.size() * sizeof(int16_t));
+#endif
     memset(sharedBuffer.data(), 0, sharedBuffer.size() * sizeof(int32_t));
   }
 }
@@ -485,6 +504,7 @@ void Voice::setDeviceName(Maybe<String> deviceName) {
 
 StringList Voice::availableDevices() {
   StringList list;
+#ifndef STAR_PLATFORM_N3DS
   int i, num_devices;
   if (SDL_AudioDeviceID* devices = SDL_GetAudioRecordingDevices(&num_devices)) {
     list.reserve(num_devices);
@@ -492,6 +512,7 @@ StringList Voice::availableDevices() {
       list.emplace_back(SDL_GetAudioDeviceName(devices[i]));
     SDL_free(devices);
   }
+#endif
   list.sort();
   return list;
 }
@@ -644,7 +665,9 @@ void Voice::openDevice() {
     return;
   closeDevice();
 
-  uint32_t deviceId = SDL_AUDIO_DEVICE_DEFAULT_RECORDING;
+  uint32_t deviceId = 0;
+#ifndef STAR_PLATFORM_N3DS
+  deviceId = SDL_AUDIO_DEVICE_DEFAULT_RECORDING;
   if (m_deviceName) {
     int i, num_devices;
     if (SDL_AudioDeviceID* devices = SDL_GetAudioRecordingDevices(&num_devices)) {
@@ -657,6 +680,7 @@ void Voice::openDevice() {
       SDL_free(devices);
     }
   }
+#endif
   m_applicationController->openAudioInputDevice(
     deviceId,
     VOICE_SAMPLE_RATE,
