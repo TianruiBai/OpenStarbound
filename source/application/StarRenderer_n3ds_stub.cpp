@@ -6,8 +6,12 @@
 #include "StarLogging.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <vector>
 
 #ifdef STAR_PLATFORM_N3DS
+#include <3ds.h>
 #include <citro2d.h>
 #include <citro3d.h>
 #endif
@@ -17,6 +21,8 @@ namespace Star {
 // ---- Stub Texture -------------------------------------------------------
 
 namespace {
+
+constexpr size_t N3dsMaxQueuedPrimitives = 768;
 
 #ifdef STAR_PLATFORM_N3DS
 u32 toC2dColor(Vec4B const& color) {
@@ -28,56 +34,153 @@ inline float toTopScreenY(float yBottomOrigin) {
   return TopScreenHeight - yBottomOrigin;
 }
 
-void drawPrimitivePlaceholder(RenderPrimitive const& primitive, C3D_RenderTarget* target) {
-  (void)target;
+unsigned n3dsTextureExtent(unsigned value) {
+  unsigned extent = 8;
+  while (extent < value)
+    extent <<= 1;
+  return extent;
+}
 
+bool nearlyEqual(float a, float b) {
+  return std::fabs(a - b) < 0.01f;
+}
+
+size_t& n3dsTextureBytesInUse() {
+  static size_t bytesInUse = 0;
+  return bytesInUse;
+}
+
+RenderVertex transformedVertex(RenderVertex vertex, Mat3F const& transformation) {
+  vertex.screenCoordinate = transformation * vertex.screenCoordinate;
+  return vertex;
+}
+
+RenderPrimitive transformedPrimitive(RenderPrimitive primitive, Mat3F const& transformation) {
   if (auto tri = primitive.ptr<RenderTriangle>()) {
-    C2D_DrawTriangle(
-        tri->a.screenCoordinate[0], toTopScreenY(tri->a.screenCoordinate[1]), toC2dColor(tri->a.color),
-        tri->b.screenCoordinate[0], toTopScreenY(tri->b.screenCoordinate[1]), toC2dColor(tri->b.color),
-        tri->c.screenCoordinate[0], toTopScreenY(tri->c.screenCoordinate[1]), toC2dColor(tri->c.color),
-        0.0f);
+    tri->a = transformedVertex(tri->a, transformation);
+    tri->b = transformedVertex(tri->b, transformation);
+    tri->c = transformedVertex(tri->c, transformation);
   } else if (auto quad = primitive.ptr<RenderQuad>()) {
-    C2D_DrawTriangle(
-        quad->a.screenCoordinate[0], toTopScreenY(quad->a.screenCoordinate[1]), toC2dColor(quad->a.color),
-        quad->b.screenCoordinate[0], toTopScreenY(quad->b.screenCoordinate[1]), toC2dColor(quad->b.color),
-        quad->c.screenCoordinate[0], toTopScreenY(quad->c.screenCoordinate[1]), toC2dColor(quad->c.color),
-        0.0f);
-    C2D_DrawTriangle(
-        quad->a.screenCoordinate[0], toTopScreenY(quad->a.screenCoordinate[1]), toC2dColor(quad->a.color),
-        quad->c.screenCoordinate[0], toTopScreenY(quad->c.screenCoordinate[1]), toC2dColor(quad->c.color),
-        quad->d.screenCoordinate[0], toTopScreenY(quad->d.screenCoordinate[1]), toC2dColor(quad->d.color),
-        0.0f);
+    quad->a = transformedVertex(quad->a, transformation);
+    quad->b = transformedVertex(quad->b, transformation);
+    quad->c = transformedVertex(quad->c, transformation);
+    quad->d = transformedVertex(quad->d, transformation);
   } else if (auto poly = primitive.ptr<RenderPoly>()) {
-    if (poly->vertexes.size() >= 3) {
-      auto const& a = poly->vertexes[0];
-      for (size_t i = 1; i + 1 < poly->vertexes.size(); ++i) {
-        auto const& b = poly->vertexes[i];
-        auto const& c = poly->vertexes[i + 1];
-        C2D_DrawTriangle(
-            a.screenCoordinate[0], toTopScreenY(a.screenCoordinate[1]), toC2dColor(a.color),
-            b.screenCoordinate[0], toTopScreenY(b.screenCoordinate[1]), toC2dColor(b.color),
-            c.screenCoordinate[0], toTopScreenY(c.screenCoordinate[1]), toC2dColor(c.color),
-            0.0f);
-      }
-    }
+    for (auto& vertex : poly->vertexes)
+      vertex = transformedVertex(vertex, transformation);
   }
+
+  return primitive;
 }
 #endif
 
 class N3dsStubTexture : public Texture {
 public:
+  N3dsStubTexture(Image const& image, TextureFiltering filtering, TextureAddressing addressing)
+    : m_size(image.size()), m_filtering(filtering), m_addressing(addressing) {
+#ifdef STAR_PLATFORM_N3DS
+    uploadImage(image);
+#endif
+  }
+
   N3dsStubTexture(Vec2U size, TextureFiltering filtering, TextureAddressing addressing)
     : m_size(size), m_filtering(filtering), m_addressing(addressing) {}
+
+  ~N3dsStubTexture() override {
+#ifdef STAR_PLATFORM_N3DS
+    if (m_textureReady) {
+      C3D_TexDelete(&m_texture);
+      n3dsTextureBytesInUse() -= m_textureBytes;
+    }
+#endif
+  }
 
   Vec2U size() const override { return m_size; }
   TextureFiltering filtering() const override { return m_filtering; }
   TextureAddressing addressing() const override { return m_addressing; }
 
+#ifdef STAR_PLATFORM_N3DS
+  bool ready() const {
+    return m_textureReady;
+  }
+
+  C2D_Image image() const {
+    return C2D_Image{const_cast<C3D_Tex*>(&m_texture), &m_subTexture};
+  }
+#endif
+
 private:
+#ifdef STAR_PLATFORM_N3DS
+  void uploadImage(Image const& image) {
+    if (image.empty())
+      return;
+
+    unsigned storageWidth = n3dsTextureExtent(image.width());
+    unsigned storageHeight = n3dsTextureExtent(image.height());
+    constexpr unsigned MaxTextureExtent = 512;
+    constexpr size_t TextureUploadBudget = 2 * 1024 * 1024;
+    if (storageWidth > MaxTextureExtent || storageHeight > MaxTextureExtent) {
+      Logger::warn("N3dsStubTexture: skipping oversized texture {}x{}", image.width(), image.height());
+      return;
+    }
+
+    size_t textureBytes = static_cast<size_t>(storageWidth) * storageHeight * 4;
+    if (n3dsTextureBytesInUse() + textureBytes > TextureUploadBudget) {
+      Logger::warn("N3dsStubTexture: skipping texture {}x{} because upload budget is exhausted", image.width(), image.height());
+      return;
+    }
+
+    Image rgbaImage = image.pixelFormat() == PixelFormat::RGBA32 ? image : image.convert(PixelFormat::RGBA32);
+    std::vector<uint8_t> uploadData(textureBytes, 0);
+    for (unsigned y = 0; y < image.height(); ++y) {
+      auto const* source = rgbaImage.data() + static_cast<size_t>(y) * image.width() * 4;
+      auto* destination = uploadData.data() + (static_cast<size_t>(y) * storageWidth * 4);
+      std::memcpy(destination, source, static_cast<size_t>(image.width()) * 4);
+    }
+
+    if (!C3D_TexInit(&m_texture, static_cast<u16>(storageWidth), static_cast<u16>(storageHeight), GPU_RGBA8)) {
+      Logger::warn("N3dsStubTexture: C3D_TexInit failed for {}x{}", image.width(), image.height());
+      return;
+    }
+
+    void* linearUploadData = linearAlloc(uploadData.size());
+    if (!linearUploadData) {
+      C3D_TexDelete(&m_texture);
+      Logger::warn("N3dsStubTexture: linearAlloc failed for {} byte upload", uploadData.size());
+      return;
+    }
+
+    std::memcpy(linearUploadData, uploadData.data(), uploadData.size());
+    C3D_TexUpload(&m_texture, linearUploadData);
+    linearFree(linearUploadData);
+
+    auto filter = m_filtering == TextureFiltering::Linear ? GPU_LINEAR : GPU_NEAREST;
+    auto wrap = m_addressing == TextureAddressing::Wrap ? GPU_REPEAT : GPU_CLAMP_TO_EDGE;
+    C3D_TexSetFilter(&m_texture, filter, filter);
+    C3D_TexSetWrap(&m_texture, wrap, wrap);
+
+    m_subTexture.width = static_cast<u16>(image.width());
+    m_subTexture.height = static_cast<u16>(image.height());
+    m_subTexture.left = 0.0f;
+    m_subTexture.right = static_cast<float>(image.width()) / static_cast<float>(storageWidth);
+    m_subTexture.bottom = 0.0f;
+    m_subTexture.top = static_cast<float>(image.height()) / static_cast<float>(storageHeight);
+    m_textureBytes = textureBytes;
+    n3dsTextureBytesInUse() += m_textureBytes;
+    m_textureReady = true;
+  }
+#endif
+
   Vec2U m_size;
   TextureFiltering m_filtering;
   TextureAddressing m_addressing;
+
+#ifdef STAR_PLATFORM_N3DS
+  C3D_Tex m_texture{};
+  Tex3DS_SubTexture m_subTexture{};
+  size_t m_textureBytes = 0;
+  bool m_textureReady = false;
+#endif
 };
 
 class N3dsStubTextureGroup : public TextureGroup {
@@ -86,7 +189,7 @@ public:
 
   TextureFiltering filtering() const override { return m_filtering; }
   TexturePtr create(Image const& texture) override {
-    return make_ref<N3dsStubTexture>(texture.size(), m_filtering, TextureAddressing::Clamp);
+    return make_ref<N3dsStubTexture>(texture, m_filtering, TextureAddressing::Clamp);
   }
 
 private:
@@ -95,8 +198,78 @@ private:
 
 class N3dsStubRenderBuffer : public RenderBuffer {
 public:
-  void set(List<RenderPrimitive>&) override {} // STUB: discard
+  void set(List<RenderPrimitive>& primitives) override {
+    m_primitives = primitives;
+  }
+
+  List<RenderPrimitive> const& primitives() const {
+    return m_primitives;
+  }
+
+private:
+  List<RenderPrimitive> m_primitives;
 };
+
+#ifdef STAR_PLATFORM_N3DS
+bool isAxisAlignedQuad(RenderQuad const& quad) {
+  return nearlyEqual(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1])
+      && nearlyEqual(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1])
+      && nearlyEqual(quad.a.screenCoordinate[0], quad.d.screenCoordinate[0])
+      && nearlyEqual(quad.b.screenCoordinate[0], quad.c.screenCoordinate[0]);
+}
+
+void drawUntexturedTriangle(RenderVertex const& a, RenderVertex const& b, RenderVertex const& c) {
+  C2D_DrawTriangle(
+      a.screenCoordinate[0], toTopScreenY(a.screenCoordinate[1]), toC2dColor(a.color),
+      b.screenCoordinate[0], toTopScreenY(b.screenCoordinate[1]), toC2dColor(b.color),
+      c.screenCoordinate[0], toTopScreenY(c.screenCoordinate[1]), toC2dColor(c.color),
+      0.0f);
+}
+
+bool drawTexturedQuad(RenderQuad const& quad) {
+  if (!quad.texture)
+    return false;
+
+  auto texture = dynamic_cast<N3dsStubTexture const*>(quad.texture.get());
+  if (!texture || !texture->ready() || !isAxisAlignedQuad(quad))
+    return false;
+
+  float minX = std::min(std::min(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::min(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
+  float maxX = std::max(std::max(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::max(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
+  float minY = std::min(std::min(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1]), std::min(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1]));
+  float maxY = std::max(std::max(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1]), std::max(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1]));
+
+  float width = maxX - minX;
+  float height = maxY - minY;
+  if (width <= 0.0f || height <= 0.0f)
+    return true;
+
+  C2D_DrawParams params = {{minX, toTopScreenY(maxY), width, height}, {0.0f, 0.0f}, 0.0f, 0.0f};
+  C2D_ImageTint tint;
+  C2D_PlainImageTint(&tint, toC2dColor(quad.a.color), 1.0f);
+  return C2D_DrawImage(texture->image(), &params, &tint);
+}
+
+void drawPrimitive(RenderPrimitive const& primitive, C3D_RenderTarget* target) {
+  (void)target;
+
+  if (auto tri = primitive.ptr<RenderTriangle>()) {
+    drawUntexturedTriangle(tri->a, tri->b, tri->c);
+  } else if (auto quad = primitive.ptr<RenderQuad>()) {
+    if (drawTexturedQuad(*quad))
+      return;
+
+    drawUntexturedTriangle(quad->a, quad->b, quad->c);
+    drawUntexturedTriangle(quad->a, quad->c, quad->d);
+  } else if (auto poly = primitive.ptr<RenderPoly>()) {
+    if (poly->vertexes.size() >= 3) {
+      auto const& a = poly->vertexes[0];
+      for (size_t i = 1; i + 1 < poly->vertexes.size(); ++i)
+        drawUntexturedTriangle(a, poly->vertexes[i], poly->vertexes[i + 1]);
+    }
+  }
+}
+#endif
 
 } // anonymous namespace
 
@@ -135,7 +308,8 @@ N3dsStubRenderer::~N3dsStubRenderer() {
 String N3dsStubRenderer::rendererId() const { return "N3dsStub"; }
 
 Vec2U N3dsStubRenderer::screenSize() const {
-  // PLACEHOLDER: return top-screen size until dual-screen target split is implemented.
+  // PLACEHOLDER: return top-screen size until the renderer API exposes a
+  // handheld dual-screen layout contract.
   return Vec2U(N3DS_TOP_SCREEN_WIDTH, N3DS_TOP_SCREEN_HEIGHT);
 }
 
@@ -160,8 +334,7 @@ void N3dsStubRenderer::setMultiTexturingEnabled(bool) {}                     // 
 void N3dsStubRenderer::setMultiSampling(unsigned) {}                         // STUB
 
 TexturePtr N3dsStubRenderer::createTexture(Image const& texture, TextureAddressing addressing, TextureFiltering filtering) {
-  // STUB: allocate a size-tracking stub texture with no GPU upload.
-  return make_ref<N3dsStubTexture>(texture.size(), filtering, addressing);
+  return make_ref<N3dsStubTexture>(texture, filtering, addressing);
 }
 
 TextureGroupPtr N3dsStubRenderer::createTextureGroup(TextureGroupSize, TextureFiltering filtering) {
@@ -177,10 +350,20 @@ List<RenderPrimitive>& N3dsStubRenderer::immediatePrimitives() {
 }
 
 void N3dsStubRenderer::render(RenderPrimitive primitive) {
-  m_immediatePrimitives.append(std::move(primitive));
+  if (m_immediatePrimitives.size() < N3dsMaxQueuedPrimitives)
+    m_immediatePrimitives.append(std::move(primitive));
 }
-void N3dsStubRenderer::renderBuffer(RenderBufferPtr const&, Mat3F const&) {} // STUB: discard
-void N3dsStubRenderer::flush(Mat3F const&) {
+void N3dsStubRenderer::renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F const& transformation) {
+  if (auto n3dsRenderBuffer = dynamic_cast<N3dsStubRenderBuffer const*>(renderBuffer.get())) {
+    for (auto const& primitive : n3dsRenderBuffer->primitives()) {
+      if (m_immediatePrimitives.size() >= N3dsMaxQueuedPrimitives)
+        break;
+      m_immediatePrimitives.append(transformedPrimitive(primitive, transformation));
+    }
+  }
+}
+
+void N3dsStubRenderer::flush(Mat3F const& transformation) {
 #ifdef STAR_PLATFORM_N3DS
   if (m_gpuReady && m_topTarget) {
     auto* topTarget = static_cast<C3D_RenderTarget*>(m_topTarget);
@@ -197,10 +380,16 @@ void N3dsStubRenderer::flush(Mat3F const&) {
     C2D_DrawRectSolid(0.0f, 222.0f, 0.0f, 400.0f, 18.0f, C2D_Color32(0, 0, 0, 255));
     C2D_DrawRectSolid(24.0f, 96.0f, 0.0f, 352.0f, 48.0f, flashPhase ? C2D_Color32(0, 0, 0, 255) : C2D_Color32(255, 255, 255, 255));
 
-    // PLACEHOLDER: first-pass primitive replay path. We currently draw
-    // primitive bounds as solid blocks until full textured geometry is wired.
-    for (auto const& primitive : m_immediatePrimitives)
-      drawPrimitivePlaceholder(primitive, topTarget);
+    // PLACEHOLDER: first-pass primitive replay path. Axis-aligned textured
+    // quads now use uploaded C2D images; other primitives fall back to solid
+    // triangle replay until full textured geometry is wired.
+    size_t primitiveCount = 0;
+    for (auto const& primitive : m_immediatePrimitives) {
+      if (primitiveCount >= N3dsMaxQueuedPrimitives)
+        break;
+      drawPrimitive(transformedPrimitive(primitive, transformation), topTarget);
+      ++primitiveCount;
+    }
 
     if (bottomTarget) {
       C2D_TargetClear(bottomTarget, flashPhase ? C2D_Color32(32, 255, 96, 255) : C2D_Color32(255, 220, 24, 255));

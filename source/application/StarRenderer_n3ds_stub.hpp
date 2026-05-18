@@ -42,8 +42,8 @@ public:
   void flush(Mat3F const& transformation) override;
 
 private:
-  // PLACEHOLDER: Real N3DS display resolution is 400x240 (top) / 320x240 (bottom).
-  // Phase 3 will split this into dual-screen render targets.
+  // PLACEHOLDER: Renderer API still reports the top screen while the backend
+  // owns separate top/bottom citro targets internally.
   static constexpr unsigned N3DS_TOP_SCREEN_WIDTH  = 400;
   static constexpr unsigned N3DS_TOP_SCREEN_HEIGHT = 240;
 

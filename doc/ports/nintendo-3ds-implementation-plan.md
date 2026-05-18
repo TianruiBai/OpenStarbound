@@ -410,15 +410,21 @@ Completed:
 - N3DS startup now runs a direct software framebuffer visibility probe before app startup, writing both top and bottom screens without citro2d/citro3d so Citra/device blank-screen reports can be separated from GPU render-target issues.
 - N3DS renderer now creates both top-screen and bottom-screen citro2d render targets and draws high-contrast placeholder output on both screens during the steady render loop.
 - N3DS steady render loop now lets `C3D_FrameEnd` own GPU frame presentation and only waits for VBlank afterward, avoiding an extra software-buffer swap after citro rendering.
+- Direct software framebuffer output has been confirmed visible in Citra by user testing, so CXI launch/display ownership is not the current blocker.
+- N3DS startup now runs a citro-backed visibility probe after renderer creation and before app startup, separating GPU target/presentation validation from full application renderInit.
+- N3DS texture objects now perform bounded first-pass C3D/C2D upload for small RGBA textures, with a 512x512 storage limit and 2 MiB upload budget during bring-up.
+- N3DS texture groups now route through the same bounded texture upload path instead of size-only placeholders.
+- N3DS renderer now draws ready axis-aligned textured quads through `C2D_DrawImage`; unsupported textured geometry still falls back to solid triangle replay.
+- N3DS render buffers now retain primitives and replay them through the renderer with a conservative per-frame queue cap, avoiding citro2d object-queue overflow during early world/UI rendering.
 
 Validated:
-- Full startup + applicationInit + renderInit + update + render + flush path now holds a stable 20s Citra smoke run under the current ROMFS-only bring-up profile after the direct framebuffer probe and dual-screen citro target updates.
+- Full startup + applicationInit + renderInit + update + render + flush path now holds a stable 20s Citra smoke run under the current ROMFS-only bring-up profile after the direct framebuffer probe, citro visibility probe, bounded texture upload, and capped render-buffer replay updates.
 - Attempting to reintroduce SDMC-backed writable storage during phase 1 reproduces dense unmapped writes; keep writable storage deferred until a safer storage strategy is designed.
-- User-visible output in Citra is still an active validation item: if the direct framebuffer probe is visible but the later citro pattern is not, continue debugging citro target/presentation; if the direct framebuffer probe is also invisible, investigate launch/app display ownership before texture work.
+- User-visible output in Citra is now partially validated: the direct framebuffer checker/border appears. The next visible-output validation item is whether the citro-backed probe/steady renderer pattern appears after the direct probe.
 
 Next:
-- Confirm the direct framebuffer probe is visible in Citra or on hardware before advancing texture-aware/effect-aware primitive rendering.
-- Once the display path is confirmed, move the phase-1 runtime effort from untextured primitive replay to texture-aware/effect-aware primitive rendering.
+- Confirm the citro-backed visibility probe and steady renderer output are visible in Citra or on hardware after the direct framebuffer probe completes.
+- Continue the Phase 3 rendering spike by expanding texture-aware/effect-aware primitive rendering beyond axis-aligned quads, while keeping primitive and texture budgets explicit.
 - Keep the current ROMFS-only bring-up profile as the baseline until the backend and input path can be validated independently.
 
 ## Phase 1 Progress Snapshot (Branch 3ds-port)
@@ -454,8 +460,8 @@ Stub Inventory (current):
 - core/StarLockFile_n3ds_stub.cpp: lockfile API is phase1 placeholder behavior without inter-process locking guarantees (STUB/PLACEHOLDER)
 - core/StarSignalHandler_n3ds_stub.cpp: fatal/interrupt signal API is phase1 placeholder behavior pending handheld-native signal strategy (STUB/PLACEHOLDER)
 - core/StarLua.cpp: addImGui registration is disabled under STAR_PLATFORM_N3DS until handheld UI bindings are available (STUB)
-- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — minimal dual-screen citro frame output is active (clear + placeholder bars); untextured triangle/quad/poly replay is active; texture/effect aware rasterization remains partial stubs (STUB/PLACEHOLDER)
-- application/StarMainApplication_n3ds_stub.cpp: N3dsApplicationController — all ApplicationController abstract methods stubbed without SDL3/desktop deps; runMainApplication() uses aptMainLoop 3DS main loop skeleton plus a temporary direct framebuffer visibility probe (STUB/PLACEHOLDER)
+- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — minimal dual-screen citro frame output is active (clear + placeholder bars); untextured triangle/quad/poly replay is active; bounded texture upload, axis-aligned textured quad drawing, and capped render-buffer replay are active; full texture/effect aware rasterization remains partial stubs (STUB/PLACEHOLDER)
+- application/StarMainApplication_n3ds_stub.cpp: N3dsApplicationController — all ApplicationController abstract methods stubbed without SDL3/desktop deps; runMainApplication() uses aptMainLoop 3DS main loop skeleton plus direct framebuffer and citro-backed visibility probes (STUB/PLACEHOLDER)
 - core/StarString.cpp: regex path uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 - core/StarText.cpp: escape-code strip regex uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 
@@ -496,9 +502,9 @@ Current phase1 dependency blockers (if preset fails):
 - missing 3ds portlibs packages (zlib/libpng/freetype/curl/libogg/libopus/libvorbisidec/libzstd).
 
 Immediate continuation steps (next pass):
-1. Keep the stable ROMFS-only runtime baseline and confirm whether the direct framebuffer probe is visible in Citra/device launch.
-2. If the probe is visible, continue the Phase 3 rendering spike by fixing/confirming citro target presentation, then add texture-aware primitive paths (UV sampling and sprite/image replay) on the active citro frame loop.
-3. If the probe is not visible, pause texture work and investigate CXI launch/display ownership, framebuffer format, and emulator applet/window behavior before further renderer expansion.
+1. Keep the stable ROMFS-only runtime baseline and confirm whether the citro-backed probe/steady renderer output is visible after the already-confirmed direct framebuffer checker.
+2. Continue the Phase 3 rendering spike by expanding texture-aware primitive paths (UV sampling and sprite/image replay) on the active citro frame loop without exceeding explicit primitive/texture budgets.
+3. If the citro probe is not visible, keep debugging inside citro target creation/presentation; CXI launch/display ownership is already confirmed by the direct framebuffer probe.
 4. Refine handheld input mapping semantics (confirm/cancel/action defaults, analog thresholds, touch drag behavior) against visible UI/world feedback.
 5. Keep STUB/PLACEHOLDER inventory current while replacing high-risk placeholders (thread/file/signal) with handheld-native implementations.
 6. Revisit writable storage only after a safe N3DS SD path strategy is designed and isolated behind an explicit opt-in.

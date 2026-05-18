@@ -74,7 +74,7 @@ void runN3dsFramebufferVisibilityProbe() {
   // PLACEHOLDER: direct software framebuffer probe for Citra/device bring-up.
   // This intentionally bypasses citro2d so blank-screen reports can be split
   // between applet/framebuffer setup and GPU render-target setup.
-  constexpr unsigned ProbeFrames = 600;
+  constexpr unsigned ProbeFrames = 180;
   Star::Logger::info("N3dsMainApplication: direct framebuffer visibility probe");
 
   writeN3dsFramebufferProbe(GFX_TOP, GFX_LEFT, 0);
@@ -95,6 +95,26 @@ void runN3dsFramebufferVisibilityProbe() {
     gfxSwapBuffers();
     gspWaitForVBlank();
   }
+
+}
+
+void runN3dsCitroVisibilityProbe(Star::N3dsStubRenderer& renderer) {
+  // PLACEHOLDER: citro-backed visibility probe for the active GPU renderer.
+  // If the direct framebuffer probe is visible but this is not, keep the next
+  // debugging pass inside the citro render-target/presentation path.
+  constexpr unsigned ProbeFrames = 300;
+  Star::Logger::info("N3dsMainApplication: citro visibility probe");
+
+  for (unsigned frameCounter = 0; frameCounter < ProbeFrames; ++frameCounter) {
+    hidScanInput();
+    (void)aptMainLoop();
+    if (hidKeysDown() & KEY_START)
+      break;
+
+    renderer.flush(Star::Mat3F::identity());
+    gspWaitForVBlank();
+  }
+
 }
 
 Star::KeyMod n3dsKeyMods(u32 held) {
@@ -303,6 +323,9 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
 
     auto appController = make_shared<N3dsApplicationController>();
     auto renderer      = make_shared<N3dsStubRenderer>();
+#ifdef STAR_PLATFORM_N3DS
+    runN3dsCitroVisibilityProbe(*renderer);
+#endif
     StringList startupArgs = {"-bootconfig", "romfs:/sbinit.config"};
     if (cmdLineArgs.size() > 1)
       startupArgs.appendAll(cmdLineArgs.slice(1));
@@ -310,7 +333,6 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
     Logger::info("N3dsMainApplication: startup"); // PLACEHOLDER
 
     application->startup(startupArgs);
-    // Temporary runtime smoke probe: advance lifecycle one stage at a time.
     application->applicationInit(appController);
     application->renderInit(renderer);
 
