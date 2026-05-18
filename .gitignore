@@ -39,8 +39,8 @@ install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
 _deps
-
-
+*.log
+/citra-windows-msvc-20240303-0ff3440/
 .vscode/
 
 # Local History for Visual Studio Code
