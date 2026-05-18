@@ -42,12 +42,22 @@ public:
   void flush(Mat3F const& transformation) override;
 
 private:
+  struct PrimitiveBatch {
+    Maybe<RectI> scissorRect;
+    List<RenderPrimitive> primitives;
+  };
+
+  void sealImmediatePrimitiveBatch();
+
   // PLACEHOLDER: Renderer API still reports the top screen while the backend
   // owns separate top/bottom citro targets internally.
   static constexpr unsigned N3DS_TOP_SCREEN_WIDTH  = 400;
   static constexpr unsigned N3DS_TOP_SCREEN_HEIGHT = 240;
 
+  Maybe<RectI> m_scissorRect;
   List<RenderPrimitive> m_immediatePrimitives;
+  List<PrimitiveBatch> m_primitiveBatches;
+  size_t m_queuedPrimitiveCount = 0;
 
   bool m_gpuReady = false;
   void* m_topTarget = nullptr;

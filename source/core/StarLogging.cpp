@@ -1,3 +1,7 @@
+#ifdef STAR_PLATFORM_N3DS
+#include <3ds.h>
+#endif
+
 #include "StarLogging.hpp"
 
 namespace Star {
@@ -25,7 +29,12 @@ LogLevel LogSink::level() {
 
 void StdoutLogSink::log(char const* msg, LogLevel level) {
   MutexLocker locker(m_logMutex);
-  coutf("[{}] {}\n", LogLevelNames.getRight(level), msg);
+  auto line = strf("[{}] {}\n", LogLevelNames.getRight(level), msg);
+#ifdef STAR_PLATFORM_N3DS
+  svcOutputDebugString(line.c_str(), static_cast<s32>(line.size()));
+#else
+  coutf("{}", line);
+#endif
 }
 
 FileLogSink::FileLogSink(String const& filename, LogLevel level, bool truncate) {

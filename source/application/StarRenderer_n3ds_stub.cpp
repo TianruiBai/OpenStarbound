@@ -25,13 +25,15 @@ namespace {
 constexpr size_t N3dsMaxQueuedPrimitives = 768;
 
 #ifdef STAR_PLATFORM_N3DS
+constexpr int N3dsTopScreenWidth = 400;
+constexpr int N3dsTopScreenHeight = 240;
+
 u32 toC2dColor(Vec4B const& color) {
   return C2D_Color32(color[0], color[1], color[2], color[3]);
 }
 
 inline float toTopScreenY(float yBottomOrigin) {
-  constexpr float TopScreenHeight = 240.0f;
-  return TopScreenHeight - yBottomOrigin;
+  return static_cast<float>(N3dsTopScreenHeight) - yBottomOrigin;
 }
 
 unsigned n3dsTextureExtent(unsigned value) {
@@ -45,10 +47,32 @@ bool nearlyEqual(float a, float b) {
   return std::fabs(a - b) < 0.01f;
 }
 
+void applyScissorRect(Maybe<RectI> const& scissorRect) {
+  if (!scissorRect) {
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
+    return;
+  }
+
+  int left = std::clamp(scissorRect->xMin(), 0, N3dsTopScreenWidth);
+  int right = std::clamp(scissorRect->xMax(), 0, N3dsTopScreenWidth);
+  int bottomOriginMinY = std::clamp(scissorRect->yMin(), 0, N3dsTopScreenHeight);
+  int bottomOriginMaxY = std::clamp(scissorRect->yMax(), 0, N3dsTopScreenHeight);
+  int top = N3dsTopScreenHeight - bottomOriginMaxY;
+  int bottom = N3dsTopScreenHeight - bottomOriginMinY;
+
+  if (right <= left || bottom <= top) {
+    C3D_SetScissor(GPU_SCISSOR_NORMAL, 0, 0, 0, 0);
+    return;
+  }
+
+  C3D_SetScissor(GPU_SCISSOR_NORMAL, static_cast<u32>(left), static_cast<u32>(top), static_cast<u32>(right), static_cast<u32>(bottom));
+}
+
 size_t& n3dsTextureBytesInUse() {
   static size_t bytesInUse = 0;
   return bytesInUse;
 }
+#endif
 
 RenderVertex transformedVertex(RenderVertex vertex, Mat3F const& transformation) {
   vertex.screenCoordinate = transformation * vertex.screenCoordinate;
@@ -72,7 +96,6 @@ RenderPrimitive transformedPrimitive(RenderPrimitive primitive, Mat3F const& tra
 
   return primitive;
 }
-#endif
 
 class N3dsStubTexture : public Texture {
 public:
@@ -328,7 +351,13 @@ Maybe<VariantTypeIndex> N3dsStubRenderer::getEffectScriptableParameterType(Strin
 
 void N3dsStubRenderer::setEffectTexture(String const&, ImageView const&) {} // STUB
 bool N3dsStubRenderer::switchEffectConfig(String const&) { return false; }  // STUB
-void N3dsStubRenderer::setScissorRect(Maybe<RectI> const&) {}               // STUB
+void N3dsStubRenderer::setScissorRect(Maybe<RectI> const& scissorRect) {
+  if (scissorRect == m_scissorRect)
+    return;
+
+  sealImmediatePrimitiveBatch();
+  m_scissorRect = scissorRect;
+}
 void N3dsStubRenderer::setSizeLimitEnabled(bool) {}                          // STUB
 void N3dsStubRenderer::setMultiTexturingEnabled(bool) {}                     // STUB
 void N3dsStubRenderer::setMultiSampling(unsigned) {}                         // STUB
@@ -350,20 +379,39 @@ List<RenderPrimitive>& N3dsStubRenderer::immediatePrimitives() {
 }
 
 void N3dsStubRenderer::render(RenderPrimitive primitive) {
-  if (m_immediatePrimitives.size() < N3dsMaxQueuedPrimitives)
+  if (m_queuedPrimitiveCount + m_immediatePrimitives.size() < N3dsMaxQueuedPrimitives)
     m_immediatePrimitives.append(std::move(primitive));
 }
+
 void N3dsStubRenderer::renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F const& transformation) {
   if (auto n3dsRenderBuffer = dynamic_cast<N3dsStubRenderBuffer const*>(renderBuffer.get())) {
     for (auto const& primitive : n3dsRenderBuffer->primitives()) {
-      if (m_immediatePrimitives.size() >= N3dsMaxQueuedPrimitives)
+      if (m_queuedPrimitiveCount + m_immediatePrimitives.size() >= N3dsMaxQueuedPrimitives)
         break;
       m_immediatePrimitives.append(transformedPrimitive(primitive, transformation));
     }
   }
 }
 
+void N3dsStubRenderer::sealImmediatePrimitiveBatch() {
+  if (m_immediatePrimitives.empty())
+    return;
+
+  size_t availablePrimitives = N3dsMaxQueuedPrimitives - std::min(m_queuedPrimitiveCount, N3dsMaxQueuedPrimitives);
+  if (m_immediatePrimitives.size() > availablePrimitives)
+    m_immediatePrimitives.eraseAt(availablePrimitives, m_immediatePrimitives.size());
+
+  if (!m_immediatePrimitives.empty()) {
+    m_queuedPrimitiveCount += m_immediatePrimitives.size();
+    m_primitiveBatches.append(PrimitiveBatch{m_scissorRect, std::move(m_immediatePrimitives)});
+  }
+
+  m_immediatePrimitives.clear();
+}
+
 void N3dsStubRenderer::flush(Mat3F const& transformation) {
+  sealImmediatePrimitiveBatch();
+
 #ifdef STAR_PLATFORM_N3DS
   if (m_gpuReady && m_topTarget) {
     auto* topTarget = static_cast<C3D_RenderTarget*>(m_topTarget);
@@ -376,20 +424,26 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     u32 clearColor = flashPhase ? C2D_Color32(255, 24, 180, 255) : C2D_Color32(24, 220, 255, 255);
     C2D_TargetClear(topTarget, clearColor);
     C2D_SceneBegin(topTarget);
+    applyScissorRect({});
     C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 400.0f, 18.0f, C2D_Color32(255, 255, 255, 255));
     C2D_DrawRectSolid(0.0f, 222.0f, 0.0f, 400.0f, 18.0f, C2D_Color32(0, 0, 0, 255));
     C2D_DrawRectSolid(24.0f, 96.0f, 0.0f, 352.0f, 48.0f, flashPhase ? C2D_Color32(0, 0, 0, 255) : C2D_Color32(255, 255, 255, 255));
 
     // PLACEHOLDER: first-pass primitive replay path. Axis-aligned textured
     // quads now use uploaded C2D images; other primitives fall back to solid
-    // triangle replay until full textured geometry is wired.
+    // triangle replay. Scissor changes are preserved as batches for GUI
+    // clipping while full texture/effect aware geometry is still partial.
     size_t primitiveCount = 0;
-    for (auto const& primitive : m_immediatePrimitives) {
-      if (primitiveCount >= N3dsMaxQueuedPrimitives)
-        break;
-      drawPrimitive(transformedPrimitive(primitive, transformation), topTarget);
-      ++primitiveCount;
+    for (auto const& batch : m_primitiveBatches) {
+      applyScissorRect(batch.scissorRect);
+      for (auto const& primitive : batch.primitives) {
+        if (primitiveCount >= N3dsMaxQueuedPrimitives)
+          break;
+        drawPrimitive(transformedPrimitive(primitive, transformation), topTarget);
+        ++primitiveCount;
+      }
     }
+    applyScissorRect({});
 
     if (bottomTarget) {
       C2D_TargetClear(bottomTarget, flashPhase ? C2D_Color32(32, 255, 96, 255) : C2D_Color32(255, 220, 24, 255));
@@ -406,6 +460,8 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
 
   // STUB: Full texture/effect aware replay is not implemented yet.
   m_immediatePrimitives.clear();
+  m_primitiveBatches.clear();
+  m_queuedPrimitiveCount = 0;
 }
 
 } // namespace Star

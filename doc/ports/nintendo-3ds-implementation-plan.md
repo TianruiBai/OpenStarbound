@@ -392,7 +392,7 @@ Common verification:
 2. Add a first platform macro integration pass in CMake/source headers.
 3. Create a small compile target matrix for "core + base + platform stubs" under 3DS preset.
 4. Begin renderer abstraction extraction plan before any full backend implementation.
-5. Verify the Citra launch path for .3dsx homebrew entrypoints; direct-open currently stops at loader time with "Failed to find title id for ROM (Error 0)" even though the packaged 3DSX and SMDH are valid.
+5. Keep emulator runtime validation on the packaged CXI path; direct-open of the rebuilt ELF and rebuilt 3DSX still reports title-id / RomFS loader issues in Citra.
 
 ## Phase 1.2 Progress Snapshot (Runtime Bring-Up)
 
@@ -422,14 +422,16 @@ Completed:
 - N3DS texture groups now route through the same bounded texture upload path instead of size-only placeholders.
 - N3DS renderer now draws ready axis-aligned textured quads through `C2D_DrawImage`; unsupported textured geometry still falls back to solid triangle replay.
 - N3DS render buffers now retain primitives and replay them through the renderer with a conservative per-frame queue cap, avoiding citro2d object-queue overflow during early world/UI rendering.
+- N3DS renderer now preserves top-screen scissor state across queued primitive batches, giving GUI/widget clipping a first-pass citro-backed bridge instead of treating `setScissorRect` as a no-op.
 
 Validated:
 - Full startup + applicationInit + renderInit + update + render + flush path now holds a stable 20s Citra smoke run under the current ROMFS-only bring-up profile after the direct framebuffer probe, citro visibility probe, bounded texture upload, and capped render-buffer replay updates.
 - Attempting to reintroduce SDMC-backed writable storage during phase 1 reproduces dense unmapped writes; keep writable storage deferred until a safer storage strategy is designed.
-- User-visible output in Citra is now partially validated: the direct framebuffer checker/border appears. The next visible-output validation item is whether the citro-backed probe/steady renderer pattern appears after the direct probe.
+- Packaged `dist/starbound.cxi` now shows the citro-backed steady renderer pattern in Citra Nightly 2104, and host logs confirm the expected Program ID load plus OpenGL renderer initialization on the emulator side.
+- Direct-open of the rebuilt ELF (`dist/starbound`) and rebuilt 3DSX still hits Citra loader warnings/errors around title-id discovery and RomFS access, so those entrypoints remain unreliable for deterministic runtime validation.
 
 Next:
-- Confirm the citro-backed visibility probe and steady renderer output are visible in Citra or on hardware after the direct framebuffer probe completes.
+- Continue using the packaged CXI path for Citra smoke validation until a reproducible direct-open 3DSX/ELF launch path is available.
 - Continue the Phase 3 rendering spike by expanding texture-aware/effect-aware primitive rendering beyond axis-aligned quads, while keeping primitive and texture budgets explicit.
 - Keep the current ROMFS-only bring-up profile as the baseline until the backend and input path can be validated independently.
 
@@ -465,7 +467,7 @@ Stub Inventory (current):
 - core/StarLockFile_n3ds_stub.cpp: lockfile API is phase1 placeholder behavior without inter-process locking guarantees (STUB/PLACEHOLDER)
 - core/StarSignalHandler_n3ds_stub.cpp: fatal/interrupt signal API is phase1 placeholder behavior pending handheld-native signal strategy (STUB/PLACEHOLDER)
 - core/StarLua.cpp: addImGui registration is disabled under STAR_PLATFORM_N3DS until handheld UI bindings are available (STUB)
-- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — minimal dual-screen citro frame output is active (clear + placeholder bars); untextured triangle/quad/poly replay is active; bounded texture upload, axis-aligned textured quad drawing, and capped render-buffer replay are active; full texture/effect aware rasterization remains partial stubs (STUB/PLACEHOLDER)
+- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — minimal dual-screen citro frame output is active (clear + placeholder bars); untextured triangle/quad/poly replay is active; bounded texture upload, axis-aligned textured quad drawing, capped render-buffer replay, and top-screen scissor batching are active; full texture/effect aware rasterization remains partial stubs (STUB/PLACEHOLDER)
 - application/StarMainApplication_n3ds_stub.cpp: N3dsApplicationController — all ApplicationController abstract methods stubbed without SDL3/desktop deps; runMainApplication() uses aptMainLoop 3DS main loop skeleton plus direct framebuffer and citro-backed visibility probes (STUB/PLACEHOLDER)
 - core/StarString.cpp: regex path uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 - core/StarText.cpp: escape-code strip regex uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
