@@ -5,8 +5,27 @@
 #include "StarDataStreamExtra.hpp"
 #include "StarSha256.hpp"
 #include "StarFile.hpp"
+#include "StarLogging.hpp"
+
+#ifdef STAR_PLATFORM_N3DS
+#include <malloc.h>
+#endif
 
 namespace Star {
+
+#ifdef STAR_PLATFORM_N3DS
+namespace {
+void logN3dsPackedAssetMemory(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS packed memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label,
+      info.arena,
+      info.uordblks,
+      info.fordblks,
+      info.keepcost);
+}
+}
+#endif
 
 void PackedAssetSource::build(DirectoryAssetSource& directorySource, String const& targetPackedFile,
     StringList const& extensionSorting, BuildProgressCallback progressCallback) {
@@ -81,8 +100,19 @@ PackedAssetSource::PackedAssetSource(String const& filename) {
   ByteArray header = ds.readBytes(5);
   if (header != ByteArray("INDEX", 5))
     throw AssetSourceException("No index header found!");
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("PackedAssetSource: '{}' size={} indexStart={} indexBytes={}", filename, m_packedFile->size(), indexStart, m_packedFile->size() - indexStart);
+  logN3dsPackedAssetMemory("before metadata");
+#endif
   ds.read(m_metadata);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPackedAssetMemory("after metadata");
+#endif
   ds.read(m_index);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("PackedAssetSource: '{}' index entries={}", filename, m_index.size());
+  logN3dsPackedAssetMemory("after index");
+#endif
 }
 
 JsonObject PackedAssetSource::metadata() const {
@@ -91,6 +121,11 @@ JsonObject PackedAssetSource::metadata() const {
 
 StringList PackedAssetSource::assetPaths() const {
   return m_index.keys();
+}
+
+void PackedAssetSource::forEachAssetPath(function<void(String const&)> callback) const {
+  for (auto const& entry : m_index)
+    callback(entry.first);
 }
 
 IODevicePtr PackedAssetSource::open(String const& path) {

@@ -6,6 +6,7 @@ param(
   [string]$ThreeDsxToolPath = "C:\devkitPro\tools\bin\3dsxtool.exe",
   [string]$ThreeDsxPath = "build\citra-repack\starbound.3dsx",
   [string]$CaptureDir = "build\citra-captures\n3ds-current",
+  [string]$BasePakPath = "",
   [int]$WindowWidth = 1280,
   [int]$WindowHeight = 900,
   [int]$WindowTimeoutSeconds = 30,
@@ -31,6 +32,35 @@ $romfs = Resolve-RepoPath $RomfsPath
 $threeDsxTool = Resolve-RepoPath $ThreeDsxToolPath
 $threeDsx = Resolve-RepoPath $ThreeDsxPath
 $capture = Resolve-RepoPath $CaptureDir
+
+if ($BasePakPath) {
+  $basePak = (Resolve-Path -LiteralPath $BasePakPath).Path
+  if (!(Test-Path -LiteralPath $basePak)) { throw "Base packed.pak not found: $BasePakPath" }
+
+  $sdmcAssets = Join-Path $env:APPDATA "Citra\sdmc\OpenStarbound\assets"
+  $sdmcPak = Join-Path $sdmcAssets "packed.pak"
+  New-Item -ItemType Directory -Path $sdmcAssets -Force | Out-Null
+
+  $sourceLength = (Get-Item -LiteralPath $basePak).Length
+  $needsStage = $true
+  if (Test-Path $sdmcPak) {
+    $needsStage = (Get-Item $sdmcPak).Length -ne $sourceLength
+    if ($needsStage) { Remove-Item -Force $sdmcPak }
+  }
+
+  if ($needsStage) {
+    try {
+      New-Item -ItemType HardLink -Path $sdmcPak -Target $basePak | Out-Null
+      Write-Host "Staged base assets as hardlink: $sdmcPak"
+    } catch {
+      Write-Warning "Hardlink failed, copying base assets to Citra SDMC: $($_.Exception.Message)"
+      Copy-Item -LiteralPath $basePak -Destination $sdmcPak -Force
+      Write-Host "Staged base assets as copy: $sdmcPak"
+    }
+  } else {
+    Write-Host "Base assets already staged: $sdmcPak"
+  }
+}
 
 if (!(Test-Path $citraExe)) { throw "Citra executable not found: $citraExe" }
 if (!$NoRepack) {

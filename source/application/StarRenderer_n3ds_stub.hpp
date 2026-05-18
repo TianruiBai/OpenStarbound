@@ -25,6 +25,7 @@ struct N3dsHandheldOverlayState {
   bool shoulderR = false;
   bool shoulderZL = false;
   bool shoulderZR = false;
+  uint32_t startupDiagnostics = 0;
 };
 
 class N3dsStubRenderer : public Renderer {

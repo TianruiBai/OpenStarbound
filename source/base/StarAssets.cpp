@@ -22,7 +22,37 @@
 #include "StarImageLuaBindings.hpp"
 #include "StarUtilityLuaBindings.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include <malloc.h>
+#endif
+
 namespace Star {
+
+void AssetSource::forEachAssetPath(function<void(String const&)> callback) const {
+  for (auto const& assetPath : assetPaths())
+    callback(assetPath);
+}
+
+#ifdef STAR_PLATFORM_N3DS
+namespace {
+void logN3dsAssetMemory(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label,
+      info.arena,
+      info.uordblks,
+      info.fordblks,
+      info.keepcost);
+}
+
+}
+#endif
+
+namespace {
+String const& descriptorSourceName(Assets::AssetFileDescriptor const& descriptor, String const& assetPath) {
+  return descriptor.sourceName.empty() ? assetPath : descriptor.sourceName;
+}
+}
 
 // if a ptr is returned, can be optionally used to format an error
 static const char* validateBasePath(std::string_view const& basePath) {
@@ -213,6 +243,14 @@ Assets::Assets(Settings settings, StringList assetSources) {
     callbacks.registerCallback("scan", [this](Maybe<String> const& a, Maybe<String> const& b) -> StringList {
       return b ? scan(a.value(), *b) : scan(a.value());
     });
+
+        callbacks.registerCallback("n3ds", []() -> bool {
+    #ifdef STAR_PLATFORM_N3DS
+      return true;
+    #else
+      return false;
+    #endif
+        });
     return callbacks;
   };
 
@@ -281,8 +319,16 @@ Assets::Assets(Settings settings, StringList assetSources) {
 
       callbacks.registerCallback("erase", [this](String const& path) -> bool {
         bool erased = m_files.erase(path);
-        if (erased)
-          m_filesByExtension[AssetPath::extension(path).toLower()].erase(path);
+        if (erased) {
+          auto extension = AssetPath::extension(path).toLower();
+#ifdef STAR_PLATFORM_N3DS
+          auto extensionEntry = m_filesByExtension.find(extension);
+          if (extensionEntry != m_filesByExtension.end())
+            extensionEntry->second.erase(path);
+#else
+          m_filesByExtension[extension].erase(path);
+#endif
+        }
         return erased;
       });
 
@@ -292,8 +338,11 @@ Assets::Assets(Settings settings, StringList assetSources) {
 
   auto addSource = [&](String const& sourcePath, AssetSourcePtr source) {
     m_assetSourcePaths.add(sourcePath, source);
+#ifdef STAR_PLATFORM_N3DS
+    size_t descriptorCount = 0;
+#endif
 
-    for (auto const& filename : source->assetPaths()) {
+    source->forEachAssetPath([&](String const& filename) {
       if (filename.contains(AssetsPatchSuffix, String::CaseInsensitive)) {
         if (filename.endsWith(AssetsPatchSuffix, String::CaseInsensitive)) {
           auto targetPatchFile = filename.substr(0, filename.size() - strlen(AssetsPatchSuffix));
@@ -334,10 +383,23 @@ Assets::Assets(Settings settings, StringList assetSources) {
       }
 
       auto& descriptor = m_files[filename];
+#ifdef STAR_PLATFORM_N3DS
+  if (!is<PackedAssetSource>(source) || !filename.equals(filename.toLower()))
+    descriptor.sourceName = filename;
+#else
       descriptor.sourceName = filename;
+#endif
       descriptor.source = source;
+#ifndef STAR_PLATFORM_N3DS
       m_filesByExtension[AssetPath::extension(filename).toLower()].insert(filename);
-    }
+#else
+  ++descriptorCount;
+  if (descriptorCount % 8192 == 0) {
+    Logger::info("N3DS assets descriptor progress '{}': processed={} files={}", sourcePath, descriptorCount, m_files.size());
+    logN3dsAssetMemory(strf("descriptor progress {}", sourcePath));
+  }
+#endif
+    });
   };
 
   auto runLoadScripts = [&](String const& groupName, String const& sourcePath, AssetSourcePtr source) {
@@ -374,45 +436,82 @@ Assets::Assets(Settings settings, StringList assetSources) {
 
   for (auto& sourcePath : m_assetSources) {
     Logger::info("Loading assets from: '{}'", sourcePath);
+#ifdef STAR_PLATFORM_N3DS
+    logN3dsAssetMemory(strf("before source {}", sourcePath));
+#endif
     AssetSourcePtr source;
     if (File::isDirectory(sourcePath))
       source = std::make_shared<DirectoryAssetSource>(sourcePath, m_settings.pathIgnore);
     else
       source = std::make_shared<PackedAssetSource>(sourcePath);
 
+#ifdef STAR_PLATFORM_N3DS
+    logN3dsAssetMemory(strf("after source {}", sourcePath));
+#endif
+
     addSource(sourcePath, source);
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS assets descriptors after '{}': files={} extensions={}", sourcePath, m_files.size(), m_filesByExtension.size());
+    logN3dsAssetMemory(strf("after descriptors {}", sourcePath));
+#endif
     sources.append(make_pair(sourcePath, source));
 
     runLoadScripts("onLoad", sourcePath, source);
+#ifdef STAR_PLATFORM_N3DS
+    logN3dsAssetMemory(strf("after onLoad {}", sourcePath));
+#endif
   }
 
   for (auto& pair : sources)
     runLoadScripts("postLoad", pair.first, pair.second);
 
-  Sha256Hasher digest;
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsAssetMemory("after postLoad scripts");
+#endif
 
-  for (auto const& assetPath : m_files.keys().transformed([](String const& s) {
-        return s.toLower();
-      }).sorted()) {
-    bool digestFile = true;
-    for (auto const& pattern : m_settings.digestIgnore) {
-      if (assetPath.regexMatch(pattern, false, false)) {
-        digestFile = false;
-        break;
+  bool skipDigest = false;
+#ifdef STAR_PLATFORM_N3DS
+  for (auto const& pattern : m_settings.digestIgnore) {
+    if (pattern == ".*") {
+      skipDigest = true;
+      break;
+    }
+  }
+#endif
+
+  if (skipDigest) {
+    Logger::info("N3DS asset digest skipped by digestIgnore settings");
+    m_digest = {};
+  } else {
+    Sha256Hasher digest;
+
+    for (auto const& assetPath : m_files.keys().transformed([](String const& s) {
+          return s.toLower();
+        }).sorted()) {
+      bool digestFile = true;
+      for (auto const& pattern : m_settings.digestIgnore) {
+        if (assetPath.regexMatch(pattern, false, false)) {
+          digestFile = false;
+          break;
+        }
+      }
+
+      auto const& descriptor = m_files.get(assetPath);
+
+      if (digestFile) {
+        digest.push(assetPath);
+        digest.push(DataStreamBuffer::serialize(descriptor.source->open(descriptorSourceName(descriptor, assetPath))->size()));
+        for (auto const& pair : descriptor.patchSources)
+          digest.push(DataStreamBuffer::serialize(pair.second->open(AssetPath::removeSubPath(pair.first))->size()));
       }
     }
 
-    auto const& descriptor = m_files.get(assetPath);
-
-    if (digestFile) {
-      digest.push(assetPath);
-      digest.push(DataStreamBuffer::serialize(descriptor.source->open(descriptor.sourceName)->size()));
-      for (auto const& pair : descriptor.patchSources)
-        digest.push(DataStreamBuffer::serialize(pair.second->open(AssetPath::removeSubPath(pair.first))->size()));
-    }
+    m_digest = digest.compute();
   }
 
-  m_digest = digest.compute();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsAssetMemory("after digest");
+#endif
 
   int workerPoolSize = m_settings.workerPoolSize;
   for (int i = 0; i < workerPoolSize; i++)
@@ -421,6 +520,9 @@ Assets::Assets(Settings settings, StringList assetSources) {
   // preload.config contains an array of files which will be loaded and then told to persist
   Json preload = json("/preload.config");
   Logger::info("Preloading assets");
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsAssetMemory("before preload");
+#endif
   for (auto script : preload.iterateArray()) {
     auto type = AssetTypeNames.getLeft(script.getString("type"));
     auto path = script.getString("path");
@@ -529,7 +631,19 @@ StringList Assets::scan(String const& prefix, String const& suffix) const {
 const CaseInsensitiveStringSet NullExtensionScan;
 
 CaseInsensitiveStringSet const& Assets::scanExtension(String const& extension) const {
-  auto find = m_filesByExtension.find(extension.beginsWith(".") ? extension.substr(1) : extension);
+  auto extensionName = extension.beginsWith(".") ? extension.substr(1) : extension;
+  auto find = m_filesByExtension.find(extensionName);
+#ifdef STAR_PLATFORM_N3DS
+  if (find == m_filesByExtension.end()) {
+    auto& files = m_filesByExtension[extensionName];
+    for (auto const& fileEntry : m_files) {
+      String const& file = fileEntry.first;
+      if (AssetPath::extension(file).equals(extensionName, String::CaseInsensitive))
+        files.insert(file);
+    }
+    return files;
+  }
+#endif
   return find != m_filesByExtension.end() ? find->second : NullExtensionScan;
 }
 
@@ -658,13 +772,17 @@ IODevicePtr Assets::openFile(String const& path) const {
   return open(path);
 }
 
-void Assets::clearCache() {
+void Assets::clearCache() const {
   MutexLocker assetsLocker(m_assetsMutex);
 
   // Clear all assets that are not queued or broken.
   auto it = makeSMutableMapIterator(m_assetsCache);
   while (it.hasNext()) {
     auto const& pair = it.next();
+#ifdef STAR_PLATFORM_N3DS
+    if (pair.first.type == AssetType::Font)
+      continue;
+#endif
     // Don't clean up queued, persistent, or broken assets.
     if (pair.second && !pair.second->shouldPersist() && !m_queue.contains(pair.first))
       it.remove();
@@ -1003,23 +1121,24 @@ FramesSpecificationConstPtr Assets::bestFramesSpecification(String const& image)
 
 IODevicePtr Assets::open(String const& path) const {
   if (auto p = m_files.ptr(path))
-    return p->source->open(p->sourceName);
+    return p->source->open(descriptorSourceName(*p, path));
   throw AssetException(strf("No such asset '{}'", path));
 }
 
 ByteArray Assets::read(String const& path) const {
   if (auto p = m_files.ptr(path))
-    return p->source->read(p->sourceName);
+    return p->source->read(descriptorSourceName(*p, path));
   throw AssetException(strf("No such asset '{}'", path));
 }
 
 ImageConstPtr Assets::readImage(String const& path) const {
   if (auto p = m_files.ptr(path)) {
     ImageConstPtr image;
+    auto const& sourceName = descriptorSourceName(*p, path);
     if (auto memorySource = as<MemoryAssetSource>(p->source))
-      image = memorySource->image(p->sourceName);
+      image = memorySource->image(sourceName);
     if (!image)
-      image = make_shared<Image>(Image::readPng(p->source->open(p->sourceName)));
+      image = make_shared<Image>(Image::readPng(p->source->open(sourceName)));
 
     if (!p->patchSources.empty()) {
       return applyImagePatches(image, path, p->patchSources);

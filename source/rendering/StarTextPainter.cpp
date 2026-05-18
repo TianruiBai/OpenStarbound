@@ -318,6 +318,11 @@ void TextPainter::reloadFonts() {
   m_fontTextureGroup.clearFonts();
   m_fontTextureGroup.cleanup(0);
   auto assets = Root::singleton().assets();
+#ifdef STAR_PLATFORM_N3DS
+  addFont(loadFont("/hobo.ttf"), "hobo");
+  addFont(loadFont("/font/twemoji.woff2"), "twemoji");
+  m_fontTextureGroup.setFixedFonts("hobo", "hobo", "twemoji");
+#else
   auto loadFontsByExtension = [&](String const& ext) {
     for (auto& fontPath : assets->scanExtension(ext)) {
       auto font = assets->font(fontPath);
@@ -332,6 +337,7 @@ void TextPainter::reloadFonts() {
     assets->json("/interface.config:font.defaultFont").toString(),
     assets->json("/interface.config:font.fallbackFont").toString(),
     assets->json("/interface.config:font.emojiFont").toString());
+  #endif
 }
 
 void TextPainter::cleanup(int64_t timeout) {

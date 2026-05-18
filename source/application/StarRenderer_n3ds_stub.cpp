@@ -36,6 +36,7 @@ constexpr int N3dsTopScreenWidth = 400;
 constexpr int N3dsTopScreenHeight = 240;
 constexpr int N3dsBottomScreenWidth = 320;
 constexpr int N3dsBottomScreenHeight = 240;
+constexpr bool N3dsDrawTopDiagnostics = false;
 
 u32 toC2dColor(Vec4B const& color) {
   return C2D_Color32(color[0], color[1], color[2], color[3]);
@@ -138,6 +139,48 @@ void drawBottomRoundButton(float x, float y, float radius, bool active, u32 colo
   C2D_DrawCircleSolid(x, y, 0.0f, radius * 0.45f, color);
 }
 
+enum class BottomButtonGlyph {
+  Check,
+  Cross,
+  Up,
+  Diamond
+};
+
+void drawBottomButtonGlyph(float x, float y, BottomButtonGlyph glyph, u32 color) {
+  if (glyph == BottomButtonGlyph::Check) {
+    C2D_DrawLine(x - 6.0f, y + 1.0f, color, x - 1.0f, y + 6.0f, color, 2.0f, 0.0f);
+    C2D_DrawLine(x - 1.0f, y + 6.0f, color, x + 7.0f, y - 6.0f, color, 2.0f, 0.0f);
+  } else if (glyph == BottomButtonGlyph::Cross) {
+    C2D_DrawLine(x - 6.0f, y - 6.0f, color, x + 6.0f, y + 6.0f, color, 2.0f, 0.0f);
+    C2D_DrawLine(x + 6.0f, y - 6.0f, color, x - 6.0f, y + 6.0f, color, 2.0f, 0.0f);
+  } else if (glyph == BottomButtonGlyph::Up) {
+    C2D_DrawTriangle(x, y - 8.0f, color, x - 8.0f, y + 6.0f, color, x + 8.0f, y + 6.0f, color, 0.0f);
+  } else if (glyph == BottomButtonGlyph::Diamond) {
+    C2D_DrawTriangle(x, y - 8.0f, color, x - 8.0f, y, color, x, y + 8.0f, color, 0.0f);
+    C2D_DrawTriangle(x, y - 8.0f, color, x, y + 8.0f, color, x + 8.0f, y, color, 0.0f);
+  }
+}
+
+void drawBottomQuickButton(float x, float y, float radius, bool active, u32 color, BottomButtonGlyph glyph) {
+  drawBottomRoundButton(x, y, radius, active, color);
+  drawBottomButtonGlyph(x, y, glyph, C2D_Color32(255, 255, 255, 255));
+}
+
+void drawBottomMovementPad(float x, float y, bool circlePadActive, bool dpadActive) {
+  u32 base = C2D_Color32(30, 34, 40, 255);
+  u32 border = circlePadActive || dpadActive ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(78, 84, 94, 255);
+  u32 accent = circlePadActive ? C2D_Color32(72, 220, 128, 255) : C2D_Color32(96, 224, 255, 255);
+
+  C2D_DrawCircleSolid(x, y, 0.0f, 36.0f, C2D_Color32(12, 14, 18, 255));
+  C2D_DrawCircleSolid(x, y, 0.0f, 34.0f, border);
+  C2D_DrawCircleSolid(x, y, 0.0f, 31.0f, base);
+  C2D_DrawRectSolid(x - 7.0f, y - 27.0f, 0.0f, 14.0f, 54.0f, C2D_Color32(46, 52, 60, 255));
+  C2D_DrawRectSolid(x - 27.0f, y - 7.0f, 0.0f, 54.0f, 14.0f, C2D_Color32(46, 52, 60, 255));
+  C2D_DrawCircleSolid(x, y, 0.0f, circlePadActive ? 12.0f : 9.0f, accent);
+  if (dpadActive)
+    C2D_DrawCircleSolid(x, y, 0.0f, 4.0f, C2D_Color32(255, 224, 48, 255));
+}
+
 void drawBottomCursor(Vec2F const& position, bool pressed, bool touchCursor) {
   float x = std::clamp(position[0], 0.0f, static_cast<float>(N3dsBottomScreenWidth - 1));
   float y = std::clamp(toBottomScreenY(position[1]), 0.0f, static_cast<float>(N3dsBottomScreenHeight - 1));
@@ -153,32 +196,68 @@ void drawBottomCursor(Vec2F const& position, bool pressed, bool touchCursor) {
   C2D_DrawCircleSolid(x, y, 0.0f, radius - 2.0f, color);
 }
 
+void drawBottomStartupDiagnostics(uint32_t diagnosticBits) {
+  constexpr float BeadSize = 6.0f;
+  constexpr float BeadGap = 4.0f;
+  constexpr float StartX = 168.0f;
+  constexpr float StartY = 9.0f;
+  u32 activeColors[] = {
+      C2D_Color32(96, 224, 255, 255),
+      C2D_Color32(72, 220, 128, 255),
+      C2D_Color32(255, 224, 48, 255),
+      C2D_Color32(255, 144, 72, 255),
+      C2D_Color32(216, 120, 255, 255),
+      C2D_Color32(255, 104, 160, 255),
+      C2D_Color32(224, 224, 224, 255),
+      C2D_Color32(232, 64, 72, 255),
+  };
+
+  for (unsigned i = 0; i < 8; ++i) {
+    float x = StartX + i * (BeadSize + BeadGap);
+    u32 color = (diagnosticBits & (1u << i)) ? activeColors[i] : C2D_Color32(46, 52, 60, 255);
+    C2D_DrawRectSolid(x, StartY, 0.0f, BeadSize, BeadSize, C2D_Color32(10, 12, 16, 255));
+    C2D_DrawRectSolid(x + 1.0f, StartY + 1.0f, 0.0f, BeadSize - 2.0f, BeadSize - 2.0f, color);
+  }
+}
+
 void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, unsigned frameCounter) {
   (void)frameCounter;
 
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(14, 17, 22, 255));
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 32.0f, C2D_Color32(24, 28, 34, 255));
-  C2D_DrawRectSolid(0.0f, 196.0f, 0.0f, 320.0f, 44.0f, C2D_Color32(23, 26, 31, 255));
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(13, 16, 21, 255));
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 36.0f, C2D_Color32(24, 29, 36, 255));
+  C2D_DrawRectSolid(0.0f, 198.0f, 0.0f, 320.0f, 42.0f, C2D_Color32(24, 27, 33, 255));
+  C2D_DrawRectSolid(0.0f, 36.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(58, 66, 76, 255));
+  C2D_DrawRectSolid(0.0f, 197.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(58, 66, 76, 255));
 
-  drawBottomStatusBar(12.0f, 8.0f, 84.0f, 7.0f, 0.78f, C2D_Color32(232, 64, 72, 255));
-  drawBottomStatusBar(12.0f, 18.0f, 84.0f, 7.0f, 0.62f, C2D_Color32(72, 176, 255, 255));
-  drawBottomStatusBar(106.0f, 8.0f, 48.0f, 7.0f, 0.95f, C2D_Color32(72, 220, 128, 255));
-  drawBottomStatusBar(106.0f, 18.0f, 48.0f, 7.0f, overlayState.circlePadActive ? 1.0f : 0.25f, C2D_Color32(255, 224, 48, 255));
+  drawBottomStatusBar(10.0f, 7.0f, 88.0f, 7.0f, 0.78f, C2D_Color32(232, 64, 72, 255));
+  drawBottomStatusBar(10.0f, 18.0f, 88.0f, 7.0f, 0.62f, C2D_Color32(72, 176, 255, 255));
+  drawBottomStatusBar(108.0f, 7.0f, 48.0f, 7.0f, 0.95f, C2D_Color32(72, 220, 128, 255));
+  drawBottomStatusBar(108.0f, 18.0f, 48.0f, 7.0f, overlayState.circlePadActive ? 1.0f : 0.25f, C2D_Color32(255, 224, 48, 255));
+  drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
 
-  C2D_DrawRectSolid(12.0f, 48.0f, 0.0f, 132.0f, 108.0f, C2D_Color32(28, 32, 38, 255));
-  C2D_DrawRectSolid(18.0f, 56.0f, 0.0f, 52.0f, 52.0f, C2D_Color32(44, 50, 58, 255));
-  C2D_DrawRectSolid(22.0f, 60.0f, 0.0f, 44.0f, 44.0f, C2D_Color32(96, 224, 255, 255));
-  C2D_DrawRectSolid(78.0f, 58.0f, 0.0f, 54.0f, 6.0f, C2D_Color32(96, 224, 255, 255));
-  C2D_DrawRectSolid(78.0f, 72.0f, 0.0f, 42.0f, 6.0f, C2D_Color32(255, 224, 48, 255));
-  C2D_DrawRectSolid(78.0f, 86.0f, 0.0f, 50.0f, 6.0f, C2D_Color32(232, 64, 72, 255));
-  C2D_DrawRectSolid(18.0f, 120.0f, 0.0f, 112.0f, 8.0f, C2D_Color32(58, 64, 72, 255));
-  C2D_DrawRectSolid(18.0f, 136.0f, 0.0f, overlayState.dpadActive ? 96.0f : 42.0f, 8.0f, C2D_Color32(72, 220, 128, 255));
+  drawBottomRoundButton(210.0f, 18.0f, 7.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
+  drawBottomRoundButton(242.0f, 18.0f, 9.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
+  drawBottomRoundButton(276.0f, 18.0f, 9.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
+  drawBottomRoundButton(308.0f, 18.0f, 7.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
 
-  C2D_DrawRectSolid(166.0f, 48.0f, 0.0f, 142.0f, 108.0f, C2D_Color32(28, 32, 38, 255));
-  C2D_DrawRectSolid(178.0f, 60.0f, 0.0f, 118.0f, 18.0f, C2D_Color32(44, 50, 58, 255));
-  C2D_DrawRectSolid(178.0f, 88.0f, 0.0f, 78.0f, 12.0f, C2D_Color32(255, 224, 48, 255));
-  C2D_DrawRectSolid(178.0f, 108.0f, 0.0f, 98.0f, 12.0f, C2D_Color32(96, 224, 255, 255));
-  C2D_DrawRectSolid(178.0f, 128.0f, 0.0f, 58.0f, 12.0f, C2D_Color32(72, 220, 128, 255));
+  C2D_DrawRectSolid(12.0f, 47.0f, 0.0f, 164.0f, 30.0f, C2D_Color32(27, 32, 39, 255));
+  C2D_DrawCircleSolid(28.0f, 62.0f, 0.0f, 8.0f, C2D_Color32(255, 224, 48, 255));
+  C2D_DrawRectSolid(44.0f, 55.0f, 0.0f, 112.0f, 4.0f, C2D_Color32(96, 224, 255, 255));
+  C2D_DrawRectSolid(44.0f, 65.0f, 0.0f, 86.0f, 4.0f, C2D_Color32(72, 220, 128, 255));
+
+  C2D_DrawRectSolid(12.0f, 86.0f, 0.0f, 164.0f, 82.0f, C2D_Color32(20, 24, 30, 255));
+  drawBottomMovementPad(60.0f, 127.0f, overlayState.circlePadActive, overlayState.dpadActive);
+  C2D_DrawRectSolid(112.0f, 105.0f, 0.0f, overlayState.circlePadActive ? 44.0f : 22.0f, 5.0f, C2D_Color32(72, 220, 128, 255));
+  C2D_DrawRectSolid(112.0f, 122.0f, 0.0f, overlayState.dpadActive ? 50.0f : 26.0f, 5.0f, C2D_Color32(255, 224, 48, 255));
+  C2D_DrawRectSolid(112.0f, 139.0f, 0.0f, overlayState.pointerPressed ? 38.0f : 18.0f, 5.0f, C2D_Color32(96, 224, 255, 255));
+
+  C2D_DrawRectSolid(196.0f, 86.0f, 0.0f, 112.0f, 100.0f, C2D_Color32(20, 24, 30, 255));
+  drawBottomQuickButton(292.0f, 144.0f, 13.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255), BottomButtonGlyph::Check);
+  drawBottomQuickButton(260.0f, 174.0f, 13.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255), BottomButtonGlyph::Cross);
+  drawBottomQuickButton(260.0f, 114.0f, 13.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255), BottomButtonGlyph::Up);
+  drawBottomQuickButton(228.0f, 144.0f, 13.0f, overlayState.buttonY, C2D_Color32(72, 220, 128, 255), BottomButtonGlyph::Diamond);
+  C2D_DrawRectSolid(206.0f, 99.0f, 0.0f, 24.0f, 5.0f, C2D_Color32(216, 120, 255, 255));
+  C2D_DrawRectSolid(206.0f, 179.0f, 0.0f, 30.0f, 5.0f, C2D_Color32(255, 104, 160, 255));
 
   float slotSize = 28.0f;
   float slotGap = 2.0f;
@@ -189,15 +268,6 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
       C2D_Color32(255, 144, 72, 255), C2D_Color32(160, 220, 96, 255), C2D_Color32(96, 144, 255, 255), C2D_Color32(255, 104, 160, 255), C2D_Color32(224, 224, 224, 255)};
   for (unsigned slot = 0; slot < 10; ++slot)
     drawBottomSlot(slotX + slot * (slotSize + slotGap), slotY, slotSize, slot == overlayState.selectedHotbarSlot, slot < 6, slotColors[slot]);
-
-  drawBottomRoundButton(212.0f, 26.0f, 8.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
-  drawBottomRoundButton(244.0f, 26.0f, 10.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
-  drawBottomRoundButton(276.0f, 26.0f, 10.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
-  drawBottomRoundButton(308.0f, 26.0f, 8.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
-  drawBottomRoundButton(228.0f, 178.0f, 12.0f, overlayState.buttonY, C2D_Color32(72, 220, 128, 255));
-  drawBottomRoundButton(258.0f, 160.0f, 12.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255));
-  drawBottomRoundButton(258.0f, 196.0f, 12.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255));
-  drawBottomRoundButton(288.0f, 178.0f, 12.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255));
 
   Vec2F bottomPointer = {overlayState.pointerPosition[0] * (static_cast<float>(N3dsBottomScreenWidth) / static_cast<float>(N3dsTopScreenWidth)), overlayState.pointerPosition[1]};
   drawBottomCursor(bottomPointer, overlayState.pointerPressed, false);
@@ -638,19 +708,12 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     auto* topTarget = static_cast<C3D_RenderTarget*>(m_topTarget);
     auto* bottomTarget = static_cast<C3D_RenderTarget*>(m_bottomTarget);
 
-    // PLACEHOLDER: minimal visible output while the full primitive path is
-    // still stubbed.
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-    bool flashPhase = (m_frameCounter / 30) % 2 == 0;
     FrameReplayStats frameStats;
     frameStats.batchCount = m_primitiveBatches.size();
-    u32 clearColor = flashPhase ? C2D_Color32(255, 24, 180, 255) : C2D_Color32(24, 220, 255, 255);
-    C2D_TargetClear(topTarget, clearColor);
+    C2D_TargetClear(topTarget, C2D_Color32(0, 0, 0, 255));
     C2D_SceneBegin(topTarget);
     applyScissorRect({});
-    C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 400.0f, 18.0f, C2D_Color32(255, 255, 255, 255));
-    C2D_DrawRectSolid(0.0f, 222.0f, 0.0f, 400.0f, 18.0f, C2D_Color32(0, 0, 0, 255));
-    C2D_DrawRectSolid(24.0f, 96.0f, 0.0f, 352.0f, 48.0f, flashPhase ? C2D_Color32(0, 0, 0, 255) : C2D_Color32(255, 255, 255, 255));
 
     // PLACEHOLDER: first-pass primitive replay path. Axis-aligned textured
     // quads now use uploaded C2D images; other primitives fall back to solid
@@ -670,7 +733,8 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
       }
     }
     applyScissorRect({});
-    drawTopScreenDiagnostics(frameStats);
+    if (N3dsDrawTopDiagnostics)
+      drawTopScreenDiagnostics(frameStats);
 
     if (bottomTarget) {
       C2D_TargetClear(bottomTarget, C2D_Color32(14, 17, 22, 255));

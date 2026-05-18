@@ -21,6 +21,11 @@ PlayerStorage::PlayerStorage(String const& storageDir) {
     return;
   }
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS PlayerStorage: skipping existing player scan at startup");
+  return;
+#endif
+
   auto configuration = Root::singleton().configuration();
   if (configuration->get("clearPlayerFiles").toBool()) {
     Logger::info("Clearing all player files");
@@ -320,7 +325,11 @@ void PlayerStorage::writeMetadata() {
   m_metadata["order"] = std::move(order);
 
   String filename = File::relativeTo(m_storageDirectory, "metadata");
+#ifdef STAR_PLATFORM_N3DS
+  File::writeFile(Json(m_metadata).printJson(0), filename);
+#else
   File::overwriteFileWithRename(Json(m_metadata).printJson(0), filename);
+#endif
 }
 
 }

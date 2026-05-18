@@ -122,12 +122,14 @@ R"JSON(
 Json const N3dsBootConfiguration = Json::parseJson(R"JSON(
     {
       "assetDirectories" : [
+        "sdmc:/OpenStarbound/assets",
         "romfs:/"
       ],
 
-      "storageDirectory" : "romfs:/",
+      "storageDirectory" : "sdmc:/OpenStarbound/storage",
 
       "assetsSettings" : {
+        "workerPoolSize" : 0,
         "pathIgnore" : [],
         "digestIgnore" : [
           ".*"

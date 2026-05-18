@@ -29,6 +29,7 @@ public:
 
   JsonObject metadata() const override;
   StringList assetPaths() const override;
+  void forEachAssetPath(function<void(String const&)> callback) const override;
 
   IODevicePtr open(String const& path) override;
   ByteArray read(String const& path) override;

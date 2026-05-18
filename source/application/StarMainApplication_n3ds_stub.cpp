@@ -9,13 +9,18 @@
 #include "StarApplicationController.hpp"
 #include "StarRenderer_n3ds_stub.hpp"
 #include "StarPlatformServices_stub.hpp"
+#include "StarFile.hpp"
 #include "StarLogging.hpp"
 #include "StarSignalHandler.hpp"
 #include "StarTime.hpp"
 #include "StarImage.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <sys/stat.h>
 
 #ifdef STAR_PLATFORM_N3DS
 #include <3ds.h>
@@ -27,15 +32,155 @@ constexpr int N3dsCircleDeadzone = 48;
 constexpr float N3dsCStickCursorStep = 5.0f;
 constexpr float N3dsPointerMaxX = 399.0f;
 constexpr float N3dsPointerMaxY = 239.0f;
+constexpr bool N3dsRunStartupGraphicsProbesByDefault = false;
+constexpr float N3dsBottomHotbarX = 11.0f;
+constexpr float N3dsBottomHotbarY = 206.0f;
+constexpr float N3dsBottomHotbarSlotSize = 28.0f;
+constexpr float N3dsBottomHotbarSlotGap = 2.0f;
+constexpr unsigned N3dsBottomHotbarSlotCount = 10;
+constexpr bool N3dsExplicitSdmcMount = false;
+
+enum N3dsStartupDiagnostic : u32 {
+  N3dsDiagGfxReady = 1u << 0,
+  N3dsDiagSdmcMounted = 1u << 1,
+  N3dsDiagNativeDirectory = 1u << 2,
+  N3dsDiagNativeLogWrite = 1u << 3,
+  N3dsDiagFileLogSink = 1u << 4,
+  N3dsDiagPreStartupFlush = 1u << 5,
+  N3dsDiagStartupEntered = 1u << 6,
+  N3dsDiagStartupComplete = 1u << 7,
+};
+
+u32 sN3dsStartupDiagnostics = 0;
 
 struct N3dsInputState {
   u32 previousCirclePadMask = 0;
   bool touchPressed = false;
+  bool touchUiPressed = false;
   bool cStickPointerPressed = false;
   Star::Vec2F lastTouchPosition = {0.0f, 0.0f};
   Star::Vec2F pointerPosition = {200.0f, 120.0f};
   Star::N3dsHandheldOverlayState handheldOverlay;
 };
+
+void markN3dsStartupDiagnostic(N3dsStartupDiagnostic diagnostic) {
+  sN3dsStartupDiagnostics |= diagnostic;
+}
+
+void appendN3dsNativeDiagnosticLog(char const* message) {
+  std::FILE* file = std::fopen("sdmc:/OpenStarbound/starbound_n3ds_native.log", "ab");
+  if (!file)
+    return;
+
+  std::fputs(message, file);
+  std::fputc('\n', file);
+  std::fflush(file);
+  std::fclose(file);
+  markN3dsStartupDiagnostic(N3dsDiagNativeLogWrite);
+}
+
+void prepareN3dsNativeDiagnosticLog() {
+  if (::mkdir("sdmc:/OpenStarbound", 0777) == 0 || errno == EEXIST)
+    markN3dsStartupDiagnostic(N3dsDiagNativeDirectory);
+
+  appendN3dsNativeDiagnosticLog("native diagnostic log active");
+}
+
+bool installN3dsFileLogger() {
+  try {
+    Star::File::makeDirectory("sdmc:/OpenStarbound");
+    Star::Logger::addSink(Star::make_shared<Star::FileLogSink>("sdmc:/OpenStarbound/starbound_n3ds.log", Star::LogLevel::Info, true));
+    markN3dsStartupDiagnostic(N3dsDiagFileLogSink);
+    Star::Logger::info("N3dsMainApplication: SDMC file logger active");
+    appendN3dsNativeDiagnosticLog("engine file logger active");
+    return true;
+  } catch (std::exception const& e) {
+    Star::Logger::warn("N3dsMainApplication: SDMC file logger unavailable: {}", e.what());
+    appendN3dsNativeDiagnosticLog("engine file logger unavailable");
+    return false;
+  }
+}
+
+bool n3dsRunStartupGraphicsProbes(Star::StringList const& cmdLineArgs) {
+  if (N3dsRunStartupGraphicsProbesByDefault)
+    return true;
+
+  for (auto const& arg : cmdLineArgs) {
+    if (arg == "--n3ds-graphics-probes" || arg == "-n3dsGraphicsProbes")
+      return true;
+  }
+
+  return false;
+}
+
+Star::Maybe<unsigned> n3dsBottomHotbarSlotAt(float x, float yTopOrigin) {
+  if (yTopOrigin < N3dsBottomHotbarY || yTopOrigin >= N3dsBottomHotbarY + N3dsBottomHotbarSlotSize)
+    return {};
+
+  float relativeX = x - N3dsBottomHotbarX;
+  if (relativeX < 0.0f)
+    return {};
+
+  float slotPitch = N3dsBottomHotbarSlotSize + N3dsBottomHotbarSlotGap;
+  unsigned slot = static_cast<unsigned>(relativeX / slotPitch);
+  float slotStart = slot * slotPitch;
+  if (slot >= N3dsBottomHotbarSlotCount || relativeX < slotStart || relativeX >= slotStart + N3dsBottomHotbarSlotSize)
+    return {};
+
+  return slot;
+}
+
+Star::Key n3dsHotbarKeyForSlot(unsigned slot) {
+  static constexpr Star::Key HotbarKeys[N3dsBottomHotbarSlotCount] = {
+      Star::Key::One,
+      Star::Key::Two,
+      Star::Key::Three,
+      Star::Key::Four,
+      Star::Key::Five,
+      Star::Key::Six,
+      Star::Key::R,
+      Star::Key::T,
+      Star::Key::Y,
+      Star::Key::N,
+  };
+
+  return HotbarKeys[std::min(slot, N3dsBottomHotbarSlotCount - 1)];
+}
+
+void appendKeyTapEvents(Star::List<Star::InputEvent>& outEvents, Star::Key key) {
+  outEvents.append(Star::KeyDownEvent{key, Star::KeyMod::NoMod});
+  outEvents.append(Star::KeyUpEvent{key});
+}
+
+void appendHotbarSelectEvents(Star::List<Star::InputEvent>& outEvents, N3dsInputState& state, unsigned slot) {
+  state.handheldOverlay.selectedHotbarSlot = std::min(slot, N3dsBottomHotbarSlotCount - 1);
+  appendKeyTapEvents(outEvents, n3dsHotbarKeyForSlot(state.handheldOverlay.selectedHotbarSlot));
+}
+
+Star::Maybe<Star::Key> n3dsBottomQuickActionAt(float x, float yTopOrigin) {
+  struct TouchButton {
+    float centerX;
+    float centerY;
+    float radius;
+    Star::Key key;
+  };
+
+  static constexpr TouchButton TouchButtons[] = {
+      {292.0f, 144.0f, 16.0f, Star::Key::Return},
+      {260.0f, 174.0f, 16.0f, Star::Key::Escape},
+      {260.0f, 114.0f, 16.0f, Star::Key::Space},
+      {228.0f, 144.0f, 16.0f, Star::Key::E},
+  };
+
+  for (auto const& touchButton : TouchButtons) {
+    float deltaX = x - touchButton.centerX;
+    float deltaY = yTopOrigin - touchButton.centerY;
+    if (deltaX * deltaX + deltaY * deltaY <= touchButton.radius * touchButton.radius)
+      return touchButton.key;
+  }
+
+  return {};
+}
 
 void writeN3dsFramebufferProbe(gfxScreen_t screen, gfx3dSide_t side, unsigned frameCounter) {
   u16 framebufferWidth = 0;
@@ -256,9 +401,9 @@ Star::List<Star::InputEvent> n3dsProcessInputEvents(N3dsInputState& state) {
   up |= circleUp;
 
   if (down & KEY_DRIGHT)
-    state.handheldOverlay.selectedHotbarSlot = (state.handheldOverlay.selectedHotbarSlot + 1) % 10;
+    appendHotbarSelectEvents(events, state, (state.handheldOverlay.selectedHotbarSlot + 1) % N3dsBottomHotbarSlotCount);
   if (down & KEY_DLEFT)
-    state.handheldOverlay.selectedHotbarSlot = (state.handheldOverlay.selectedHotbarSlot + 9) % 10;
+    appendHotbarSelectEvents(events, state, (state.handheldOverlay.selectedHotbarSlot + N3dsBottomHotbarSlotCount - 1) % N3dsBottomHotbarSlotCount);
 
   appendMappedKeyEvents(events, down, up, n3dsKeyMods(held));
   appendMappedControllerButtonEvents(events, down, up);
@@ -308,7 +453,24 @@ Star::List<Star::InputEvent> n3dsProcessInputEvents(N3dsInputState& state) {
   state.handheldOverlay.touchPosition = touchPos;
   state.handheldOverlay.touchPressed = touchNow;
 
-  if (touchNow) {
+  bool touchHandledByBottomUi = state.touchUiPressed;
+  if (touchNow && !state.touchPressed && !state.touchUiPressed) {
+    if (auto slot = n3dsBottomHotbarSlotAt((float)touch.px, (float)touch.py)) {
+      appendHotbarSelectEvents(events, state, *slot);
+      touchHandledByBottomUi = true;
+      state.touchUiPressed = true;
+    } else if (auto quickAction = n3dsBottomQuickActionAt((float)touch.px, (float)touch.py)) {
+      appendKeyTapEvents(events, *quickAction);
+      touchHandledByBottomUi = true;
+      state.touchUiPressed = true;
+    }
+  }
+
+  if (touchHandledByBottomUi) {
+    if (!touchNow)
+      state.touchUiPressed = false;
+    state.touchPressed = false;
+  } else if (touchNow) {
     events.append(Star::MouseMoveEvent{{0.0f, 0.0f}, touchPos});
     if (!state.touchPressed)
       events.append(Star::MouseButtonDownEvent{Star::MouseButton::Left, touchPos});
@@ -424,9 +586,13 @@ private:
 
 int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
   SignalHandler signalHandler;
+#ifdef STAR_PLATFORM_N3DS
+  bool n3dsSdmcMounted = false;
+#endif
 
   try {
 #ifdef STAR_PLATFORM_N3DS
+    bool runStartupGraphicsProbes = n3dsRunStartupGraphicsProbes(cmdLineArgs);
     gfxInit(GSP_BGR8_OES, GSP_BGR8_OES, false);
     gfxSet3D(false);
     gfxSetScreenFormat(GFX_TOP, GSP_BGR8_OES);
@@ -435,23 +601,57 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
     gfxSetDoubleBuffering(GFX_BOTTOM, true);
     hidInit();
     romfsInit();
-    runN3dsFramebufferVisibilityProbe();
+    markN3dsStartupDiagnostic(N3dsDiagGfxReady);
+    if constexpr (N3dsExplicitSdmcMount) {
+      Result sdmcResult = archiveMountSdmc();
+      if (R_SUCCEEDED(sdmcResult)) {
+        n3dsSdmcMounted = true;
+        markN3dsStartupDiagnostic(N3dsDiagSdmcMounted);
+      } else {
+        Logger::warn("N3dsMainApplication: SDMC mount failed: {}", (unsigned)sdmcResult);
+      }
+    } else {
+      markN3dsStartupDiagnostic(N3dsDiagSdmcMounted);
+    }
+    prepareN3dsNativeDiagnosticLog();
+    installN3dsFileLogger();
+    if (runStartupGraphicsProbes)
+      runN3dsFramebufferVisibilityProbe();
 #endif
 
     auto appController = make_shared<N3dsApplicationController>();
     auto renderer      = make_shared<N3dsStubRenderer>();
 #ifdef STAR_PLATFORM_N3DS
-    runN3dsCitroVisibilityProbe(*renderer);
+    if (runStartupGraphicsProbes)
+      runN3dsCitroVisibilityProbe(*renderer);
+    else {
+      markN3dsStartupDiagnostic(N3dsDiagPreStartupFlush);
+      N3dsHandheldOverlayState startupOverlay;
+      startupOverlay.startupDiagnostics = sN3dsStartupDiagnostics;
+      renderer->setHandheldOverlayState(startupOverlay);
+      renderer->flush(Mat3F::identity());
+    }
 #endif
     StringList startupArgs = {"-bootconfig", "romfs:/sbinit.config"};
     if (cmdLineArgs.size() > 1)
       startupArgs.appendAll(cmdLineArgs.slice(1));
 
     Logger::info("N3dsMainApplication: startup"); // PLACEHOLDER
+  #ifdef STAR_PLATFORM_N3DS
+    markN3dsStartupDiagnostic(N3dsDiagStartupEntered);
+    appendN3dsNativeDiagnosticLog("application startup enter");
+  #endif
 
     application->startup(startupArgs);
+  #ifdef STAR_PLATFORM_N3DS
+    markN3dsStartupDiagnostic(N3dsDiagStartupComplete);
+    appendN3dsNativeDiagnosticLog("application startup complete");
+  #endif
+    Logger::info("N3dsMainApplication: application startup complete"); // PLACEHOLDER
     application->applicationInit(appController);
+    Logger::info("N3dsMainApplication: application init complete"); // PLACEHOLDER
     application->renderInit(renderer);
+    Logger::info("N3dsMainApplication: render init complete"); // PLACEHOLDER
 
 #ifdef STAR_PLATFORM_N3DS
     // Fixed-timestep loop with bounded catch-up. Some Citra builds can report
@@ -515,6 +715,8 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
 
 #ifdef STAR_PLATFORM_N3DS
     hidExit();
+    if (n3dsSdmcMounted)
+      archiveUnmount("sdmc");
     romfsExit();
     gfxExit();
 #endif
@@ -524,6 +726,8 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
     Logger::error("N3dsMainApplication: unhandled exception: {}", e.what());
 #ifdef STAR_PLATFORM_N3DS
     hidExit();
+    if (n3dsSdmcMounted)
+      archiveUnmount("sdmc");
     romfsExit();
     gfxExit();
 #endif

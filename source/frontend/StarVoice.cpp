@@ -158,8 +158,13 @@ Voice::Voice(ApplicationControllerPtr appController) : m_encoder(nullptr, opus_e
   m_channelMode = VoiceChannelMode::Mono;
   m_applicationController = appController;
 
+#ifdef STAR_PLATFORM_N3DS
+  m_stopThread = true;
+  Logger::info("Voice: N3DS voice worker disabled");
+#else
   m_stopThread = false;
   m_thread = Thread::invoke("Voice::thread", mem_fn(&Voice::thread), this);
+#endif
 
   s_singleton = this;
 }

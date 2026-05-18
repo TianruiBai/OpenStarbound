@@ -49,6 +49,9 @@ void FileLogSink::log(char const* msg, LogLevel level) {
   MutexLocker locker(m_logMutex);
   auto line = strf("[{}] [{}] {}\n", Time::printCurrentDateAndTime("<hours>:<minutes>:<seconds>.<millis>"), LogLevelNames.getRight(level), msg);
   m_output->write(line.data(), line.size());
+#ifdef STAR_PLATFORM_N3DS
+  m_output->sync();
+#endif
 }
 
 void Logger::addSink(LogSinkPtr s) {

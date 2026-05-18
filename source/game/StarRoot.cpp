@@ -57,7 +57,11 @@ namespace Star {
 
 namespace {
   unsigned const RootMaintenanceSleep = 5000;
+#ifdef STAR_PLATFORM_N3DS
+  unsigned const RootLoadThreads = 0;
+#else
   unsigned const RootLoadThreads = 4;
+#endif
 }
 
 Root* Root::singletonPtr() {
@@ -97,6 +101,9 @@ Root::Root(Settings settings) : RootBase() {
   Logger::info("Root: Preparing...");
 
   m_stopMaintenanceThread = false;
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("Root: N3DS maintenance thread disabled");
+#else
   m_maintenanceThread = Thread::invoke("Root::maintenanceMain", [this]() {
       MutexLocker locker(m_maintenanceStopMutex);
       while (!m_stopMaintenanceThread) {
@@ -155,6 +162,7 @@ Root::Root(Settings settings) : RootBase() {
         m_maintenanceStopCondition.wait(m_maintenanceStopMutex, RootMaintenanceSleep);
       }
     });
+#endif
 
   Logger::info("Root: Done preparing Root.");
 }

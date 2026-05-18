@@ -250,7 +250,7 @@ public:
   IODevicePtr openFile(String const& basePath) const;
 
   // Clear all cached assets that are not queued, persistent, or broken.
-  void clearCache();
+  void clearCache() const;
 
   // Run a cleanup pass and remove any assets past their time to live.
   void cleanup();
@@ -345,7 +345,7 @@ private:
   // Maps the source asset name to the source containing it
   CaseInsensitiveStringMap<AssetFileDescriptor> m_files;
   // Maps an extension to the files with that extension
-  CaseInsensitiveStringMap<CaseInsensitiveStringSet> m_filesByExtension;
+  mutable CaseInsensitiveStringMap<CaseInsensitiveStringSet> m_filesByExtension;
 
   ByteArray m_digest;
 

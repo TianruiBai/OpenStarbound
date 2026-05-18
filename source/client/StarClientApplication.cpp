@@ -293,14 +293,34 @@ void ClientApplication::renderInit(RendererPtr renderer) {
   renderer->setMultiTexturingEnabled(m_root->configuration()->get("useMultiTexturing").optBool().value(true));
 
   m_guiContext->renderInit(renderer);
+#ifdef STAR_PLATFORM_N3DS
+  m_root->assets()->clearCache();
+  Logger::info("N3DS assets cache cleared after GuiContext renderInit");
+#endif
 
   m_cinematicOverlay = make_shared<Cinematic>();
+#ifndef STAR_PLATFORM_N3DS
   m_errorScreen = make_shared<ErrorScreen>();
+#else
+  Logger::info("N3DS ErrorScreen creation deferred");
+#endif
 
-  if (m_titleScreen)
+  if (m_titleScreen) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS TitleScreen renderInit begin");
+#endif
     m_titleScreen->renderInit(renderer);
-  if (m_worldPainter)
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS TitleScreen renderInit complete");
+#endif
+  }
+  if (m_worldPainter) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS WorldPainter renderInit deferred until world startup");
+#else
     m_worldPainter->renderInit(renderer);
+#endif
+  }
 
   #ifdef STAR_ENABLE_STEAM_INTEGRATION
   #ifdef STAR_SYSTEM_LINUX
@@ -308,7 +328,7 @@ void ClientApplication::renderInit(RendererPtr renderer) {
     auto config = m_root->configuration();
     if (!config->get("steamFlatpakWarningShown").optBool().value()) {
       config->set("steamFlatpakWarningShown", true);
-      m_errorScreen->setMessage(m_root->assets()->json("/interface.config:steamFlatpakWarning").toString());
+      errorScreen()->setMessage(m_root->assets()->json("/interface.config:steamFlatpakWarning").toString());
       changeState(MainAppState::SteamFlatpakWarning);
       return;
     }
@@ -340,6 +360,12 @@ void ClientApplication::windowChanged(WindowMode windowMode, Vec2U screenSize) {
   }
 }
 
+ErrorScreenPtr ClientApplication::errorScreen() {
+  if (!m_errorScreen)
+    m_errorScreen = make_shared<ErrorScreen>();
+  return m_errorScreen;
+}
+
 void ClientApplication::processInput(InputEvent const& event) {
   if (auto keyDown = event.ptr<KeyDownEvent>()) {
     m_heldKeyEvents.append(*keyDown);
@@ -366,14 +392,16 @@ void ClientApplication::processInput(InputEvent const& event) {
       m_controllerRightStick[1] = cAxis->controllerAxisValue;
   }
 
-  bool processed = !m_errorScreen->accepted() && m_errorScreen->handleInputEvent(event);
+  bool processed = m_errorScreen && !m_errorScreen->accepted() && m_errorScreen->handleInputEvent(event);
 
   if (!processed) {
     if (m_state == MainAppState::Splash) {
       processed = m_cinematicOverlay->handleInputEvent(event);
     } else if (m_state == MainAppState::Title) {
-      if (!(processed = m_cinematicOverlay->handleInputEvent(event)))
-        processed = m_titleScreen->handleInputEvent(event);
+      if (!(processed = m_cinematicOverlay->handleInputEvent(event))) {
+        if (m_titleScreen)
+          processed = m_titleScreen->handleInputEvent(event);
+      }
 
     } else if (m_state == MainAppState::SinglePlayer || m_state == MainAppState::MultiPlayer) {
       if (!(processed = m_cinematicOverlay->handleInputEvent(event)))
@@ -395,14 +423,16 @@ void ClientApplication::update() {
         changeState(MainAppState::Title);
       }
       
-      if (auto req = p2pNetworkingService->pullJoinRequest())
-        m_mainInterface->queueJoinRequest(*req);
+      if (auto req = p2pNetworkingService->pullJoinRequest()) {
+        if (m_mainInterface)
+          m_mainInterface->queueJoinRequest(*req);
+      }
 
       p2pNetworkingService->update();
     }
   }
 
-  if (!m_errorScreen->accepted())
+  if (m_errorScreen && !m_errorScreen->accepted())
     m_errorScreen->update(dt);
 
   // This warning is only applicable to Linux systems so no need to process it otherwise.
@@ -460,7 +490,8 @@ void ClientApplication::render() {
     m_cinematicOverlay->render();
 
   } else if (m_state == MainAppState::Title) {
-    m_titleScreen->render();
+    if (m_titleScreen)
+      m_titleScreen->render();
     m_cinematicOverlay->render();
 
   } else if (m_state > MainAppState::Title) {
@@ -500,7 +531,7 @@ void ClientApplication::render() {
     LogMap::set("client_render_interface", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - start));
   }
 
-  if (!m_errorScreen->accepted())
+  if (m_errorScreen && !m_errorScreen->accepted())
     m_errorScreen->render();
 }
 
@@ -650,11 +681,22 @@ void ClientApplication::changeState(MainAppState newState) {
     app->quit();
   }
 
-  if (newState == MainAppState::Mods)
+  if (newState == MainAppState::Mods) {
+#ifdef STAR_PLATFORM_N3DS
+    m_cinematicOverlay->stop();
+    Logger::info("N3DS cinematic skipped for Mods state");
+#else
     m_cinematicOverlay->load(m_root->assets()->json("/cinematics/mods/modloading.cinematic"));
+#endif
+  }
 
   if (newState == MainAppState::Splash) {
+#ifdef STAR_PLATFORM_N3DS
+    m_cinematicOverlay->stop();
+    Logger::info("N3DS cinematic skipped for Splash state");
+#else
     m_cinematicOverlay->load(m_root->assets()->json("/cinematics/splash.cinematic"));
+#endif
     m_rootLoader = Thread::invoke("Async root loader", [this]() {
         m_root->fullyLoad();
       });
@@ -685,7 +727,8 @@ void ClientApplication::changeState(MainAppState newState) {
   }
 
   if (oldState > MainAppState::Title && m_state == MainAppState::Title) {
-    m_titleScreen->resetState();
+    if (m_titleScreen)
+      m_titleScreen->resetState();
     m_mainMixer->setUniverseClient({});
   }
   if (oldState >= MainAppState::Title && m_state < MainAppState::Title) {
@@ -707,8 +750,20 @@ void ClientApplication::changeState(MainAppState newState) {
 
     m_cinematicOverlay->stop();
 
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS Title bootstrap: creating PlayerStorage");
+#endif
     m_playerStorage = make_shared<PlayerStorage>(m_root->toStoragePath("player"));
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS Title bootstrap: creating Statistics");
+#endif
     m_statistics = make_shared<Statistics>(m_root->toStoragePath("player"), app->statisticsService());
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS Title bootstrap: lightweight mode active, skipping UniverseClient and TitleScreen");
+    m_universeClient.reset();
+    m_titleScreen.reset();
+    m_mainMixer->setUniverseClient({});
+#else
     m_universeClient = make_shared<UniverseClient>(m_playerStorage, m_statistics);
 
     m_universeClient->setLuaCallbacks("input", LuaBindings::makeInputCallbacks());
@@ -746,9 +801,10 @@ void ClientApplication::changeState(MainAppState newState) {
     m_titleScreen = make_shared<TitleScreen>(m_playerStorage, m_mainMixer->mixer(), m_universeClient);
     if (auto renderer = Application::renderer())
       m_titleScreen->renderInit(renderer);
+#endif
   }
 
-  if (m_state == MainAppState::Title) {
+  if (m_state == MainAppState::Title && m_titleScreen) {
     auto configuration = m_root->configuration();
 
     if (m_pendingMultiPlayerConnection) {
@@ -892,15 +948,17 @@ void ClientApplication::changeState(MainAppState newState) {
 
 void ClientApplication::setError(String const& error) {
   Logger::error(error.utf8Ptr());
-  m_errorScreen->setMessage(error);
-  m_titleScreen->resetState();
+  errorScreen()->setMessage(error);
+  if (m_titleScreen)
+    m_titleScreen->resetState();
   changeState(MainAppState::Title);
 }
 
 void ClientApplication::setError(String const& error, std::exception const& e) {
   Logger::error("{}\n{}", error, outputException(e, true));
-  m_errorScreen->setMessage(strf("{}\n{}", error, outputException(e, false)));
-  m_titleScreen->resetState();
+  errorScreen()->setMessage(strf("{}\n{}", error, outputException(e, false)));
+  if (m_titleScreen)
+    m_titleScreen->resetState();
   changeState(MainAppState::Title);
 }
 
@@ -930,7 +988,7 @@ void ClientApplication::loadMods() {
 }
 
 void ClientApplication::updateSteamFlatpakWarning(float) {
-  if (m_errorScreen->accepted())
+  if (!m_errorScreen || m_errorScreen->accepted())
     changeState(MainAppState::Mods);
 }
 
@@ -979,7 +1037,7 @@ void ClientApplication::updateMods(float dt) {
           changeState(MainAppState::Splash);
         } else {
           configuration->set("modsWarningShown", true);
-          m_errorScreen->setMessage(assets->json("/interface.config:modsWarningMessage").toString());
+          errorScreen()->setMessage(assets->json("/interface.config:modsWarningMessage").toString());
           changeState(MainAppState::ModsWarning);
         }
       }
@@ -990,29 +1048,49 @@ void ClientApplication::updateMods(float dt) {
 }
 
 void ClientApplication::updateModsWarning(float) {
-  if (m_errorScreen->accepted())
+  if (!m_errorScreen || m_errorScreen->accepted())
     changeState(MainAppState::Splash);
 }
 
 void ClientApplication::updateSplash(float dt) {
   m_cinematicOverlay->update(dt);
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_rootLoader.isRunning())
+#else
   if (!m_rootLoader.isRunning() && (m_cinematicOverlay->completable() || m_cinematicOverlay->completed()))
+#endif
     changeState(MainAppState::Title);
 }
 
 void ClientApplication::updateError(float) {
-  if (m_errorScreen->accepted())
+  if (!m_errorScreen || m_errorScreen->accepted())
     changeState(MainAppState::Title);
 }
 
 void ClientApplication::updateTitle(float dt) {
   m_cinematicOverlay->update(dt);
 
-  m_titleScreen->update(dt);
   m_mainMixer->update(dt);
   m_mainMixer->setSpeed(GlobalTimescale);
 
   auto& app = appController();
+
+  if (!m_titleScreen) {
+#ifdef STAR_PLATFORM_N3DS
+    static bool sLoggedLightweightTitle = false;
+    if (!sLoggedLightweightTitle) {
+      Logger::info("N3DS Title update: lightweight placeholder active");
+      sLoggedLightweightTitle = true;
+    }
+#endif
+    m_input->setTextInputActive(false);
+    app->setTextArea();
+    app->setAcceptingTextInput(false);
+    return;
+  }
+
+  m_titleScreen->update(dt);
+
   bool inputActive = m_titleScreen->textInputActive();
   m_input->setTextInputActive(inputActive);
   if (inputActive)
@@ -1090,8 +1168,6 @@ void ClientApplication::updateTitle(float dt) {
 
   } else if (m_titleScreen->currentState() == TitleState::Quit) {
 #ifdef STAR_PLATFORM_N3DS
-    // N3DS phase1: keep the client alive while title/menu input is still
-    // being ported. Manual app exit is handled by L+R+START in the N3DS loop.
     Logger::info("OSBN3DSState: intercepted TitleState::Quit, resetting title state");
     m_titleScreen->resetState();
 #else

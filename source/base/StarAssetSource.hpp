@@ -22,6 +22,8 @@ public:
   // Should return all the available assets in this source
   virtual StringList assetPaths() const = 0;
 
+  virtual void forEachAssetPath(function<void(String const&)> callback) const;
+
   // Open the given path in this source and return an IODevicePtr to it.
   virtual IODevicePtr open(String const& path) = 0;
 

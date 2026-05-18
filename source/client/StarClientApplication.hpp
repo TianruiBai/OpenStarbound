@@ -74,6 +74,8 @@ private:
 
   void renderReload();
 
+  ErrorScreenPtr errorScreen();
+
   void changeState(MainAppState newState);
   void setError(String const& error);
   void setError(String const& error, std::exception const& e);

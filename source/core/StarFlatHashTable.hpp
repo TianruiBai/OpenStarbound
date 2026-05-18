@@ -97,7 +97,11 @@ public:
 
 private:
   static constexpr size_t MinCapacity = 8;
+#ifdef STAR_PLATFORM_N3DS
+  static constexpr double MaxFillLevel = 0.85;
+#else
   static constexpr double MaxFillLevel = 0.7;
+#endif
 
   // Scans for the next bucket value that is non-empty
   static Bucket* scan(Bucket* p);
