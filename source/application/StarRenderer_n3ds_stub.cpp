@@ -24,9 +24,18 @@ namespace {
 
 constexpr size_t N3dsMaxQueuedPrimitives = 768;
 
+struct FrameReplayStats {
+  size_t replayedPrimitives = 0;
+  size_t texturedQuads = 0;
+  size_t batchCount = 0;
+  size_t scissoredBatches = 0;
+};
+
 #ifdef STAR_PLATFORM_N3DS
 constexpr int N3dsTopScreenWidth = 400;
 constexpr int N3dsTopScreenHeight = 240;
+constexpr int N3dsBottomScreenWidth = 320;
+constexpr int N3dsBottomScreenHeight = 240;
 
 u32 toC2dColor(Vec4B const& color) {
   return C2D_Color32(color[0], color[1], color[2], color[3]);
@@ -36,6 +45,10 @@ inline float toTopScreenY(float yBottomOrigin) {
   return static_cast<float>(N3dsTopScreenHeight) - yBottomOrigin;
 }
 
+inline float toBottomScreenY(float yBottomOrigin) {
+  return static_cast<float>(N3dsBottomScreenHeight) - yBottomOrigin;
+}
+
 unsigned n3dsTextureExtent(unsigned value) {
   unsigned extent = 8;
   while (extent < value)
@@ -43,8 +56,153 @@ unsigned n3dsTextureExtent(unsigned value) {
   return extent;
 }
 
+u32 interleaveBits3(u32 value) {
+  value = (value | (value << 2)) & 0x33;
+  value = (value | (value << 1)) & 0x55;
+  return value;
+}
+
+size_t n3dsTiledPixelIndex(unsigned x, unsigned y, unsigned textureWidth) {
+  unsigned tileX = x >> 3;
+  unsigned tileY = y >> 3;
+  unsigned inTileX = x & 7;
+  unsigned inTileY = y & 7;
+  size_t tileIndex = static_cast<size_t>(tileY) * (textureWidth >> 3) + tileX;
+  size_t mortonIndex = interleaveBits3(inTileX) | (interleaveBits3(inTileY) << 1);
+  return tileIndex * 64 + mortonIndex;
+}
+
+void writeNativeRgba8Pixel(uint8_t* destination, uint8_t const* sourceRgba) {
+  // tex3ds encodes GPU_RGBA8/RGBA8888 texture bytes as ABGR.
+  destination[0] = sourceRgba[3];
+  destination[1] = sourceRgba[2];
+  destination[2] = sourceRgba[1];
+  destination[3] = sourceRgba[0];
+}
+
 bool nearlyEqual(float a, float b) {
   return std::fabs(a - b) < 0.01f;
+}
+
+float metricFill(size_t value, size_t maximum, float maxExtent) {
+  if (maximum == 0)
+    return 0.0f;
+
+  return maxExtent * (std::min(value, maximum) / static_cast<float>(maximum));
+}
+
+void drawDiagnosticBar(float x, float y, float width, float height, size_t value, size_t maximum, u32 color) {
+  C2D_DrawRectSolid(x - 1.0f, y - 1.0f, 0.0f, width + 2.0f, height + 2.0f, C2D_Color32(255, 255, 255, 255));
+  C2D_DrawRectSolid(x, y, 0.0f, width, height, C2D_Color32(24, 24, 24, 255));
+
+  float fillWidth = metricFill(value, maximum, width);
+  if (fillWidth > 0.0f)
+    C2D_DrawRectSolid(x, y, 0.0f, fillWidth, height, color);
+}
+
+void drawTopScreenDiagnostics(FrameReplayStats const& stats) {
+  constexpr float PanelX = 36.0f;
+  constexpr float PanelY = 156.0f;
+  constexpr float PanelWidth = 136.0f;
+  constexpr float PanelHeight = 52.0f;
+  constexpr float BarX = PanelX + 8.0f;
+  constexpr float BarWidth = 120.0f;
+  constexpr float BarHeight = 8.0f;
+
+  C2D_DrawRectSolid(PanelX, PanelY, 0.0f, PanelWidth, PanelHeight, C2D_Color32(0, 0, 0, 224));
+
+  drawDiagnosticBar(BarX, PanelY + 6.0f, BarWidth, BarHeight, stats.replayedPrimitives, N3dsMaxQueuedPrimitives, C2D_Color32(64, 224, 255, 255));
+  drawDiagnosticBar(BarX, PanelY + 17.0f, BarWidth, BarHeight, stats.texturedQuads, 128, C2D_Color32(255, 96, 208, 255));
+  drawDiagnosticBar(BarX, PanelY + 28.0f, BarWidth, BarHeight, stats.batchCount, 16, C2D_Color32(255, 176, 48, 255));
+  drawDiagnosticBar(BarX, PanelY + 39.0f, BarWidth, BarHeight, stats.scissoredBatches, 16, C2D_Color32(255, 255, 255, 255));
+}
+
+void drawBottomSlot(float x, float y, float size, bool selected, bool filled, u32 fillColor) {
+  u32 border = selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(84, 92, 102, 255);
+  C2D_DrawRectSolid(x, y, 0.0f, size, size, border);
+  C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, size - 4.0f, size - 4.0f, C2D_Color32(26, 29, 34, 255));
+
+  if (filled)
+    C2D_DrawRectSolid(x + 6.0f, y + 6.0f, 0.0f, size - 12.0f, size - 12.0f, fillColor);
+}
+
+void drawBottomStatusBar(float x, float y, float width, float height, float fill, u32 color) {
+  C2D_DrawRectSolid(x, y, 0.0f, width, height, C2D_Color32(58, 62, 70, 255));
+  C2D_DrawRectSolid(x + 1.0f, y + 1.0f, 0.0f, width - 2.0f, height - 2.0f, C2D_Color32(18, 20, 24, 255));
+  C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, std::max(0.0f, (width - 4.0f) * fill), height - 4.0f, color);
+}
+
+void drawBottomRoundButton(float x, float y, float radius, bool active, u32 color) {
+  C2D_DrawCircleSolid(x, y, 0.0f, radius + 2.0f, active ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(70, 76, 86, 255));
+  C2D_DrawCircleSolid(x, y, 0.0f, radius, active ? color : C2D_Color32(30, 34, 40, 255));
+  C2D_DrawCircleSolid(x, y, 0.0f, radius * 0.45f, color);
+}
+
+void drawBottomCursor(Vec2F const& position, bool pressed, bool touchCursor) {
+  float x = std::clamp(position[0], 0.0f, static_cast<float>(N3dsBottomScreenWidth - 1));
+  float y = std::clamp(toBottomScreenY(position[1]), 0.0f, static_cast<float>(N3dsBottomScreenHeight - 1));
+  u32 color = touchCursor ? C2D_Color32(255, 224, 48, 255) : C2D_Color32(96, 224, 255, 255);
+  u32 shadow = C2D_Color32(0, 0, 0, 255);
+  float radius = pressed ? 8.0f : 6.0f;
+
+  C2D_DrawLine(x - 10.0f, y, shadow, x + 10.0f, y, shadow, 3.0f, 0.0f);
+  C2D_DrawLine(x, y - 10.0f, shadow, x, y + 10.0f, shadow, 3.0f, 0.0f);
+  C2D_DrawLine(x - 10.0f, y, color, x + 10.0f, y, color, 1.0f, 0.0f);
+  C2D_DrawLine(x, y - 10.0f, color, x, y + 10.0f, color, 1.0f, 0.0f);
+  C2D_DrawCircleSolid(x, y, 0.0f, radius, C2D_Color32(0, 0, 0, 220));
+  C2D_DrawCircleSolid(x, y, 0.0f, radius - 2.0f, color);
+}
+
+void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, unsigned frameCounter) {
+  (void)frameCounter;
+
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(14, 17, 22, 255));
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 32.0f, C2D_Color32(24, 28, 34, 255));
+  C2D_DrawRectSolid(0.0f, 196.0f, 0.0f, 320.0f, 44.0f, C2D_Color32(23, 26, 31, 255));
+
+  drawBottomStatusBar(12.0f, 8.0f, 84.0f, 7.0f, 0.78f, C2D_Color32(232, 64, 72, 255));
+  drawBottomStatusBar(12.0f, 18.0f, 84.0f, 7.0f, 0.62f, C2D_Color32(72, 176, 255, 255));
+  drawBottomStatusBar(106.0f, 8.0f, 48.0f, 7.0f, 0.95f, C2D_Color32(72, 220, 128, 255));
+  drawBottomStatusBar(106.0f, 18.0f, 48.0f, 7.0f, overlayState.circlePadActive ? 1.0f : 0.25f, C2D_Color32(255, 224, 48, 255));
+
+  C2D_DrawRectSolid(12.0f, 48.0f, 0.0f, 132.0f, 108.0f, C2D_Color32(28, 32, 38, 255));
+  C2D_DrawRectSolid(18.0f, 56.0f, 0.0f, 52.0f, 52.0f, C2D_Color32(44, 50, 58, 255));
+  C2D_DrawRectSolid(22.0f, 60.0f, 0.0f, 44.0f, 44.0f, C2D_Color32(96, 224, 255, 255));
+  C2D_DrawRectSolid(78.0f, 58.0f, 0.0f, 54.0f, 6.0f, C2D_Color32(96, 224, 255, 255));
+  C2D_DrawRectSolid(78.0f, 72.0f, 0.0f, 42.0f, 6.0f, C2D_Color32(255, 224, 48, 255));
+  C2D_DrawRectSolid(78.0f, 86.0f, 0.0f, 50.0f, 6.0f, C2D_Color32(232, 64, 72, 255));
+  C2D_DrawRectSolid(18.0f, 120.0f, 0.0f, 112.0f, 8.0f, C2D_Color32(58, 64, 72, 255));
+  C2D_DrawRectSolid(18.0f, 136.0f, 0.0f, overlayState.dpadActive ? 96.0f : 42.0f, 8.0f, C2D_Color32(72, 220, 128, 255));
+
+  C2D_DrawRectSolid(166.0f, 48.0f, 0.0f, 142.0f, 108.0f, C2D_Color32(28, 32, 38, 255));
+  C2D_DrawRectSolid(178.0f, 60.0f, 0.0f, 118.0f, 18.0f, C2D_Color32(44, 50, 58, 255));
+  C2D_DrawRectSolid(178.0f, 88.0f, 0.0f, 78.0f, 12.0f, C2D_Color32(255, 224, 48, 255));
+  C2D_DrawRectSolid(178.0f, 108.0f, 0.0f, 98.0f, 12.0f, C2D_Color32(96, 224, 255, 255));
+  C2D_DrawRectSolid(178.0f, 128.0f, 0.0f, 58.0f, 12.0f, C2D_Color32(72, 220, 128, 255));
+
+  float slotSize = 28.0f;
+  float slotGap = 2.0f;
+  float slotX = 11.0f;
+  float slotY = 206.0f;
+  u32 slotColors[] = {
+      C2D_Color32(232, 64, 72, 255), C2D_Color32(255, 224, 48, 255), C2D_Color32(72, 220, 128, 255), C2D_Color32(96, 224, 255, 255), C2D_Color32(216, 120, 255, 255),
+      C2D_Color32(255, 144, 72, 255), C2D_Color32(160, 220, 96, 255), C2D_Color32(96, 144, 255, 255), C2D_Color32(255, 104, 160, 255), C2D_Color32(224, 224, 224, 255)};
+  for (unsigned slot = 0; slot < 10; ++slot)
+    drawBottomSlot(slotX + slot * (slotSize + slotGap), slotY, slotSize, slot == overlayState.selectedHotbarSlot, slot < 6, slotColors[slot]);
+
+  drawBottomRoundButton(212.0f, 26.0f, 8.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
+  drawBottomRoundButton(244.0f, 26.0f, 10.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
+  drawBottomRoundButton(276.0f, 26.0f, 10.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
+  drawBottomRoundButton(308.0f, 26.0f, 8.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
+  drawBottomRoundButton(228.0f, 178.0f, 12.0f, overlayState.buttonY, C2D_Color32(72, 220, 128, 255));
+  drawBottomRoundButton(258.0f, 160.0f, 12.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255));
+  drawBottomRoundButton(258.0f, 196.0f, 12.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255));
+  drawBottomRoundButton(288.0f, 178.0f, 12.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255));
+
+  Vec2F bottomPointer = {overlayState.pointerPosition[0] * (static_cast<float>(N3dsBottomScreenWidth) / static_cast<float>(N3dsTopScreenWidth)), overlayState.pointerPosition[1]};
+  drawBottomCursor(bottomPointer, overlayState.pointerPressed, false);
+  if (overlayState.touchPressed)
+    drawBottomCursor(overlayState.touchPosition, true, true);
 }
 
 void applyScissorRect(Maybe<RectI> const& scissorRect) {
@@ -130,6 +288,34 @@ public:
   C2D_Image image() const {
     return C2D_Image{const_cast<C3D_Tex*>(&m_texture), &m_subTexture};
   }
+
+  bool imageForQuad(RenderQuad const& quad, C2D_Image& image, Tex3DS_SubTexture& subTexture) const {
+    if (!m_textureReady || m_storageWidth == 0 || m_storageHeight == 0)
+      return false;
+
+    auto clampTextureCoordinate = [](float value, float maximum) {
+      return std::clamp(value, 0.0f, maximum);
+    };
+
+    float maxTextureX = static_cast<float>(m_size[0]);
+    float maxTextureY = static_cast<float>(m_size[1]);
+    float left = clampTextureCoordinate(quad.a.textureCoordinate[0], maxTextureX);
+    float right = clampTextureCoordinate(quad.b.textureCoordinate[0], maxTextureX);
+    float bottom = clampTextureCoordinate(quad.a.textureCoordinate[1], maxTextureY);
+    float top = clampTextureCoordinate(quad.d.textureCoordinate[1], maxTextureY);
+
+    if (right <= left || top <= bottom)
+      return false;
+
+    subTexture.width = static_cast<u16>(std::lround(right - left));
+    subTexture.height = static_cast<u16>(std::lround(top - bottom));
+    subTexture.left = left / static_cast<float>(m_storageWidth);
+    subTexture.right = right / static_cast<float>(m_storageWidth);
+    subTexture.bottom = bottom / static_cast<float>(m_storageHeight);
+    subTexture.top = top / static_cast<float>(m_storageHeight);
+    image = C2D_Image{const_cast<C3D_Tex*>(&m_texture), &subTexture};
+    return true;
+  }
 #endif
 
 private:
@@ -154,11 +340,13 @@ private:
     }
 
     Image rgbaImage = image.pixelFormat() == PixelFormat::RGBA32 ? image : image.convert(PixelFormat::RGBA32);
-    std::vector<uint8_t> uploadData(textureBytes, 0);
+    std::vector<uint8_t> tiledUploadData(textureBytes, 0);
     for (unsigned y = 0; y < image.height(); ++y) {
-      auto const* source = rgbaImage.data() + static_cast<size_t>(y) * image.width() * 4;
-      auto* destination = uploadData.data() + (static_cast<size_t>(y) * storageWidth * 4);
-      std::memcpy(destination, source, static_cast<size_t>(image.width()) * 4);
+      for (unsigned x = 0; x < image.width(); ++x) {
+        size_t sourceOffset = (static_cast<size_t>(y) * image.width() + x) * 4;
+        size_t destinationOffset = n3dsTiledPixelIndex(x, y, storageWidth) * 4;
+        writeNativeRgba8Pixel(tiledUploadData.data() + destinationOffset, rgbaImage.data() + sourceOffset);
+      }
     }
 
     if (!C3D_TexInit(&m_texture, static_cast<u16>(storageWidth), static_cast<u16>(storageHeight), GPU_RGBA8)) {
@@ -166,14 +354,14 @@ private:
       return;
     }
 
-    void* linearUploadData = linearAlloc(uploadData.size());
+    void* linearUploadData = linearAlloc(textureBytes);
     if (!linearUploadData) {
       C3D_TexDelete(&m_texture);
-      Logger::warn("N3dsStubTexture: linearAlloc failed for {} byte upload", uploadData.size());
+      Logger::warn("N3dsStubTexture: linearAlloc failed for {} byte upload", textureBytes);
       return;
     }
 
-    std::memcpy(linearUploadData, uploadData.data(), uploadData.size());
+    std::memcpy(linearUploadData, tiledUploadData.data(), textureBytes);
     C3D_TexUpload(&m_texture, linearUploadData);
     linearFree(linearUploadData);
 
@@ -188,6 +376,8 @@ private:
     m_subTexture.right = static_cast<float>(image.width()) / static_cast<float>(storageWidth);
     m_subTexture.bottom = 0.0f;
     m_subTexture.top = static_cast<float>(image.height()) / static_cast<float>(storageHeight);
+    m_storageWidth = storageWidth;
+    m_storageHeight = storageHeight;
     m_textureBytes = textureBytes;
     n3dsTextureBytesInUse() += m_textureBytes;
     m_textureReady = true;
@@ -201,6 +391,8 @@ private:
 #ifdef STAR_PLATFORM_N3DS
   C3D_Tex m_texture{};
   Tex3DS_SubTexture m_subTexture{};
+  unsigned m_storageWidth = 0;
+  unsigned m_storageHeight = 0;
   size_t m_textureBytes = 0;
   bool m_textureReady = false;
 #endif
@@ -241,6 +433,17 @@ bool isAxisAlignedQuad(RenderQuad const& quad) {
       && nearlyEqual(quad.b.screenCoordinate[0], quad.c.screenCoordinate[0]);
 }
 
+bool isAxisAlignedTextureRect(RenderQuad const& quad) {
+  return nearlyEqual(quad.a.textureCoordinate[1], quad.b.textureCoordinate[1])
+      && nearlyEqual(quad.c.textureCoordinate[1], quad.d.textureCoordinate[1])
+      && nearlyEqual(quad.a.textureCoordinate[0], quad.d.textureCoordinate[0])
+      && nearlyEqual(quad.b.textureCoordinate[0], quad.c.textureCoordinate[0]);
+}
+
+bool isOpaqueWhite(Vec4B const& color) {
+  return color[0] == 255 && color[1] == 255 && color[2] == 255 && color[3] == 255;
+}
+
 void drawUntexturedTriangle(RenderVertex const& a, RenderVertex const& b, RenderVertex const& c) {
   C2D_DrawTriangle(
       a.screenCoordinate[0], toTopScreenY(a.screenCoordinate[1]), toC2dColor(a.color),
@@ -254,7 +457,7 @@ bool drawTexturedQuad(RenderQuad const& quad) {
     return false;
 
   auto texture = dynamic_cast<N3dsStubTexture const*>(quad.texture.get());
-  if (!texture || !texture->ready() || !isAxisAlignedQuad(quad))
+  if (!texture || !texture->ready() || !isAxisAlignedQuad(quad) || !isAxisAlignedTextureRect(quad))
     return false;
 
   float minX = std::min(std::min(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::min(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
@@ -269,18 +472,32 @@ bool drawTexturedQuad(RenderQuad const& quad) {
 
   C2D_DrawParams params = {{minX, toTopScreenY(maxY), width, height}, {0.0f, 0.0f}, 0.0f, 0.0f};
   C2D_ImageTint tint;
+  C2D_Image image;
+  Tex3DS_SubTexture subTexture;
+  if (!texture->imageForQuad(quad, image, subTexture))
+    return false;
+
+  if (isOpaqueWhite(quad.a.color))
+    return C2D_DrawImage(image, &params, nullptr);
+
   C2D_PlainImageTint(&tint, toC2dColor(quad.a.color), 1.0f);
-  return C2D_DrawImage(texture->image(), &params, &tint);
+  C2D_SetTintMode(C2D_TintMult);
+  bool drawn = C2D_DrawImage(image, &params, &tint);
+  C2D_SetTintMode(C2D_TintSolid);
+  return drawn;
 }
 
-void drawPrimitive(RenderPrimitive const& primitive, C3D_RenderTarget* target) {
+void drawPrimitive(RenderPrimitive const& primitive, C3D_RenderTarget* target, FrameReplayStats& stats) {
   (void)target;
+  ++stats.replayedPrimitives;
 
   if (auto tri = primitive.ptr<RenderTriangle>()) {
     drawUntexturedTriangle(tri->a, tri->b, tri->c);
   } else if (auto quad = primitive.ptr<RenderQuad>()) {
-    if (drawTexturedQuad(*quad))
+    if (drawTexturedQuad(*quad)) {
+      ++stats.texturedQuads;
       return;
+    }
 
     drawUntexturedTriangle(quad->a, quad->b, quad->c);
     drawUntexturedTriangle(quad->a, quad->c, quad->d);
@@ -393,6 +610,10 @@ void N3dsStubRenderer::renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F c
   }
 }
 
+void N3dsStubRenderer::setHandheldOverlayState(N3dsHandheldOverlayState overlayState) {
+  m_handheldOverlayState = overlayState;
+}
+
 void N3dsStubRenderer::sealImmediatePrimitiveBatch() {
   if (m_immediatePrimitives.empty())
     return;
@@ -421,6 +642,8 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     // still stubbed.
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     bool flashPhase = (m_frameCounter / 30) % 2 == 0;
+    FrameReplayStats frameStats;
+    frameStats.batchCount = m_primitiveBatches.size();
     u32 clearColor = flashPhase ? C2D_Color32(255, 24, 180, 255) : C2D_Color32(24, 220, 255, 255);
     C2D_TargetClear(topTarget, clearColor);
     C2D_SceneBegin(topTarget);
@@ -435,22 +658,24 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     // clipping while full texture/effect aware geometry is still partial.
     size_t primitiveCount = 0;
     for (auto const& batch : m_primitiveBatches) {
+      if (batch.scissorRect)
+        ++frameStats.scissoredBatches;
+
       applyScissorRect(batch.scissorRect);
       for (auto const& primitive : batch.primitives) {
         if (primitiveCount >= N3dsMaxQueuedPrimitives)
           break;
-        drawPrimitive(transformedPrimitive(primitive, transformation), topTarget);
+        drawPrimitive(transformedPrimitive(primitive, transformation), topTarget, frameStats);
         ++primitiveCount;
       }
     }
     applyScissorRect({});
+    drawTopScreenDiagnostics(frameStats);
 
     if (bottomTarget) {
-      C2D_TargetClear(bottomTarget, flashPhase ? C2D_Color32(32, 255, 96, 255) : C2D_Color32(255, 220, 24, 255));
+      C2D_TargetClear(bottomTarget, C2D_Color32(14, 17, 22, 255));
       C2D_SceneBegin(bottomTarget);
-      C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 20.0f, C2D_Color32(0, 0, 0, 255));
-      C2D_DrawRectSolid(0.0f, 220.0f, 0.0f, 320.0f, 20.0f, C2D_Color32(255, 255, 255, 255));
-      C2D_DrawRectSolid(48.0f, 72.0f, 0.0f, 224.0f, 96.0f, flashPhase ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(0, 0, 0, 255));
+      drawBottomHandheldOverlay(m_handheldOverlayState, m_frameCounter);
     }
 
     C3D_FrameEnd(0);

@@ -84,6 +84,13 @@ Risk checks:
 
 Goal: prove drawing viability on hardware/emulator with a new backend.
 
+Current status:
+- The N3DS client target links and runs through the citro-backed renderer path in Citra Nightly 2104.
+- Primitive replay is active for triangles, quads, and polys, with scissor batching and capped render-buffer replay.
+- Axis-aligned textured quads now draw through `C2D_DrawImage` with rectangular pixel-UV subrect selection.
+- Runtime RGBA32 image upload is validated against a synthetic split-color probe: pixels are converted to 3DS-native RGBA8 storage as ABGR bytes in 8x8 Morton tile order before `C3D_TexUpload`.
+- Deterministic validation artifacts are produced by `scripts/ide/capture-n3ds-citra.ps1`; the validated texture capture is `build/citra-captures/n3ds-texture-abgr/window.png`.
+
 Deliverables:
 - New renderer backend skeleton targeting citro2d/citro3d concepts.
 - Minimal frame loop rendering test scene and UI primitives.
@@ -98,6 +105,11 @@ Definition of done:
 - A simple in-engine render path displays stable frames on New 3DS class target.
 - Frame time and memory metrics are collected for baseline decisions.
 
+Validated prototype baseline:
+- A direct framebuffer probe, citro render-target probe, scissored primitive replay probe, and split-color textured quad probe all present in Citra.
+- Texture channel/tile fidelity is confirmed by the probe rendering the expected yellow UV subrect instead of the earlier magenta/alpha block.
+- Remaining Phase 3 work is feature breadth: rotated/textured triangles, richer batching, texture atlas budgeting, effect fallbacks, and replacing diagnostic scene colors with real game/UI content once startup rendering is reliable.
+
 Risk checks:
 - Prevent API drift from desktop OpenGL assumptions.
 - Track shader/pipeline mismatches early; do not force OpenGL semantics.
@@ -105,6 +117,11 @@ Risk checks:
 ## Phase 4 - Input/UI Adaptation For Dual Screens
 
 Goal: make core game navigation usable with Circle Pad/buttons/touch on 400x240 + 320x240.
+
+Current status:
+- HID input is bridged into existing engine events for D-pad, ABXY, START/SELECT, L/R, New 3DS ZL/ZR, Circle Pad W/A/S/D movement, touch mouse events, and a C-stick driven pointer with ZR click.
+- The renderer owns a first-pass bottom-screen handheld overlay fed by live HID state. It shows status bars, hotbar slots, quick-action regions, shoulder/button indicators, and cursor/touch feedback without changing the desktop UI contracts.
+- Deterministic overlay validation artifacts are produced by `scripts/ide/capture-n3ds-citra.ps1`; `build/citra-captures/n3ds-overlay/window.png` and related captures show the bottom overlay presenting beneath the top-screen probe.
 
 Deliverables:
 - Input mapping layer for Circle Pad, D-pad, ABXY, shoulder buttons, touch.
@@ -119,6 +136,11 @@ Implementation tasks:
 Definition of done:
 - User can boot, navigate menus, connect to server, and perform basic in-game actions.
 - No keyboard/mouse hard dependency in critical path.
+
+Validated prototype baseline:
+- Input bridge and overlay compile and present in the N3DS target.
+- D-pad left/right update the prototype hotbar selection, C-stick/ZR update pointer state, and touch state is surfaced to the overlay for validation.
+- Remaining Phase 4 work is replacing the diagnostic overlay with real UI profile state, focus ownership, bottom-screen layout descriptors, and on-screen keyboard/text-entry strategy.
 
 Risk checks:
 - Prevent one-off per-pane hacks; use shared layout/input policy.
@@ -392,7 +414,7 @@ Common verification:
 2. Add a first platform macro integration pass in CMake/source headers.
 3. Create a small compile target matrix for "core + base + platform stubs" under 3DS preset.
 4. Begin renderer abstraction extraction plan before any full backend implementation.
-5. Keep emulator runtime validation on the packaged CXI path; direct-open of the rebuilt ELF and rebuilt 3DSX still reports title-id / RomFS loader issues in Citra.
+5. Keep emulator runtime validation on the packaged CXI path; direct-open of the rebuilt ELF and rebuilt 3DSX still reports title-id / RomFS loader issues in Citra, though the rebuilt 3DSX path is now useful for narrow synthetic renderer probe checks.
 
 ## Phase 1.2 Progress Snapshot (Runtime Bring-Up)
 
@@ -420,7 +442,7 @@ Completed:
 - N3DS startup now runs a citro-backed visibility probe after renderer creation and before app startup, separating GPU target/presentation validation from full application renderInit.
 - N3DS texture objects now perform bounded first-pass C3D/C2D upload for small RGBA textures, with a 512x512 storage limit and 2 MiB upload budget during bring-up.
 - N3DS texture groups now route through the same bounded texture upload path instead of size-only placeholders.
-- N3DS renderer now draws ready axis-aligned textured quads through `C2D_DrawImage`; unsupported textured geometry still falls back to solid triangle replay.
+- N3DS renderer now draws ready axis-aligned textured quads through `C2D_DrawImage`, including rectangular pixel-UV subrect selection and explicit software-swizzled RGBA8 texture upload for the 3DS tiled layout; unsupported textured geometry still falls back to solid triangle replay.
 - N3DS render buffers now retain primitives and replay them through the renderer with a conservative per-frame queue cap, avoiding citro2d object-queue overflow during early world/UI rendering.
 - N3DS renderer now preserves top-screen scissor state across queued primitive batches, giving GUI/widget clipping a first-pass citro-backed bridge instead of treating `setScissorRect` as a no-op.
 
@@ -429,9 +451,12 @@ Validated:
 - Attempting to reintroduce SDMC-backed writable storage during phase 1 reproduces dense unmapped writes; keep writable storage deferred until a safer storage strategy is designed.
 - Packaged `dist/starbound.cxi` now shows the citro-backed steady renderer pattern in Citra Nightly 2104, and host logs confirm the expected Program ID load plus OpenGL renderer initialization on the emulator side.
 - Direct-open of the rebuilt ELF (`dist/starbound`) and rebuilt 3DSX still hits Citra loader warnings/errors around title-id discovery and RomFS access, so those entrypoints remain unreliable for deterministic runtime validation.
+- The rebuilt 3DSX direct-open path now visibly replays a deterministic injected triangle plus scissored quad during the citro visibility probe, and the on-screen diagnostics block shows nonzero replay/scissor activity; use it for narrow renderer bring-up checks even though Citra still reports loader warnings.
+- The rebuilt 3DSX probe now increments textured-quad diagnostics and no longer shows the earlier striped corruption after tiled texture upload, but the synthetic split-color probe texture still resolves to an incorrect pink/alpha block instead of the intended yellow UV subrect; textured color fidelity remains the current renderer blocker.
 
 Next:
-- Continue using the packaged CXI path for Citra smoke validation until a reproducible direct-open 3DSX/ELF launch path is available.
+- Continue using the packaged CXI path for broad Citra smoke validation until a reproducible direct-open 3DSX/ELF launch path is available, and reserve the rebuilt 3DSX path for targeted synthetic renderer probe checks.
+- Re-run the textured probe against the new software-swizzled upload path and then continue debugging any remaining textured-quad color/alpha fidelity issue from that narrower baseline.
 - Continue the Phase 3 rendering spike by expanding texture-aware/effect-aware primitive rendering beyond axis-aligned quads, while keeping primitive and texture budgets explicit.
 - Keep the current ROMFS-only bring-up profile as the baseline until the backend and input path can be validated independently.
 

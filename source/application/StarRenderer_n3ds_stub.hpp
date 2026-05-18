@@ -9,6 +9,24 @@ namespace Star {
 
 STAR_CLASS(N3dsStubRenderer);
 
+struct N3dsHandheldOverlayState {
+  Vec2F pointerPosition = {200.0f, 120.0f};
+  Vec2F touchPosition = {160.0f, 120.0f};
+  unsigned selectedHotbarSlot = 0;
+  bool pointerPressed = false;
+  bool touchPressed = false;
+  bool circlePadActive = false;
+  bool dpadActive = false;
+  bool buttonA = false;
+  bool buttonB = false;
+  bool buttonX = false;
+  bool buttonY = false;
+  bool shoulderL = false;
+  bool shoulderR = false;
+  bool shoulderZL = false;
+  bool shoulderZR = false;
+};
+
 class N3dsStubRenderer : public Renderer {
 public:
   N3dsStubRenderer();
@@ -41,6 +59,8 @@ public:
   void renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F const& transformation) override;
   void flush(Mat3F const& transformation) override;
 
+  void setHandheldOverlayState(N3dsHandheldOverlayState overlayState);
+
 private:
   struct PrimitiveBatch {
     Maybe<RectI> scissorRect;
@@ -63,6 +83,7 @@ private:
   void* m_topTarget = nullptr;
   void* m_bottomTarget = nullptr;
   unsigned m_frameCounter = 0;
+  N3dsHandheldOverlayState m_handheldOverlayState;
 };
 
 }

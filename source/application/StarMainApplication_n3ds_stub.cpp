@@ -12,6 +12,7 @@
 #include "StarLogging.hpp"
 #include "StarSignalHandler.hpp"
 #include "StarTime.hpp"
+#include "StarImage.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,15 +22,19 @@
 
 namespace {
 
-constexpr u32 N3dsCirclePadUpBit = 1u << 28;
-constexpr u32 N3dsCirclePadDownBit = 1u << 29;
-constexpr u32 N3dsCirclePadLeftBit = 1u << 30;
-constexpr u32 N3dsCirclePadRightBit = 1u << 31;
+constexpr u32 N3dsCirclePadMask = KEY_CPAD_LEFT | KEY_CPAD_RIGHT | KEY_CPAD_UP | KEY_CPAD_DOWN;
+constexpr int N3dsCircleDeadzone = 48;
+constexpr float N3dsCStickCursorStep = 5.0f;
+constexpr float N3dsPointerMaxX = 399.0f;
+constexpr float N3dsPointerMaxY = 239.0f;
 
 struct N3dsInputState {
   u32 previousCirclePadMask = 0;
   bool touchPressed = false;
+  bool cStickPointerPressed = false;
   Star::Vec2F lastTouchPosition = {0.0f, 0.0f};
+  Star::Vec2F pointerPosition = {200.0f, 120.0f};
+  Star::N3dsHandheldOverlayState handheldOverlay;
 };
 
 void writeN3dsFramebufferProbe(gfxScreen_t screen, gfx3dSide_t side, unsigned frameCounter) {
@@ -106,11 +111,41 @@ void runN3dsCitroVisibilityProbe(Star::N3dsStubRenderer& renderer) {
   constexpr unsigned ProbeFrames = 300;
   Star::Logger::info("N3dsMainApplication: citro visibility probe");
 
+  // PLACEHOLDER: use a generated split-color texture so direct-open Citra
+  // captures can verify rectangular UV sampling on the current textured-quad
+  // path before full UI/world atlas content is trustworthy on handheld.
+  Star::Image probeTextureImage(Star::Vec2U(64, 64), Star::PixelFormat::RGBA32);
+  probeTextureImage.fillRect(Star::Vec2U(0, 0), Star::Vec2U(32, 64), Star::Vec4B(80, 112, 255, 255));
+  probeTextureImage.fillRect(Star::Vec2U(32, 0), Star::Vec2U(32, 64), Star::Vec4B(255, 224, 48, 255));
+  auto probeTexture = renderer.createTexture(probeTextureImage, Star::TextureAddressing::Clamp, Star::TextureFiltering::Nearest);
+
   for (unsigned frameCounter = 0; frameCounter < ProbeFrames; ++frameCounter) {
     hidScanInput();
     (void)aptMainLoop();
     if (hidKeysDown() & KEY_START)
       break;
+
+    // PLACEHOLDER: inject a tiny deterministic replay batch so Citra captures
+    // can validate primitive/scissor replay before full client UI rendering is
+    // reliably contributing visible geometry on the handheld path.
+    renderer.immediatePrimitives().emplace_back(
+        std::in_place_type_t<Star::RenderTriangle>(),
+        Star::Vec2F(56.0f, 172.0f),
+        Star::Vec2F(112.0f, 212.0f),
+        Star::Vec2F(144.0f, 148.0f),
+        Star::Vec4B(255, 96, 96, 255),
+        0.0f);
+    renderer.setScissorRect(Star::RectI::withSize(Star::Vec2I(196, 118), Star::Vec2I(72, 64)));
+    renderer.immediatePrimitives().emplace_back(
+        std::in_place_type_t<Star::RenderQuad>(),
+        probeTexture,
+        Star::Vec2F(180.0f, 112.0f), Star::Vec2F(32.0f, 0.0f),
+        Star::Vec2F(300.0f, 112.0f), Star::Vec2F(64.0f, 0.0f),
+        Star::Vec2F(300.0f, 180.0f), Star::Vec2F(64.0f, 64.0f),
+        Star::Vec2F(180.0f, 180.0f), Star::Vec2F(32.0f, 64.0f),
+        Star::Vec4B::filled(255),
+        0.0f);
+    renderer.setScissorRect({});
 
     renderer.flush(Star::Mat3F::identity());
     gspWaitForVBlank();
@@ -144,10 +179,12 @@ void appendMappedKeyEvents(Star::List<Star::InputEvent>& outEvents, u32 down, u3
       {KEY_B, Star::Key::Escape},
       {KEY_X, Star::Key::Space},
       {KEY_Y, Star::Key::E},
-      {N3dsCirclePadUpBit, Star::Key::W},
-      {N3dsCirclePadDownBit, Star::Key::S},
-      {N3dsCirclePadLeftBit, Star::Key::A},
-      {N3dsCirclePadRightBit, Star::Key::D},
+      {KEY_ZL, Star::Key::PageUp},
+      {KEY_ZR, Star::Key::PageDown},
+      {KEY_CPAD_UP, Star::Key::W},
+      {KEY_CPAD_DOWN, Star::Key::S},
+      {KEY_CPAD_LEFT, Star::Key::A},
+      {KEY_CPAD_RIGHT, Star::Key::D},
   };
 
   for (auto const& mapping : mappings) {
@@ -155,6 +192,38 @@ void appendMappedKeyEvents(Star::List<Star::InputEvent>& outEvents, u32 down, u3
       outEvents.append(Star::KeyDownEvent{mapping.key, mods});
     if (up & mapping.button)
       outEvents.append(Star::KeyUpEvent{mapping.key});
+  }
+}
+
+void appendMappedControllerButtonEvents(Star::List<Star::InputEvent>& outEvents, u32 down, u32 up) {
+  struct Mapping {
+    u32 button;
+    Star::ControllerButton controllerButton;
+  };
+
+  static Mapping const mappings[] = {
+      {KEY_A, Star::ControllerButton::A},
+      {KEY_B, Star::ControllerButton::B},
+      {KEY_X, Star::ControllerButton::X},
+      {KEY_Y, Star::ControllerButton::Y},
+      {KEY_SELECT, Star::ControllerButton::Back},
+      {KEY_START, Star::ControllerButton::Start},
+      {KEY_L, Star::ControllerButton::LeftShoulder},
+      {KEY_R, Star::ControllerButton::RightShoulder},
+      {KEY_DUP, Star::ControllerButton::DPadUp},
+      {KEY_DDOWN, Star::ControllerButton::DPadDown},
+      {KEY_DLEFT, Star::ControllerButton::DPadLeft},
+      {KEY_DRIGHT, Star::ControllerButton::DPadRight},
+      {KEY_ZL, Star::ControllerButton::Paddle1},
+      {KEY_ZR, Star::ControllerButton::Paddle2},
+  };
+
+  constexpr Star::ControllerId N3dsControllerId = 0;
+  for (auto const& mapping : mappings) {
+    if (down & mapping.button)
+      outEvents.append(Star::ControllerButtonDownEvent{N3dsControllerId, mapping.controllerButton});
+    if (up & mapping.button)
+      outEvents.append(Star::ControllerButtonUpEvent{N3dsControllerId, mapping.controllerButton});
   }
 }
 
@@ -168,29 +237,76 @@ Star::List<Star::InputEvent> n3dsProcessInputEvents(N3dsInputState& state) {
   circlePosition circle;
   hidCircleRead(&circle);
   u32 circleMask = 0;
-  constexpr int CircleDeadzone = 48;
-  if (circle.dx <= -CircleDeadzone)
-    circleMask |= N3dsCirclePadLeftBit;
-  else if (circle.dx >= CircleDeadzone)
-    circleMask |= N3dsCirclePadRightBit;
-  if (circle.dy <= -CircleDeadzone)
-    circleMask |= N3dsCirclePadDownBit;
-  else if (circle.dy >= CircleDeadzone)
-    circleMask |= N3dsCirclePadUpBit;
+  if (circle.dx <= -N3dsCircleDeadzone)
+    circleMask |= KEY_CPAD_LEFT;
+  else if (circle.dx >= N3dsCircleDeadzone)
+    circleMask |= KEY_CPAD_RIGHT;
+  if (circle.dy <= -N3dsCircleDeadzone)
+    circleMask |= KEY_CPAD_DOWN;
+  else if (circle.dy >= N3dsCircleDeadzone)
+    circleMask |= KEY_CPAD_UP;
 
   u32 circleDown = circleMask & ~state.previousCirclePadMask;
   u32 circleUp = state.previousCirclePadMask & ~circleMask;
   state.previousCirclePadMask = circleMask;
 
+  down &= ~N3dsCirclePadMask;
+  up &= ~N3dsCirclePadMask;
   down |= circleDown;
   up |= circleUp;
 
+  if (down & KEY_DRIGHT)
+    state.handheldOverlay.selectedHotbarSlot = (state.handheldOverlay.selectedHotbarSlot + 1) % 10;
+  if (down & KEY_DLEFT)
+    state.handheldOverlay.selectedHotbarSlot = (state.handheldOverlay.selectedHotbarSlot + 9) % 10;
+
   appendMappedKeyEvents(events, down, up, n3dsKeyMods(held));
+  appendMappedControllerButtonEvents(events, down, up);
+
+  Star::Vec2F pointerMove = {0.0f, 0.0f};
+  if (held & KEY_CSTICK_LEFT)
+    pointerMove[0] -= N3dsCStickCursorStep;
+  if (held & KEY_CSTICK_RIGHT)
+    pointerMove[0] += N3dsCStickCursorStep;
+  if (held & KEY_CSTICK_UP)
+    pointerMove[1] += N3dsCStickCursorStep;
+  if (held & KEY_CSTICK_DOWN)
+    pointerMove[1] -= N3dsCStickCursorStep;
+
+  if (pointerMove[0] != 0.0f || pointerMove[1] != 0.0f) {
+    Star::Vec2F previousPointerPosition = state.pointerPosition;
+    state.pointerPosition[0] = std::clamp(state.pointerPosition[0] + pointerMove[0], 0.0f, N3dsPointerMaxX);
+    state.pointerPosition[1] = std::clamp(state.pointerPosition[1] + pointerMove[1], 0.0f, N3dsPointerMaxY);
+    events.append(Star::MouseMoveEvent{state.pointerPosition - previousPointerPosition, state.pointerPosition});
+  }
+
+  state.handheldOverlay.pointerPosition = state.pointerPosition;
+  state.handheldOverlay.circlePadActive = circleMask != 0;
+  state.handheldOverlay.dpadActive = (held & (KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT)) != 0;
+  state.handheldOverlay.buttonA = (held & KEY_A) != 0;
+  state.handheldOverlay.buttonB = (held & KEY_B) != 0;
+  state.handheldOverlay.buttonX = (held & KEY_X) != 0;
+  state.handheldOverlay.buttonY = (held & KEY_Y) != 0;
+  state.handheldOverlay.shoulderL = (held & KEY_L) != 0;
+  state.handheldOverlay.shoulderR = (held & KEY_R) != 0;
+  state.handheldOverlay.shoulderZL = (held & KEY_ZL) != 0;
+  state.handheldOverlay.shoulderZR = (held & KEY_ZR) != 0;
+
+  if ((down & KEY_ZR) && !state.cStickPointerPressed) {
+    events.append(Star::MouseButtonDownEvent{Star::MouseButton::Left, state.pointerPosition});
+    state.cStickPointerPressed = true;
+  } else if ((up & KEY_ZR) && state.cStickPointerPressed) {
+    events.append(Star::MouseButtonUpEvent{Star::MouseButton::Left, state.pointerPosition});
+    state.cStickPointerPressed = false;
+  }
+  state.handheldOverlay.pointerPressed = state.cStickPointerPressed;
 
   touchPosition touch;
   hidTouchRead(&touch);
   bool touchNow = (held & KEY_TOUCH) != 0;
   Star::Vec2F touchPos = {(float)touch.px, 239.0f - (float)touch.py};
+  state.handheldOverlay.touchPosition = touchPos;
+  state.handheldOverlay.touchPressed = touchNow;
 
   if (touchNow) {
     events.append(Star::MouseMoveEvent{{0.0f, 0.0f}, touchPos});
@@ -356,6 +472,7 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
 
       for (auto const& event : n3dsProcessInputEvents(inputState))
         application->processInput(event);
+      renderer->setHandheldOverlayState(inputState.handheldOverlay);
 
       int64_t nowTickMs = Time::monotonicMilliseconds();
       double frameDelta = static_cast<double>(nowTickMs - lastTickMs) / 1000.0;
