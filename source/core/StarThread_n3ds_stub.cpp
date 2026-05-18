@@ -1,5 +1,7 @@
 #include "StarThread.hpp"
-#include <ctime>
+#include "StarTime.hpp"
+
+#include <3ds.h>
 
 namespace Star {
 
@@ -81,19 +83,26 @@ struct RecursiveMutexImpl {
 };
 
 void Thread::sleepPrecise(unsigned msecs) {
-  sleep(msecs);
+  int64_t now = Time::monotonicMilliseconds();
+  int64_t deadline = now + msecs;
+
+  while (deadline - now > 10) {
+    svcSleepThread((deadline - now - 10) * 1000000LL);
+    now = Time::monotonicMilliseconds();
+  }
+
+  while (deadline > now) {
+    svcSleepThread((deadline - now) * 500000LL);
+    now = Time::monotonicMilliseconds();
+  }
 }
 
 void Thread::sleep(unsigned msecs) {
-  // PLACEHOLDER: busy-wait fallback until native N3DS sleep primitive is wired.
-  clock_t start = std::clock();
-  clock_t duration = (CLOCKS_PER_SEC * static_cast<clock_t>(msecs)) / 1000;
-  while ((std::clock() - start) < duration)
-    ;
+  svcSleepThread(static_cast<int64_t>(msecs) * 1000000LL);
 }
 
 void Thread::yield() {
-  // PLACEHOLDER: no scheduler hint available in phase 1 stub.
+  svcSleepThread(0);
 }
 
 unsigned Thread::numberOfProcessors() {

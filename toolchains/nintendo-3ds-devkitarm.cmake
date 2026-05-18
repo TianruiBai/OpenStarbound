@@ -5,10 +5,32 @@ if(NOT DEFINED ENV{DEVKITPRO})
   message(FATAL_ERROR "DEVKITPRO is not set. Install devkitPro and set DEVKITPRO before configuring.")
 endif()
 
-set(DEVKITPRO "$ENV{DEVKITPRO}")
+function(N3DS_NORMALIZE_HOST_PATH output input)
+  set(normalized "${input}")
+  string(REPLACE "\\" "/" normalized "${normalized}")
+
+  if((CMAKE_HOST_SYSTEM_NAME STREQUAL "MSYS" OR MSYS) AND normalized MATCHES "^[A-Za-z]:/")
+    find_program(N3DS_CYGPATH_EXECUTABLE NAMES cygpath)
+    if(N3DS_CYGPATH_EXECUTABLE)
+      execute_process(
+        COMMAND "${N3DS_CYGPATH_EXECUTABLE}" -u "${normalized}"
+        OUTPUT_VARIABLE cygpath_result
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+      )
+      if(cygpath_result)
+        set(normalized "${cygpath_result}")
+      endif()
+    endif()
+  endif()
+
+  set(${output} "${normalized}" PARENT_SCOPE)
+endfunction()
+
+n3ds_normalize_host_path(DEVKITPRO "$ENV{DEVKITPRO}")
 
 if(DEFINED ENV{DEVKITARM})
-  set(DEVKITARM "$ENV{DEVKITARM}")
+  n3ds_normalize_host_path(DEVKITARM "$ENV{DEVKITARM}")
 else()
   set(DEVKITARM "${DEVKITPRO}/devkitARM")
 endif()
@@ -19,13 +41,11 @@ set(ARM_AR "${DEVKITARM}/bin/arm-none-eabi-ar")
 set(ARM_RANLIB "${DEVKITARM}/bin/arm-none-eabi-ranlib")
 set(ARM_STRIP "${DEVKITARM}/bin/arm-none-eabi-strip")
 
-if(WIN32)
-  set(ARM_GCC "${ARM_GCC}.exe")
-  set(ARM_GXX "${ARM_GXX}.exe")
-  set(ARM_AR "${ARM_AR}.exe")
-  set(ARM_RANLIB "${ARM_RANLIB}.exe")
-  set(ARM_STRIP "${ARM_STRIP}.exe")
-endif()
+foreach(ARM_TOOL ARM_GCC ARM_GXX ARM_AR ARM_RANLIB ARM_STRIP)
+  if(EXISTS "${${ARM_TOOL}}.exe")
+    set(${ARM_TOOL} "${${ARM_TOOL}}.exe")
+  endif()
+endforeach()
 
 if(NOT EXISTS "${ARM_GCC}")
   message(FATAL_ERROR "arm-none-eabi-gcc not found at ${ARM_GCC}. Install devkitARM (3ds-dev group).")

@@ -11,6 +11,7 @@
 #include "StarPlatformServices_stub.hpp"
 #include "StarLogging.hpp"
 #include "StarSignalHandler.hpp"
+#include "StarTime.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -346,7 +347,7 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
     double const renderStep = targetRenderRate ? (1.0 / std::max(1.0f, *targetRenderRate)) : 0.0;
     double updateAccumulator = 0.0;
     double renderAccumulator = 0.0;
-    u64 lastTickMs = osGetTime();
+    int64_t lastTickMs = Time::monotonicMilliseconds();
     N3dsInputState inputState;
 
     while (!appController->shouldQuit()) {
@@ -356,7 +357,7 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
       for (auto const& event : n3dsProcessInputEvents(inputState))
         application->processInput(event);
 
-      u64 nowTickMs = osGetTime();
+      int64_t nowTickMs = Time::monotonicMilliseconds();
       double frameDelta = static_cast<double>(nowTickMs - lastTickMs) / 1000.0;
       lastTickMs = nowTickMs;
       frameDelta = std::clamp(frameDelta, 0.0, MaxFrameDelta);

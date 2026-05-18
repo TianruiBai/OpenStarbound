@@ -358,6 +358,7 @@ Windows (PowerShell):
 	- pacman -S --needed 3ds-zlib 3ds-libpng 3ds-freetype 3ds-curl 3ds-libogg 3ds-libopus 3ds-libvorbisidec 3ds-libzstd
 - In a PowerShell terminal for OpenStarbound, run:
 	- powershell -ExecutionPolicy Bypass -File scripts/ide/setup-devkitpro-env.ps1
+- The helper keeps `devkitARM/bin` first and `devkitPro/msys2/usr/bin` as a PATH fallback so PowerShell builds prefer a consistent Windows CMake/Ninja pair while still exposing devkitPro tools such as pkg-config.
 - Validate toolchain visibility:
 	- Test-Path "$env:DEVKITPRO\\devkitARM\\bin\\arm-none-eabi-gcc.exe"
 	- arm-none-eabi-gcc --version
@@ -397,10 +398,15 @@ Common verification:
 
 Completed:
 - N3DS startup arguments now use the expected single-dash `-bootconfig` form and strip `argv[0]` before startup.
+- N3DS toolchain setup now normalizes `DEVKITPRO`/`DEVKITARM` to CMake-style paths so Windows backslashes do not poison generated compiler cache files.
+- N3DS PowerShell environment setup now keeps devkitPro MSYS2 tools as PATH fallbacks instead of overriding Windows CMake/Ninja, avoiding mixed MSYS/Windows try-compile paths.
 - Embedded N3DS boot configuration now bypasses the fragile `sbinit.config` ROMFS read path during bring-up.
 - The N3DS file shim now keeps its default working directory on `romfs:/` so relative path normalization no longer defaults back to SDMC.
 - Temporary tracing probes have been removed after the runtime smoke loop stabilized.
 - N3DS main loop timing now uses a bounded fixed-timestep scheduler (accumulator + max frame skip) instead of a simple per-frame update/render tick.
+- N3DS time backend now uses libctru time sources: `osGetTime` for Unix-epoch ticks and `svcGetSystemTick`/`SYSCLOCK_ARM11` for monotonic ticks.
+- N3DS main loop frame delta now routes through `Time::monotonicMilliseconds` instead of direct `osGetTime` calls.
+- N3DS thread sleep/yield helpers now use `svcSleepThread`, replacing the prior busy-wait sleep placeholder.
 - N3DS main loop now forwards basic HID input into `Application::processInput` (D-pad/buttons/circle-pad/touch mapped to key and mouse events).
 - N3DS renderer now produces a minimal citro-backed top-screen frame (clear + placeholder bars) and no longer runs as a pure no-op renderer.
 - N3DS GUI link order now appends `libctru` after citro2d/citro3d to satisfy static symbol resolution in the client link path.
@@ -453,8 +459,7 @@ Stub Inventory (current):
 - core/StarHttpClient_stub.cpp: HTTP request path replaced with platform placeholder responses for STAR_PLATFORM_N3DS (STUB)
 - core/StarAudio_stub.cpp: handheld phase1 audio decode path is placeholder-only, returning empty reads (STUB/PLACEHOLDER)
 - core/StarNetwork_stub.cpp: hostname/socket/tcp/udp behavior replaced with explicit placeholder failures/no-ops for STAR_PLATFORM_N3DS phase1 (STUB/PLACEHOLDER)
-- core/StarThread_n3ds_stub.cpp: thread/mutex/condition-variable behavior is single-thread placeholder logic for STAR_PLATFORM_N3DS phase1 (STUB/PLACEHOLDER)
-- core/StarTime_n3ds_stub.cpp: monotonic/epoch time and date-format path use minimal handheld placeholders pending native timing backend (STUB/PLACEHOLDER)
+- core/StarThread_n3ds_stub.cpp: thread/mutex/condition-variable behavior remains single-thread placeholder logic for STAR_PLATFORM_N3DS phase1; sleep/yield now use native `svcSleepThread` (STUB/PLACEHOLDER)
 - core/StarException_n3ds_stub.cpp: exception stacktrace/fatal reporting path is reduced placeholder behavior pending N3DS diagnostics integration (STUB/PLACEHOLDER)
 - core/StarFile_n3ds_stub.cpp: file path/IO backend uses phase1 placeholder implementations where full 3DS filesystem semantics are not yet wired (STUB/PLACEHOLDER)
 - core/StarLockFile_n3ds_stub.cpp: lockfile API is phase1 placeholder behavior without inter-process locking guarantees (STUB/PLACEHOLDER)

@@ -25,14 +25,15 @@ if (-not (Test-Path $BinPath)) {
 $env:DEVKITPRO = $DevkitProRoot
 $env:DEVKITARM = $DevkitArmRoot
 
-$pathParts = $env:Path -split ';'
-if ($pathParts -notcontains $BinPath) {
-  $env:Path = "$BinPath;$($env:Path)"
-}
+$pathParts = @($env:Path -split ';' | Where-Object {
+  $_ -and ($_ -ine $BinPath) -and ($_ -ine $MsysBinPath)
+})
 
-if ((Test-Path $MsysBinPath) -and ($pathParts -notcontains $MsysBinPath)) {
-  $env:Path = "$MsysBinPath;$($env:Path)"
+$orderedPathParts = @($BinPath) + $pathParts
+if (Test-Path $MsysBinPath) {
+  $orderedPathParts += $MsysBinPath
 }
+$env:Path = ($orderedPathParts -join ';')
 
 $pkgConfig = Join-Path $MsysBinPath "pkg-config.exe"
 if (Test-Path $pkgConfig) {
@@ -43,9 +44,9 @@ if (Test-Path $pkgConfig) {
 Write-Host "Configured devkitPro environment for this terminal session:" -ForegroundColor Green
 Write-Host "  DEVKITPRO=$env:DEVKITPRO"
 Write-Host "  DEVKITARM=$env:DEVKITARM"
-Write-Host "  Added to PATH: $BinPath"
+Write-Host "  PATH priority: $BinPath"
 if (Test-Path $MsysBinPath) {
-  Write-Host "  Added to PATH: $MsysBinPath"
+  Write-Host "  PATH fallback: $MsysBinPath"
 }
 if (Test-Path $pkgConfig) {
   Write-Host "  PKG_CONFIG_EXECUTABLE=$env:PKG_CONFIG_EXECUTABLE"
