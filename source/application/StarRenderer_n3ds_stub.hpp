@@ -1,7 +1,7 @@
 #pragma once
 
-// STUB: Nintendo 3DS phase1 renderer — satisfies the Renderer interface with no-op
-// implementations.  Real citro3d-backed rendering is Phase 3 work.
+// STUB/PLACEHOLDER: Nintendo 3DS renderer in transition from no-op stub to
+// a minimal citro-backed frame path for Phase 3 bring-up.
 
 #include "StarRenderer.hpp"
 
@@ -48,6 +48,11 @@ private:
   static constexpr unsigned N3DS_TOP_SCREEN_HEIGHT = 240;
 
   List<RenderPrimitive> m_immediatePrimitives;
+
+  bool m_gpuReady = false;
+  void* m_topTarget = nullptr;
+  void* m_bottomTarget = nullptr;
+  unsigned m_frameCounter = 0;
 };
 
 }

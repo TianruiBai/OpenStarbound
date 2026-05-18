@@ -646,6 +646,11 @@ if(STAR_BUILD_GUI)
         list(APPEND STAR_EXT_GUI_LIBS "${_n3ds_gui_lib}")
       endif()
     endforeach()
+    if(STAR_N3DS_CTRU_LIBRARY)
+      # Keep libctru after citro static libs so unresolved GPU/shader symbols
+      # from citro2d/citro3d are satisfied in one-pass static linking.
+      list(APPEND STAR_EXT_GUI_LIBS "${STAR_N3DS_CTRU_LIBRARY}")
+    endif()
     message(STATUS "N3DS GUI libs: ${STAR_EXT_GUI_LIBS}")
   else()
     find_package(SDL3 CONFIG REQUIRED)

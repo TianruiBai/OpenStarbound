@@ -160,6 +160,8 @@ Json const AdditionalDefaultConfiguration = Json::parseJson(R"JSON(
 
 void ClientApplication::startup(StringList const& cmdLineArgs) {
 #ifdef STAR_PLATFORM_N3DS
+  // Phase-1 N3DS workaround: defer file-backed log/runtime config until SDMC
+  // path handling is validated end-to-end.
   RootLoader rootLoader({AdditionalAssetsSettings, AdditionalDefaultConfiguration, {}, LogLevel::Info, false, {}});
 #else
   RootLoader rootLoader({AdditionalAssetsSettings, AdditionalDefaultConfiguration, String("starbound.log"), LogLevel::Info, false, String("starbound.config")});

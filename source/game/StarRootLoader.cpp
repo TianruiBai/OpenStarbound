@@ -117,6 +117,8 @@ R"JSON(
   )JSON");
 
 #ifdef STAR_PLATFORM_N3DS
+// Phase-1 N3DS workaround: avoid early SD archive path handling on Citra by
+// bootstrapping from an embedded config and using ROMFS as initial storage.
 Json const N3dsBootConfiguration = Json::parseJson(R"JSON(
     {
       "assetDirectories" : [

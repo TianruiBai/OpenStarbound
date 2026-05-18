@@ -13,7 +13,9 @@ namespace Star {
 
 namespace {
   std::atomic<uint64_t> sTempCounter{0};
-  String sCurrentDirectory = "sdmc:/OpenStarbound";
+  // Phase-1 N3DS keeps relative paths on ROMFS to match the embedded boot
+  // configuration and avoid accidental SDMC archive path use during bring-up.
+  String sCurrentDirectory = "romfs:/";
   bool isAbsolutePath(String const& path);
 
   String normalizeIoPath(String const& inputPath) {
@@ -218,12 +220,6 @@ void* File::fopen(char const* filename, IOMode mode) {
     throw IOException("Error opening file with empty path");
 
   auto path = normalizeIoPath(filename);
-#ifdef STAR_PLATFORM_N3DS
-  static std::atomic<unsigned> sFopenTraceCount{0};
-  unsigned traceIndex = ++sFopenTraceCount;
-  if (traceIndex <= 256)
-    std::fprintf(stderr, "OSBN3DS fopen[%u] mode=%d path=%s\n", traceIndex, static_cast<int>(mode), path.utf8Ptr());
-#endif
   FILE* file = std::fopen(path.utf8Ptr(), modeString(mode));
 
   if (!file && (mode & IOMode::Read) && (mode & IOMode::Write) && !(mode & IOMode::Truncate) && !(mode & IOMode::Append)) {

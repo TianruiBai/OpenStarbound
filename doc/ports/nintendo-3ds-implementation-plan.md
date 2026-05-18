@@ -393,6 +393,34 @@ Common verification:
 4. Begin renderer abstraction extraction plan before any full backend implementation.
 5. Verify the Citra launch path for .3dsx homebrew entrypoints; direct-open currently stops at loader time with "Failed to find title id for ROM (Error 0)" even though the packaged 3DSX and SMDH are valid.
 
+## Phase 1.2 Progress Snapshot (Runtime Bring-Up)
+
+Completed:
+- N3DS startup arguments now use the expected single-dash `-bootconfig` form and strip `argv[0]` before startup.
+- Embedded N3DS boot configuration now bypasses the fragile `sbinit.config` ROMFS read path during bring-up.
+- The N3DS file shim now keeps its default working directory on `romfs:/` so relative path normalization no longer defaults back to SDMC.
+- Temporary tracing probes have been removed after the runtime smoke loop stabilized.
+- N3DS main loop timing now uses a bounded fixed-timestep scheduler (accumulator + max frame skip) instead of a simple per-frame update/render tick.
+- N3DS main loop now forwards basic HID input into `Application::processInput` (D-pad/buttons/circle-pad/touch mapped to key and mouse events).
+- N3DS renderer now produces a minimal citro-backed top-screen frame (clear + placeholder bars) and no longer runs as a pure no-op renderer.
+- N3DS GUI link order now appends `libctru` after citro2d/citro3d to satisfy static symbol resolution in the client link path.
+- N3DS renderer now replays queued `RenderPrimitive` entries through a first-pass placeholder path (solid primitive bounds), replacing full-discard behavior.
+- N3DS renderer now replays `RenderTriangle`/`RenderQuad`/`RenderPoly` via real GPU triangle draws (citro2d), replacing placeholder-bounds replay for those primitive types.
+- N3DS placeholder frame output now uses a high-contrast flashing test pattern so visibility in Citra can be confirmed immediately during bring-up.
+- N3DS startup now runs a direct software framebuffer visibility probe before app startup, writing both top and bottom screens without citro2d/citro3d so Citra/device blank-screen reports can be separated from GPU render-target issues.
+- N3DS renderer now creates both top-screen and bottom-screen citro2d render targets and draws high-contrast placeholder output on both screens during the steady render loop.
+- N3DS steady render loop now lets `C3D_FrameEnd` own GPU frame presentation and only waits for VBlank afterward, avoiding an extra software-buffer swap after citro rendering.
+
+Validated:
+- Full startup + applicationInit + renderInit + update + render + flush path now holds a stable 20s Citra smoke run under the current ROMFS-only bring-up profile after the direct framebuffer probe and dual-screen citro target updates.
+- Attempting to reintroduce SDMC-backed writable storage during phase 1 reproduces dense unmapped writes; keep writable storage deferred until a safer storage strategy is designed.
+- User-visible output in Citra is still an active validation item: if the direct framebuffer probe is visible but the later citro pattern is not, continue debugging citro target/presentation; if the direct framebuffer probe is also invisible, investigate launch/app display ownership before texture work.
+
+Next:
+- Confirm the direct framebuffer probe is visible in Citra or on hardware before advancing texture-aware/effect-aware primitive rendering.
+- Once the display path is confirmed, move the phase-1 runtime effort from untextured primitive replay to texture-aware/effect-aware primitive rendering.
+- Keep the current ROMFS-only bring-up profile as the baseline until the backend and input path can be validated independently.
+
 ## Phase 1 Progress Snapshot (Branch 3ds-port)
 
 Completed:
@@ -426,8 +454,8 @@ Stub Inventory (current):
 - core/StarLockFile_n3ds_stub.cpp: lockfile API is phase1 placeholder behavior without inter-process locking guarantees (STUB/PLACEHOLDER)
 - core/StarSignalHandler_n3ds_stub.cpp: fatal/interrupt signal API is phase1 placeholder behavior pending handheld-native signal strategy (STUB/PLACEHOLDER)
 - core/StarLua.cpp: addImGui registration is disabled under STAR_PLATFORM_N3DS until handheld UI bindings are available (STUB)
-- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — all Renderer abstract methods are no-op stubs; no GPU output; screenSize() returns 400x240 (top screen) placeholder (STUB/PLACEHOLDER)
-- application/StarMainApplication_n3ds_stub.cpp: N3dsApplicationController — all ApplicationController abstract methods stubbed without SDL3/desktop deps; runMainApplication() uses aptMainLoop 3DS main loop skeleton (STUB/PLACEHOLDER)
+- application/StarRenderer_n3ds_stub.hpp/.cpp: N3dsStubRenderer — minimal dual-screen citro frame output is active (clear + placeholder bars); untextured triangle/quad/poly replay is active; texture/effect aware rasterization remains partial stubs (STUB/PLACEHOLDER)
+- application/StarMainApplication_n3ds_stub.cpp: N3dsApplicationController — all ApplicationController abstract methods stubbed without SDL3/desktop deps; runMainApplication() uses aptMainLoop 3DS main loop skeleton plus a temporary direct framebuffer visibility probe (STUB/PLACEHOLDER)
 - core/StarString.cpp: regex path uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 - core/StarText.cpp: escape-code strip regex uses std::regex fallback in N3DS builds until RE2 is integrated (PLACEHOLDER)
 
@@ -468,17 +496,19 @@ Current phase1 dependency blockers (if preset fails):
 - missing 3ds portlibs packages (zlib/libpng/freetype/curl/libogg/libopus/libvorbisidec/libzstd).
 
 Immediate continuation steps (next pass):
-1. Runtime smoke test: convert the linked starbound ELF to a .3dsx and run on Citra/real hardware to identify first crash/hang point.
-2. Implement filesystem root mapping (romfs vs sdmc) in StarFile_n3ds_stub.cpp so asset loading can begin.
-3. Replace placeholder main loop timing (gspWaitForVBlank) with a proper fixed-timestep scheduler.
-4. Begin Phase 3 rendering: replace N3dsStubRenderer with a citro3d-backed implementation drawing the first frame.
+1. Keep the stable ROMFS-only runtime baseline and confirm whether the direct framebuffer probe is visible in Citra/device launch.
+2. If the probe is visible, continue the Phase 3 rendering spike by fixing/confirming citro target presentation, then add texture-aware primitive paths (UV sampling and sprite/image replay) on the active citro frame loop.
+3. If the probe is not visible, pause texture work and investigate CXI launch/display ownership, framebuffer format, and emulator applet/window behavior before further renderer expansion.
+4. Refine handheld input mapping semantics (confirm/cancel/action defaults, analog thresholds, touch drag behavior) against visible UI/world feedback.
 5. Keep STUB/PLACEHOLDER inventory current while replacing high-risk placeholders (thread/file/signal) with handheld-native implementations.
+6. Revisit writable storage only after a safe N3DS SD path strategy is designed and isolated behind an explicit opt-in.
 
 Runtime bring-up checklist draft (phase1.2 — client focused):
 - Confirm intended N3DS executable format/link startup chain and required crt objects for real device launch. (completed: initial path established)
 - Convert starbound ELF to .3dsx with makerom/bannertool and validate it boots on Citra emulator.
 - Replace placeholder TLS entry shim with proper runtime-compatible thread pointer handling.
-- Define filesystem root mapping policy (romfs/sdmc) and migrate file stubs accordingly.
+- Define filesystem root mapping policy (romfs/sdmc) and migrate file stubs accordingly. (phase-1 baseline complete: ROMFS-only path stable; SDMC deferred)
+- Replace placeholder main loop timing (`gspWaitForVBlank`-paced loop) with a bounded fixed-timestep scheduler. (completed in phase-1.2 baseline)
 - Replace placeholder signal/fatal pathways with handheld-appropriate crash reporting and safe abort semantics.
-- Wire aptMainLoop input polling (hidScanInput / hidKeysDown / hidTouchRead) and translate to InputEvent for Application::processInput.
+- Wire aptMainLoop input polling (hidScanInput / hidKeysDown / hidTouchRead) and translate to InputEvent for Application::processInput. (basic phase-1 mapping complete; refinement pending)
 - Validate minimum client startup path (remote-only, no local server) on hardware/emulator with deterministic config and logging enabled.
