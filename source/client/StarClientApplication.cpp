@@ -834,6 +834,38 @@ void ClientApplication::changeState(MainAppState newState) {
   }
 
   if (m_state > MainAppState::Title) {
+#ifdef STAR_PLATFORM_N3DS
+    PlayerPtr selectedPlayer;
+    if (m_titleScreen) {
+      selectedPlayer = m_titleScreen->currentlySelectedPlayer();
+      m_titleScreen->stopMusic();
+      m_titleScreen.reset();
+      Logger::info("N3DS game bootstrap: released title screen before player load");
+    }
+
+    m_guiContext->assetTextureGroup()->cleanup(0);
+    m_root->assets()->clearCache();
+    Logger::info("N3DS game bootstrap: cleared title texture and asset caches");
+
+    if (selectedPlayer) {
+      m_player = selectedPlayer;
+    } else {
+      if (auto uuid = m_playerStorage->playerUuidAt(0)) {
+        m_player = m_playerStorage->loadPlayer(*uuid);
+        if (m_player)
+          m_playerStorage->moveToFront(m_player->uuid());
+      }
+
+      if (!m_player) {
+        m_player = Root::singleton().playerFactory()->create();
+        m_player->setName("N3DS Explorer");
+        m_player->log()->setIntroComplete(true);
+        m_playerStorage->savePlayer(m_player);
+        m_playerStorage->moveToFront(m_player->uuid());
+        Logger::info("N3DS game bootstrap: created default player {}", m_player->uuid().hex());
+      }
+    }
+#else
     if (m_titleScreen->currentlySelectedPlayer()) {
       m_player = m_titleScreen->currentlySelectedPlayer();
     } else {
@@ -845,12 +877,7 @@ void ClientApplication::changeState(MainAppState newState) {
         return;
       }
     }
-
-  #ifdef STAR_PLATFORM_N3DS
-    m_guiContext->assetTextureGroup()->cleanup(0);
-    m_root->assets()->clearCache();
-    Logger::info("N3DS game bootstrap: cleared title texture and asset caches");
-  #endif
+#endif
 
     m_mainMixer->setUniverseClient(m_universeClient);
     m_universeClient->setMainPlayer(m_player);
@@ -927,7 +954,9 @@ void ClientApplication::changeState(MainAppState newState) {
       }
     }
 
+  #ifndef STAR_PLATFORM_N3DS
     m_titleScreen->stopMusic();
+  #endif
 
     m_universeClient->restartLua();
     m_mainInterface = make_shared<MainInterface>(m_universeClient, m_worldPainter, m_cinematicOverlay);

@@ -191,10 +191,21 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
   m_edgeTriggeredUse = false;
   setTeam(EntityDamageTeam(TeamType::Friendly));
 
+#ifdef STAR_PLATFORM_N3DS
+  m_footstepVolumeVariance = 0.15f;
+  m_landingVolume = 6.0f;
+#else
   m_footstepVolumeVariance = assets->json("/sfx.config:footstepVolumeVariance").toFloat();
   m_landingVolume = assets->json("/sfx.config:landingVolume").toFloat();
+#endif
 
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("before effects animator");
+  m_effectsAnimator = make_shared<NetworkedAnimator>();
+  logN3dsPlayerMemory("after empty effects animator");
+#else
   m_effectsAnimator = make_shared<NetworkedAnimator>(assets->fetchJson(m_config->effectsAnimator));
+#endif
   m_effectEmitter = make_shared<EffectEmitter>();
 #ifdef STAR_PLATFORM_N3DS
   logN3dsPlayerMemory("after effects animator");
@@ -2289,6 +2300,18 @@ PlayerMode Player::modeType() const {
 
 void Player::setModeType(PlayerMode mode) {
   m_modeType = mode;
+
+#ifdef STAR_PLATFORM_N3DS
+  if (mode == PlayerMode::Casual) {
+    m_modeConfig = PlayerModeConfig();
+    m_modeConfig.hunger = false;
+    m_modeConfig.allowBeamUpUnderground = true;
+    m_modeConfig.reviveCostPercentile = 0.1f;
+    m_modeConfig.deathDropItemTypes.setLeft("none");
+    m_modeConfig.permadeath = false;
+    return;
+  }
+#endif
 
   auto assets = Root::singleton().assets();
   m_modeConfig = PlayerModeConfig(assets->json("/playermodes.config").get(PlayerModeNames.getRight(mode)));

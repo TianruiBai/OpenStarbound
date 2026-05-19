@@ -4,6 +4,7 @@
 #include "StarItemDatabase.hpp"
 #include "StarNameGenerator.hpp"
 #include "StarAssets.hpp"
+#include "StarAssetPath.hpp"
 #include "StarRoot.hpp"
 #include "StarImageProcessing.hpp"
 #include "StarRootLuaBindings.hpp"
@@ -31,6 +32,15 @@ SpeciesDatabase::SpeciesDatabase() {
   auto assets = Root::singleton().assets();
 
   auto& files = assets->scanExtension("species");
+#ifdef STAR_PLATFORM_N3DS
+  for (auto& file : files) {
+    auto filename = AssetPath::filename(file);
+    auto dot = filename.findLast(".");
+    auto kind = dot == NPos ? filename : filename.substr(0, dot);
+    if (!kind.empty())
+      m_speciesFiles[kind.toLower()] = file;
+  }
+#else
   assets->queueJsons(files);
   for (auto& file : files) {
     auto speciesDefinition = make_shared<SpeciesDefinition>(assets->json(file));
@@ -39,10 +49,24 @@ SpeciesDatabase::SpeciesDatabase() {
     auto k = speciesDefinition->kind().toLower();
     m_species[k] = speciesDefinition;
   }
+#endif
 }
 
 SpeciesDefinitionPtr SpeciesDatabase::species(String const& kind) const {
   auto k = kind.toLower();
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_species.contains(k)) {
+    auto file = m_speciesFiles.value(k, String());
+    if (file.empty())
+      throw StarException(strf("Unknown species kind '{}'.", kind));
+
+    auto speciesDefinition = make_shared<SpeciesDefinition>(Root::singleton().assets()->json(file));
+    auto definitionKind = speciesDefinition->kind().toLower();
+    if (definitionKind != k)
+      throw StarException(strf("Species asset '{}' had kind '{}' instead of expected '{}'.", file, speciesDefinition->kind(), kind));
+    m_species[k] = speciesDefinition;
+  }
+#endif
   if (!m_species.contains(k))
     throw StarException(strf("Unknown species kind '{}'.", kind));
   return m_species.get(k);
@@ -53,6 +77,11 @@ StringMap<SpeciesDefinitionPtr> SpeciesDatabase::allSpecies() const {
 }
 
 Json SpeciesDatabase::humanoidConfig(HumanoidIdentity identity, JsonObject parameters, Json config) const {
+#ifdef STAR_PLATFORM_N3DS
+  if (identity.species.equals("human", String::CaseInsensitive) && !config.isType(Json::Type::Object))
+    return jsonMerge(Root::singleton().assets()->json("/humanoid.config"), parameters);
+#endif
+
   auto speciesDef = species(identity.species);
   if (speciesDef->m_buildScripts.size() > 0) {
     RecursiveMutexLocker locker(m_luaMutex);

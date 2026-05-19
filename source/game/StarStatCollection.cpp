@@ -3,13 +3,34 @@
 #include "StarGameTypes.hpp"
 #include "StarLogging.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include <malloc.h>
+#endif
+
 namespace Star {
 
-StatCollection::StatCollection(Json const& config) {
-  for (auto const& stat : config.getObject("stats", {}))
-    m_stats.addStat(stat.first, stat.second.getFloat("baseValue", 0.0));
+#ifdef STAR_PLATFORM_N3DS
+static void logN3dsStatCollectionMemory(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS stat collection memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label, info.arena, info.uordblks, info.fordblks, info.keepcost);
+}
+#endif
 
-  for (auto const& resource : config.getObject("resources", {})) {
+StatCollection::StatCollection(Json const& config) {
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatCollectionMemory("constructor begin");
+#endif
+  if (auto stats = config.opt("stats")) {
+    for (auto const& stat : stats->iterateObject())
+      m_stats.addStat(stat.first, stat.second.getFloat("baseValue", 0.0));
+  }
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatCollectionMemory("after stats");
+#endif
+
+  if (auto resources = config.opt("resources")) {
+    for (auto const& resource : resources->iterateObject()) {
     auto statOrValue = [&resource](String const& statName, String const& valueName, MVariant<String, float> def = {}) -> MVariant<String, float> {
       if (auto maxStat = resource.second.optString(statName))
         return *maxStat;
@@ -39,6 +60,10 @@ StatCollection::StatCollection(Json const& config) {
       }
     }
   }
+  }
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatCollectionMemory("after resources");
+#endif
 
   addNetElement(&m_statModifiersNetState);
 
@@ -49,6 +74,9 @@ StatCollection::StatCollection(Json const& config) {
     addNetElement(&resourceNetState);
     addNetElement(&m_resourceLockedNetStates[resource]);
   }
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatCollectionMemory("after net elements");
+#endif
 }
 
 StringList StatCollection::statNames() const {

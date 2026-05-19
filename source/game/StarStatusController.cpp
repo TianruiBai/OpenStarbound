@@ -1,6 +1,7 @@
 #include "StarStatusController.hpp"
 #include "StarDataStreamExtra.hpp"
 #include "StarJsonExtra.hpp"
+#include "StarLogging.hpp"
 #include "StarLuaGameConverters.hpp"
 #include "StarWorld.hpp"
 #include "StarWorldLuaBindings.hpp"
@@ -12,13 +13,31 @@
 #include "StarStatusEffectEntity.hpp"
 #include "StarLiquidsDatabase.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include <malloc.h>
+#endif
+
 namespace Star {
 
+#ifdef STAR_PLATFORM_N3DS
+static void logN3dsStatusControllerMemory(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS status controller memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label, info.arena, info.uordblks, info.fordblks, info.keepcost);
+}
+#endif
+
 StatusController::StatusController(Json const& config) : m_statCollection(config) {
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("constructor body begin");
+#endif
   m_parentEntity = nullptr;
   m_movementController = nullptr;
 
   m_statusProperties.reset(config.getObject("statusProperties", {}));
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after status properties");
+#endif
   m_statusProperties.setOverrides(
     [&](DataStream& ds, NetCompatibilityRules rules) {
       if (rules.version() <= 1) ds << m_statusProperties.baseMap();
@@ -43,20 +62,32 @@ StatusController::StatusController(Json const& config) : m_statCollection(config
       else m_statusProperties.NetElementHashMap<String, Json>::readNetDelta(ds, interp, rules);
     }
   );
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after status overrides");
+#endif
 
   m_minimumLiquidStatusEffectPercentage = config.getFloat("minimumLiquidStatusEffectPercentage");
   m_appliesEnvironmentStatusEffects = config.getBool("appliesEnvironmentStatusEffects");
   m_appliesWeatherStatusEffects = config.getBool("appliesWeatherStatusEffects");
   m_environmentStatusEffectUpdateTimer = GameTimer(config.getFloat("environmentStatusEffectUpdateTimer", 0.15f));
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after status flags");
+#endif
 
   m_primaryAnimationConfig = config.optString("primaryAnimationConfig");
-  m_primaryScript.setScripts(jsonToStringList(config.get("primaryScriptSources", JsonArray())));
-  m_primaryScript.setUpdateDelta(config.getUInt("primaryScriptDelta", 1));
+  m_primaryScriptSources = jsonToStringList(config.get("primaryScriptSources", JsonArray()));
+  m_primaryScriptDelta = config.getUInt("primaryScriptDelta", 1);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after primary script config");
+#endif
 
   uint64_t keepDamageSteps = config.getUInt("keepDamageNotificationSteps", 120);
   m_recentHitsGiven.setHistoryLimit(keepDamageSteps);
   m_recentDamageGiven.setHistoryLimit(keepDamageSteps);
   m_recentDamageTaken.setHistoryLimit(keepDamageSteps);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after damage history");
+#endif
 
   m_netGroup.addNetElement(&m_statCollection);
   m_netGroup.addNetElement(&m_statusProperties);
@@ -66,11 +97,21 @@ StatusController::StatusController(Json const& config) : m_statCollection(config
 
   m_toolUsageSuppressed.setCompatibilityVersion(12);
   m_netGroup.addNetElement(&m_toolUsageSuppressed);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after net group");
+#endif
 
+#ifdef STAR_PLATFORM_N3DS
+  m_primaryAnimatorId = EffectAnimatorGroup::NullElementId;
+#else
   if (m_primaryAnimationConfig)
     m_primaryAnimatorId = m_effectAnimators.addNetElement(make_shared<EffectAnimator>(*m_primaryAnimationConfig));
   else
     m_primaryAnimatorId = EffectAnimatorGroup::NullElementId;
+#endif
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsStatusControllerMemory("after primary animator");
+#endif
 }
 
 Json StatusController::diskStore() const {
@@ -183,7 +224,8 @@ float StatusController::giveResource(String const& resourceName, float amount) {
 
 bool StatusController::consumeResource(String const& resourceName, float amount) {
   if (m_statCollection.consumeResource(resourceName, amount)) {
-    m_primaryScript.invoke("notifyResourceConsumed", resourceName, amount);
+    if (m_primaryScript)
+      m_primaryScript->invoke("notifyResourceConsumed", resourceName, amount);
     return true;
   }
   return false;
@@ -191,7 +233,8 @@ bool StatusController::consumeResource(String const& resourceName, float amount)
 
 bool StatusController::overConsumeResource(String const& resourceName, float amount) {
   if (m_statCollection.overConsumeResource(resourceName, amount)) {
-    m_primaryScript.invoke("notifyResourceConsumed", resourceName, amount);
+    if (m_primaryScript)
+      m_primaryScript->invoke("notifyResourceConsumed", resourceName, amount);
     return true;
   }
   return false;
@@ -369,10 +412,12 @@ void StatusController::setPrimaryDirectives(Directives const& directives) {
 }
 
 List<DamageNotification> StatusController::applyDamageRequest(DamageRequest const& damageRequest) {
-  if (auto damageNotifications = m_primaryScript.invoke<List<DamageNotification>>("applyDamageRequest", damageRequest)) {
+  if (m_primaryScript) {
+    if (auto damageNotifications = m_primaryScript->invoke<List<DamageNotification>>("applyDamageRequest", damageRequest)) {
     for (auto const& dn : *damageNotifications)
       m_recentDamageTaken.add(dn);
     return damageNotifications.take();
+    }
   }
   return {};
 }
@@ -519,7 +564,8 @@ void StatusController::tickMaster(float dt) {
       addEphemeralEffects(m_parentEntity->world()->weatherStatusEffects(m_parentEntity->position()).transformed(jsonToEphemeralStatusEffect));
   }
 
-  m_primaryScript.update(m_primaryScript.updateDt(dt));
+  if (m_primaryScript)
+    m_primaryScript->update(m_primaryScript->updateDt(dt));
   for (auto& p : m_uniqueEffects) {
     p.second.script.update(p.second.script.updateDt(dt));
     auto metadata = m_uniqueEffectMetadata.getNetElement(p.second.metadataId);
@@ -570,7 +616,8 @@ List<LightSource> StatusController::lightSources() const {
 }
 
 List<OverheadBar> StatusController::overheadBars() {
-  if (auto bars = m_primaryScript.invoke<JsonArray>("overheadBars"))
+  if (m_primaryScript)
+    if (auto bars = m_primaryScript->invoke<JsonArray>("overheadBars"))
     return bars->transformed(construct<OverheadBar>());
   return {};
 }
@@ -594,7 +641,9 @@ List<Particle> StatusController::pullNewParticles() {
 }
 
 Maybe<Json> StatusController::receiveMessage(String const& message, bool localMessage, JsonArray const& args) {
-  Maybe<Json> result = m_primaryScript.handleMessage(message, localMessage, args);
+  Maybe<Json> result;
+  if (m_primaryScript)
+    result = m_primaryScript->handleMessage(message, localMessage, args);
   for (auto& p : m_uniqueEffects)
     result = result.orMaybe(p.second.script.handleMessage(message, localMessage, args));
   return result;
@@ -764,22 +813,30 @@ void StatusController::removeUniqueEffect(UniqueStatusEffect const& effect) {
 }
 
 void StatusController::initPrimaryScript() {
-  m_primaryScript.addCallbacks("status", LuaBindings::makeStatusControllerCallbacks(this));
-  m_primaryScript.addCallbacks("entity", LuaBindings::makeEntityCallbacks(m_parentEntity));
+  if (!m_primaryScript) {
+    m_primaryScript = make_shared<StatScript>();
+    m_primaryScript->setScripts(m_primaryScriptSources);
+    m_primaryScript->setUpdateDelta(m_primaryScriptDelta);
+  }
+
+  m_primaryScript->addCallbacks("status", LuaBindings::makeStatusControllerCallbacks(this));
+  m_primaryScript->addCallbacks("entity", LuaBindings::makeEntityCallbacks(m_parentEntity));
   if (m_primaryAnimatorId != EffectAnimatorGroup::NullElementId) {
     auto animator = m_effectAnimators.getNetElement(m_primaryAnimatorId);
-    m_primaryScript.addCallbacks("animator", LuaBindings::makeNetworkedAnimatorCallbacks(&animator->animator));
+    m_primaryScript->addCallbacks("animator", LuaBindings::makeNetworkedAnimatorCallbacks(&animator->animator));
   }
-  m_primaryScript.addActorMovementCallbacks(m_movementController);
-  m_primaryScript.init(m_parentEntity->world());
+  m_primaryScript->addActorMovementCallbacks(m_movementController);
+  m_primaryScript->init(m_parentEntity->world());
 }
 
 void StatusController::uninitPrimaryScript() {
-  m_primaryScript.uninit();
-  m_primaryScript.removeCallbacks("status");
-  m_primaryScript.removeCallbacks("entity");
-  m_primaryScript.removeCallbacks("animator");
-  m_primaryScript.removeActorMovementCallbacks();
+  if (m_primaryScript) {
+    m_primaryScript->uninit();
+    m_primaryScript->removeCallbacks("status");
+    m_primaryScript->removeCallbacks("entity");
+    m_primaryScript->removeCallbacks("animator");
+    m_primaryScript->removeActorMovementCallbacks();
+  }
 }
 
 void StatusController::initUniqueEffectScript(UniqueEffectInstance& uniqueEffect) {

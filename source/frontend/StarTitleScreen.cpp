@@ -182,23 +182,7 @@ void TitleScreen::n3dsQuickStartSinglePlayer() {
   m_guiContext->assetTextureGroup()->cleanup(0);
   Root::singleton().assets()->clearCache();
   Logger::info("N3DS TitleScreen: quick-start cleared title texture and asset caches");
-
-  if (auto playerUuid = m_playerStorage->playerUuidAt(0)) {
-    m_mainAppPlayer = m_playerStorage->loadPlayer(*playerUuid);
-    if (m_mainAppPlayer) {
-      m_playerStorage->moveToFront(m_mainAppPlayer->uuid());
-      Logger::info("N3DS TitleScreen: quick-start selected player {}", m_mainAppPlayer->uuid().hex());
-      switchState(TitleState::StartSinglePlayer);
-      return;
-    }
-  }
-
-  m_mainAppPlayer = Root::singleton().playerFactory()->create();
-  m_mainAppPlayer->setName("N3DS Explorer");
-  m_mainAppPlayer->log()->setIntroComplete(true);
-  m_playerStorage->savePlayer(m_mainAppPlayer);
-  m_playerStorage->moveToFront(m_mainAppPlayer->uuid());
-  Logger::info("N3DS TitleScreen: quick-start created default player {}", m_mainAppPlayer->uuid().hex());
+  Logger::info("N3DS TitleScreen: quick-start deferring player load until game bootstrap");
   switchState(TitleState::StartSinglePlayer);
 }
 #endif

@@ -115,7 +115,8 @@ public:
   CharacterCreationResult generateHumanoid(String species, int64_t seed, Maybe<Gender> = {}) const;
 
 private:
-  StringMap<SpeciesDefinitionPtr> m_species;
+  mutable StringMap<SpeciesDefinitionPtr> m_species;
+  StringMap<String> m_speciesFiles;
 
   mutable RecursiveMutex m_luaMutex;
   mutable LuaRootPtr m_luaRoot;

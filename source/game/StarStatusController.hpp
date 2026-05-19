@@ -228,7 +228,9 @@ private:
   GameTimer m_environmentStatusEffectUpdateTimer;
 
   Maybe<String> m_primaryAnimationConfig;
-  StatScript m_primaryScript;
+  StringList m_primaryScriptSources;
+  unsigned m_primaryScriptDelta;
+  shared_ptr<StatScript> m_primaryScript;
   Directives m_primaryDirectives;
   EffectAnimatorGroup::ElementId m_primaryAnimatorId;
 
