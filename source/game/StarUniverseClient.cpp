@@ -55,9 +55,13 @@ void UniverseClient::setMainPlayer(PlayerPtr player) {
     m_mainPlayer->setClientContext(m_clientContext);
     m_mainPlayer->setStatistics(m_statistics);
     m_mainPlayer->setUniverseClient(this);
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: using in-memory main player");
+#else
     m_playerStorage->backupCycle(m_mainPlayer->uuid());
     m_playerStorage->savePlayer(m_mainPlayer);
     m_playerStorage->moveToFront(m_mainPlayer->uuid());
+#endif
   }
 }
 
@@ -75,7 +79,11 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
   if (!m_mainPlayer)
     throw StarException("Cannot call UniverseClient::connect with no main player");
 
+#ifdef STAR_PLATFORM_N3DS
+  unsigned timeout = 30000;
+#else
   unsigned timeout = assets->json("/client.config:serverConnectTimeout").toUInt();
+#endif
   Logger::info("UniverseClient: Connecting to server, packet timeout is {}ms", timeout);
 
   {

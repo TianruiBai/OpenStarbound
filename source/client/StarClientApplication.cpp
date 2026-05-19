@@ -857,11 +857,22 @@ void ClientApplication::changeState(MainAppState newState) {
       }
 
       if (!m_player) {
+        Logger::info("N3DS game bootstrap: creating default player");
         m_player = Root::singleton().playerFactory()->create();
+        Logger::info("N3DS game bootstrap: default player constructed");
         m_player->setName("N3DS Explorer");
+        Logger::info("N3DS game bootstrap: default player named");
         m_player->log()->setIntroComplete(true);
+        Logger::info("N3DS game bootstrap: default player intro complete");
+      #ifdef STAR_PLATFORM_N3DS
+        Logger::info("N3DS game bootstrap: using unsaved in-memory default player");
+      #else
+        Logger::info("N3DS game bootstrap: saving default player");
         m_playerStorage->savePlayer(m_player);
+        Logger::info("N3DS game bootstrap: saved default player");
         m_playerStorage->moveToFront(m_player->uuid());
+        Logger::info("N3DS game bootstrap: moved default player to front");
+      #endif
         Logger::info("N3DS game bootstrap: created default player {}", m_player->uuid().hex());
       }
     }
@@ -879,11 +890,28 @@ void ClientApplication::changeState(MainAppState newState) {
     }
 #endif
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS game bootstrap: wiring player into client");
+#endif
     m_mainMixer->setUniverseClient(m_universeClient);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS game bootstrap: mixer wired");
+#endif
     m_universeClient->setMainPlayer(m_player);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS game bootstrap: universe client main player set");
+#endif
     m_cinematicOverlay->setPlayer(m_player);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS game bootstrap: cinematic player set");
+#endif
     m_timeSinceJoin = (int64_t)Time::millisecondsSinceEpoch() / 1000;
 
+#ifdef STAR_PLATFORM_N3DS
+  m_cinematicOverlay->stop();
+  m_player->setPendingCinematic(Json());
+  Logger::info("N3DS game bootstrap: skipped loading cinematic");
+#else
     auto assets = m_root->assets();
     String loadingCinematic = assets->json("/client.config:loadingCinematic").toString();
     m_cinematicOverlay->load(assets->json(loadingCinematic));
@@ -894,6 +922,7 @@ void ClientApplication::changeState(MainAppState newState) {
     } else {
       m_player->setPendingCinematic(Json());
     }
+#endif
 
     if (m_state == MainAppState::MultiPlayer) {
       PacketSocketUPtr packetSocket;
@@ -940,18 +969,33 @@ void ClientApplication::changeState(MainAppState newState) {
     } else {
       if (!m_universeServer) {
         try {
+#ifdef STAR_PLATFORM_N3DS
+          Logger::info("N3DS game bootstrap: creating local universe server");
+#endif
           m_universeServer = make_shared<UniverseServer>(m_root->toStoragePath("universe"));
+#ifdef STAR_PLATFORM_N3DS
+          Logger::info("N3DS game bootstrap: starting local universe server");
+#endif
           m_universeServer->start();
+#ifdef STAR_PLATFORM_N3DS
+          Logger::info("N3DS game bootstrap: local universe server started");
+#endif
         } catch (StarException const& e) {
           setError("Unable to start local server", e);
           return;
         }
       }
 
+#ifdef STAR_PLATFORM_N3DS
+      Logger::info("N3DS game bootstrap: adding local client");
+#endif
       if (auto errorMessage = m_universeClient->connect(m_universeServer->addLocalClient(), "", "")) {
         setError(strf("Error connecting locally: {}", *errorMessage));
         return;
       }
+#ifdef STAR_PLATFORM_N3DS
+      Logger::info("N3DS game bootstrap: local client connected");
+#endif
     }
 
   #ifndef STAR_PLATFORM_N3DS

@@ -211,17 +211,17 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
   logN3dsPlayerMemory("after effects animator");
 #endif
 
-  m_interactRadius = assets->json("/player.config:interactRadius").toFloat();
+  m_interactRadius = m_config->interactRadius;
 
-  m_walkIntoInteractBias = jsonToVec2F(assets->json("/player.config:walkIntoInteractBias"));
+  m_walkIntoInteractBias = m_config->walkIntoInteractBias;
 
   if (m_landingVolume <= 1)
     m_landingVolume = 6;
 
   m_isAdmin = false;
 
-  m_emoteCooldown = assets->json("/player.config:emoteCooldown").toFloat();
-  m_blinkInterval = jsonToVec2F(assets->json("/player.config:blinkInterval"));
+  m_emoteCooldown = m_config->emoteCooldown;
+  m_blinkInterval = m_config->blinkInterval;
 
   m_emoteCooldownTimer = GameTimer(m_emoteCooldown);
   m_blinkCooldownTimer = GameTimer(0);
@@ -239,18 +239,18 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
   m_lastDamagedOtherTimer = 0;
   m_lastDamagedTarget = NullEntityId;
 
-  m_ageItemsTimer = GameTimer(assets->json("/player.config:ageItemsEvery").toFloat());
+  m_ageItemsTimer = GameTimer(m_config->ageItemsEvery);
 
   refreshEquipment();
 #ifdef STAR_PLATFORM_N3DS
   logN3dsPlayerMemory("after refresh equipment");
 #endif
 
-  m_foodLowThreshold = assets->json("/player.config:foodLowThreshold").toFloat();
-  m_foodLowStatusEffects = assets->json("/player.config:foodLowStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
-  m_foodEmptyStatusEffects = assets->json("/player.config:foodEmptyStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
+  m_foodLowThreshold = m_config->foodLowThreshold;
+  m_foodLowStatusEffects = m_config->foodLowStatusEffects;
+  m_foodEmptyStatusEffects = m_config->foodEmptyStatusEffects;
 
-  m_inCinematicStatusEffects = assets->json("/player.config:inCinematicStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
+  m_inCinematicStatusEffects = m_config->inCinematicStatusEffects;
 
   m_statusController->setPersistentEffects("armor", m_armor->statusEffects());
   m_statusController->setPersistentEffects("tools", m_tools->statusEffects());

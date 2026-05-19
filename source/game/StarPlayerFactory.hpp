@@ -3,6 +3,7 @@
 #include "StarItemDescriptor.hpp"
 #include "StarHumanoid.hpp"
 #include "StarEntitySplash.hpp"
+#include "StarStatusTypes.hpp"
 
 namespace Star {
 
@@ -37,6 +38,15 @@ struct PlayerConfig {
   float underwaterMinWaterLevel;
 
   String effectsAnimator;
+  float interactRadius;
+  Vec2F walkIntoInteractBias;
+  float emoteCooldown;
+  Vec2F blinkInterval;
+  float ageItemsEvery;
+  float foodLowThreshold;
+  List<PersistentStatusEffect> foodLowStatusEffects;
+  List<PersistentStatusEffect> foodEmptyStatusEffects;
+  List<PersistentStatusEffect> inCinematicStatusEffects;
 
   float teleportInTime;
   float teleportOutTime;

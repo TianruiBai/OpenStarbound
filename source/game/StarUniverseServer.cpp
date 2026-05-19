@@ -26,6 +26,20 @@ namespace Star {
 namespace {
 
 Json readUniverseServerConfig() {
+#ifdef STAR_PLATFORM_N3DS
+  return JsonObject{
+    {"usePendingConnectionStateMachine", false},
+    {"clientWaitLimit", 10000},
+    {"persistenceWorkerThreads", 0},
+    {"useAsyncPersistence", false},
+    {"maxQueuedPersistenceSnapshots", 16},
+    {"maxPersistenceWriteRetries", 0},
+    {"workerPoolThreads", 0},
+    {"networkWorkerThreads", 0},
+    {"queueOnlyConnectionSend", false},
+    {"speciesShips", JsonObject{{"human", JsonArray{"/ships/human/humant0.structure"}}}}
+  };
+#else
   auto& root = Root::singleton();
   auto universeConfig = root.assets()->json("/universe_server.config");
 
@@ -36,6 +50,7 @@ Json readUniverseServerConfig() {
   }
 
   return universeConfig;
+#endif
 }
 
 }
@@ -67,9 +82,13 @@ UniverseServer::UniverseServer(String const& storageDir)
 
   startLuaScripts();
 
-  m_commandProcessor = make_shared<CommandProcessor>(this, m_luaRoot);
   m_chatProcessor = make_shared<ChatProcessor>();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: skipped command processor");
+#else
+  m_commandProcessor = make_shared<CommandProcessor>(this, m_luaRoot);
   m_chatProcessor->setCommandHandler(bind(&CommandProcessor::userCommand, m_commandProcessor.get(), _1, _2, _3));
+#endif
 
   Logger::info("UniverseServer: Acquiring universe lock file");
 
@@ -90,6 +109,9 @@ UniverseServer::UniverseServer(String const& storageDir)
   Logger::info("UniverseServer: Loading settings");
   loadSettings();
   loadTempWorldIndex();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: settings loaded");
+#endif
   m_lastClockUpdateSent = 0.0;
   m_stop = false;
   m_tcpState = TcpState::No;
@@ -120,6 +142,9 @@ UniverseServer::UniverseServer(String const& storageDir)
   m_maxPlayers = configuration->get("maxPlayers").toUInt();
 
   auto universeConfig = readUniverseServerConfig();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: compact config ready");
+#endif
   m_usePendingConnectionStateMachine = universeConfig.getBool("usePendingConnectionStateMachine", true);
   m_pendingConnectionStateWaitLimit = universeConfig.getInt("clientWaitLimit");
   auto persistenceWorkerThreads = universeConfig.optUInt("persistenceWorkerThreads").value(1);
@@ -129,20 +154,39 @@ UniverseServer::UniverseServer(String const& storageDir)
 
   for (auto const& pair : universeConfig.get("speciesShips").iterateObject())
     m_speciesShips[pair.first] = jsonToStringList(pair.second);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: species ships ready");
+#endif
 
   m_teamManager = make_shared<TeamManager>();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: team manager ready");
+  Logger::info("N3DS UniverseServer: starting worker pool");
+#endif
   m_workerPool.start(universeConfig.getUInt("workerPoolThreads"));
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: worker pool started");
+#endif
   if (m_useAsyncPersistence)
     m_persistenceWorkerPool.start(persistenceWorkerThreads);
 
   size_t networkWorkerThreads = universeConfig.optUInt("networkWorkerThreads").value(0);
   bool queueOnlyConnectionSend = universeConfig.getBool("queueOnlyConnectionSend", false);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: creating connection server");
+#endif
   m_connectionServer = make_shared<UniverseConnectionServer>(
     bind(&UniverseServer::packetsReceived, this, _1, _2, _3),
     networkWorkerThreads,
     queueOnlyConnectionSend);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: connection server ready");
+#endif
 
   m_pause = make_shared<atomic<bool>>(false);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: constructor complete");
+#endif
 
   m_secureWarps = Root::singleton().configuration()->getPath("security.secureWarps").optBool().value(true);
 }
@@ -727,8 +771,12 @@ void UniverseServer::adminWhisper(ConnectionId clientId, String const& text) {
 }
 
 String UniverseServer::adminCommand(String text) {
+#ifdef STAR_PLATFORM_N3DS
+  return "Commands are unavailable on N3DS";
+#else
   String command = text.extract();
   return m_commandProcessor->adminCommand(command, text);
+#endif
 }
 
 bool UniverseServer::isAdmin(ConnectionId clientId) const {
@@ -2034,6 +2082,9 @@ void UniverseServer::loadSettings() {
 Maybe<CelestialCoordinate> UniverseServer::nextStarterWorld() {
   RecursiveMutexLocker locker(m_mainLock);
 
+#ifdef STAR_PLATFORM_N3DS
+  return {};
+#else
   auto assets = Root::singleton().assets();
   String defaultWorldCoordinate = assets->json("/universe_server.config:defaultWorldCoordinate").toString();
   if (!defaultWorldCoordinate.empty())
@@ -2113,9 +2164,16 @@ Maybe<CelestialCoordinate> UniverseServer::nextStarterWorld() {
   }
 
   return {};
+#endif
 }
 
 void UniverseServer::loadTempWorldIndex() {
+#ifdef STAR_PLATFORM_N3DS
+  m_tempWorldIndex.clear();
+  Logger::info("N3DS UniverseServer: skipped temp world index scan");
+  return;
+#endif
+
   auto versioningDatabase = Root::singleton().versioningDatabase();
   auto storageFile = File::relativeTo(m_storageDirectory, "tempworlds.index");
   if (File::isFile(storageFile)) {
@@ -2740,6 +2798,10 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
     }
   }
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: spawning player at ship");
+  clientWarpPlayer(clientId, WarpAlias::OwnShip);
+#else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
   if (!speciesIntroInstance.empty() && !clientConnect->introComplete) {
@@ -2775,6 +2837,7 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
       clientWarpPlayer(clientId, WarpAlias::OwnShip);
     }
   }
+#endif
 
   clientFlyShip(clientId, clientContext->shipCoordinate().location(), clientContext->shipLocation());
   Logger::info("UniverseServer: Client {} connected", clientContext->descriptiveName());
@@ -2801,9 +2864,15 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   auto configuration = root.configuration();
   auto versioningDatabase = root.versioningDatabase();
 
+#ifdef STAR_PLATFORM_N3DS
+  int clientWaitLimit = 10000;
+  String serverAssetsMismatchMessage = "Server assets mismatch";
+  String clientAssetsMismatchMessage = "Client assets mismatch";
+#else
   int clientWaitLimit = assets->json("/universe_server.config:clientWaitLimit").toInt();
   String serverAssetsMismatchMessage = assets->json("/universe_server.config:serverAssetsMismatchMessage").toString();
   String clientAssetsMismatchMessage = assets->json("/universe_server.config:clientAssetsMismatchMessage").toString();
+#endif
   auto connectionSettings = configuration->get("connectionSettings");
 
   RecursiveMutexLocker mainLocker(m_mainLock, false);
@@ -3018,6 +3087,10 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
     }
   }
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: spawning player at ship");
+  clientWarpPlayer(clientId, WarpAlias::OwnShip);
+#else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
   if (!speciesIntroInstance.empty() && !clientConnect->introComplete) {
@@ -3055,6 +3128,7 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
       clientWarpPlayer(clientId, WarpAlias::OwnShip);
     }
   }
+#endif
 
   clientFlyShip(clientId, clientContext->shipCoordinate().location(), clientContext->shipLocation());
   Logger::info("UniverseServer: Client {} connected", clientContext->descriptiveName());
@@ -3630,6 +3704,10 @@ SkyParameters UniverseServer::celestialSkyParameters(CelestialCoordinate const& 
 }
 
 void UniverseServer::startLuaScripts() {
+#ifdef STAR_PLATFORM_N3DS
+  m_luaRoot = make_shared<LuaRoot>();
+  Logger::info("N3DS UniverseServer: skipped universe Lua scripts");
+#else
   auto assets = Root::singleton().assets();
   auto universeConfig = assets->json("/universe_server.config");
 
@@ -3645,6 +3723,7 @@ void UniverseServer::startLuaScripts() {
     m_scriptContexts.set(p.first, scriptComponent);
     scriptComponent->init();
   }
+#endif
 }
 
 void UniverseServer::updateLua() {

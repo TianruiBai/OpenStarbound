@@ -38,6 +38,21 @@ PlayerConfig::PlayerConfig(JsonObject const& cfg) {
   deploymentConfig = cfg.get("deploymentConfig");
 
   effectsAnimator = cfg.get("effectsAnimator").toString();
+  interactRadius = cfg.get("interactRadius").toFloat();
+  walkIntoInteractBias = jsonToVec2F(cfg.get("walkIntoInteractBias"));
+  emoteCooldown = cfg.get("emoteCooldown").toFloat();
+  blinkInterval = jsonToVec2F(cfg.get("blinkInterval"));
+  ageItemsEvery = cfg.get("ageItemsEvery").toFloat();
+  foodLowThreshold = cfg.get("foodLowThreshold").toFloat();
+#ifdef STAR_PLATFORM_N3DS
+  foodLowStatusEffects = {};
+  foodEmptyStatusEffects = {};
+  inCinematicStatusEffects = {};
+#else
+  foodLowStatusEffects = cfg.get("foodLowStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
+  foodEmptyStatusEffects = cfg.get("foodEmptyStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
+  inCinematicStatusEffects = cfg.get("inCinematicStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
+#endif
 
   teleportInTime = cfg.get("teleportInTime").toFloat();
   teleportOutTime = cfg.get("teleportOutTime").toFloat();

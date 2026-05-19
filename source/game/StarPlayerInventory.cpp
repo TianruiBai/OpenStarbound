@@ -40,6 +40,24 @@ bool PlayerInventory::itemAllowedAsEquipment(ItemPtr const& item, EquipmentSlot 
 }
 
 PlayerInventory::PlayerInventory() {
+#ifdef STAR_PLATFORM_N3DS
+  StringMap<size_t> bags;
+  bags["mainBag"] = 16;
+  bags["tileBag"] = 12;
+  bags["objectBag"] = 12;
+  bags["reagentBag"] = 8;
+  bags["foodBag"] = 8;
+
+  for (auto const& pair : bags) {
+    m_bags[pair.first] = make_shared<ItemBag>(pair.second);
+    m_bagsNetState[pair.first].resize(pair.second);
+  }
+
+  m_currencies["money"] = 0;
+
+  size_t customBarGroups = 1;
+  size_t customBarIndexes = 6;
+#else
   auto config = Root::singleton().assets()->json("/player.config:inventory");
 
   auto bags = config.get("itemBags");
@@ -58,6 +76,7 @@ PlayerInventory::PlayerInventory() {
 
   size_t customBarGroups = config.getUInt("customBarGroups");
   size_t customBarIndexes = config.getUInt("customBarIndexes");
+#endif
   m_customBarGroup = 0;
   m_customBar.resize(customBarGroups, customBarIndexes);
 
@@ -993,6 +1012,10 @@ bool PlayerInventory::writeNetDelta(DataStream& ds, uint64_t fromVersion, NetCom
 }
 
 bool PlayerInventory::checkInventoryFilter(ItemPtr const& items, String const& filterName) {
+#ifdef STAR_PLATFORM_N3DS
+  return true;
+#endif
+
   Json filterConfig;
 
   auto itemFilters = items->instanceValue("inventoryFilters");

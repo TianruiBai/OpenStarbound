@@ -55,6 +55,29 @@ RectI CelestialDatabase::chunkRegion(Vec2I const& chunkIndex) const {
 }
 
 CelestialMasterDatabase::CelestialMasterDatabase(Maybe<String> databaseFile) {
+#ifdef STAR_PLATFORM_N3DS
+  m_baseInformation.planetOrbitalLevels = 1;
+  m_baseInformation.satelliteOrbitalLevels = 0;
+  m_baseInformation.chunkSize = 8;
+  m_baseInformation.xyCoordRange = Vec2I(-8, 8);
+  m_baseInformation.zCoordRange = Vec2I(0, 1);
+  m_baseInformation.enforceCoordRange = true;
+
+  m_generationInformation.systemProbability = 0.0f;
+  m_generationInformation.constellationProbability = 0.0f;
+  m_generationInformation.constellationLineCountRange = Vec2U(0, 0);
+  m_generationInformation.constellationMaxTries = 0;
+  m_generationInformation.maximumConstellationLineLength = 0.0f;
+  m_generationInformation.minimumConstellationLineLength = 0.0f;
+  m_generationInformation.minimumConstellationMagnitude = 999.0f;
+  m_generationInformation.minimumConstellationLineCloseness = 0.0f;
+
+  m_commitInterval = 600.0f;
+  m_commitTimer.restart(m_commitInterval);
+  Logger::info("N3DS CelestialMasterDatabase: using compact in-memory database");
+  return;
+#endif
+
   auto assets = Root::singleton().assets();
 
   auto config = assets->json("/celestial.config");

@@ -209,10 +209,16 @@ CommandProcessor::CommandProcessor(UniverseServer* universe, LuaRootPtr luaRoot)
   auto assets = Root::singleton().assets();
   m_scriptComponent.addCallbacks("universe", LuaBindings::makeUniverseServerCallbacks(m_universe));
   m_scriptComponent.addCallbacks("CommandProcessor", makeCommandCallbacks());
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS CommandProcessor: skipped command scripts");
+#else
   m_scriptComponent.setScripts(jsonToStringList(assets->json("/universe_server.config:commandProcessorScripts")));
+#endif
   luaRoot->luaEngine().setNullTerminated(false);
   m_scriptComponent.setLuaRoot(luaRoot);
+#ifndef STAR_PLATFORM_N3DS
   m_scriptComponent.init();
+#endif
 }
 
 String CommandProcessor::adminCommand(String const& command, String const& argumentString) {

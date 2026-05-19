@@ -94,6 +94,11 @@ void UniverseSettings::resetFlags() {
 void UniverseSettings::loadFlagActions() {
   m_flagActions.clear();
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseSettings: skipped universe flag actions");
+  return;
+#endif
+
   Json flagsConfig = Root::singleton().assets()->json("/universeflags.config");
   for (auto flagPair : flagsConfig.iterateObject()) {
     List<UniverseFlagAction> actions;
