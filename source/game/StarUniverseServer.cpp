@@ -28,7 +28,7 @@ namespace {
 Json readUniverseServerConfig() {
 #ifdef STAR_PLATFORM_N3DS
   return JsonObject{
-    {"usePendingConnectionStateMachine", false},
+    {"usePendingConnectionStateMachine", true},
     {"clientWaitLimit", 10000},
     {"persistenceWorkerThreads", 0},
     {"useAsyncPersistence", false},
@@ -1065,7 +1065,11 @@ bool UniverseServer::sendPacket(ConnectionId clientId, PacketPtr packet) {
 void UniverseServer::run() {
   Logger::info("UniverseServer: Starting UniverseServer with UUID: {}", m_universeSettings->uuid().hex());
 
+#ifdef STAR_PLATFORM_N3DS
+  int mainWakeupInterval = 10;
+#else
   int mainWakeupInterval = Root::singleton().assets()->json("/universe_server.config:mainWakeupInterval").toInt();
+#endif
 
   TcpServerPtr tcpServer;
 
@@ -1075,7 +1079,11 @@ void UniverseServer::run() {
       auto configuration = root.configuration();
       auto assets = root.assets();
       HostAddressWithPort bindAddress(configuration->get("gameServerBind").toString(), configuration->get("gameServerPort").toUInt());
+    #ifdef STAR_PLATFORM_N3DS
+      unsigned maxPendingConnections = 1;
+    #else
       unsigned maxPendingConnections = assets->json("/universe_server.config:maxPendingConnections").toInt();
+    #endif
 
       Logger::info("UniverseServer: listening for incoming TCP connections on {}", bindAddress);
 
@@ -1134,7 +1142,13 @@ void UniverseServer::run() {
       timePhase(UniverseTimingPhase::Ships, [&]() { updateShips(); });
       timePhase(UniverseTimingPhase::ClockUpdates, [&]() { sendClockUpdates(); });
       timePhase(UniverseTimingPhase::KickErroredPlayers, [&]() { kickErroredPlayers(); });
-      timePhase(UniverseTimingPhase::ReapConnections, [&]() { reapConnections(); });
+      timePhase(UniverseTimingPhase::ReapConnections, [&]() {
+        reapConnections();
+#ifdef STAR_PLATFORM_N3DS
+        if (m_connectionServer)
+          m_connectionServer->update();
+#endif
+      });
       timePhase(UniverseTimingPhase::PendingHandshakes, [&]() { processPendingConnections(); });
       timePhase(UniverseTimingPhase::PlanetTypeChanges, [&]() { processPlanetTypeChanges(); });
       timePhase(UniverseTimingPhase::Warps, [&]() { warpPlayers(); });
@@ -1183,6 +1197,39 @@ void UniverseServer::run() {
     Logger::error("UniverseServer: exception caught cleaning up: {}", outputException(e, true));
   }
 }
+
+#ifdef STAR_PLATFORM_N3DS
+void UniverseServer::n3dsUpdate() {
+  try {
+    updateLua();
+    processUniverseFlags();
+    removeTimedBan();
+    sendPendingChat();
+    updateTeams();
+    updateShips();
+    sendClockUpdates();
+    kickErroredPlayers();
+    reapConnections();
+    if (m_connectionServer)
+      m_connectionServer->update();
+    processPendingConnections();
+    processPlanetTypeChanges();
+    warpPlayers();
+    flyShips();
+    arriveShips();
+    processChat();
+    sendClientContextUpdates();
+    respondToCelestialRequests();
+    clearBrokenWorlds();
+    handleWorldMessages();
+    shutdownInactiveWorlds();
+    processPendingPersistenceWrites();
+    doTriggeredStorage();
+  } catch (std::exception const& e) {
+    Logger::error("N3DS UniverseServer: exception caught: {}", outputException(e, true));
+  }
+}
+#endif
 
 void UniverseServer::processUniverseFlags() {
   RecursiveMutexLocker locker(m_mainLock);
@@ -1297,7 +1344,12 @@ void UniverseServer::sendClockUpdates() {
   ReadLocker clientsLocker(m_clientsLock);
 
   int64_t currentTime = Time::monotonicMilliseconds();
-  if (currentTime > m_lastClockUpdateSent + Root::singleton().assets()->json("/universe_server.config:clockUpdatePacketInterval").toInt()) {
+#ifdef STAR_PLATFORM_N3DS
+  int clockUpdatePacketInterval = 10000;
+#else
+  int clockUpdatePacketInterval = Root::singleton().assets()->json("/universe_server.config:clockUpdatePacketInterval").toInt();
+#endif
+  if (currentTime > m_lastClockUpdateSent + clockUpdatePacketInterval) {
     auto timePacket = make_shared<UniverseTimeUpdatePacket>(m_universeClock->time());
     for (auto clientId : m_clients.keys())
       m_connectionServer->sendPackets(clientId, {timePacket});
@@ -1341,7 +1393,11 @@ void UniverseServer::kickErroredPlayers() {
 
 void UniverseServer::reapConnections() {
   int64_t startTime = Time::monotonicMilliseconds();
+#ifdef STAR_PLATFORM_N3DS
+  int64_t timeout = 10000;
+#else
   int64_t timeout = Root::singleton().assets()->json("/universe_server.config:connectionTimeout").toInt();
+#endif
   {
     RecursiveMutexLocker acceptThreadsLocker(m_connectionAcceptThreadsMutex);
     eraseWhere(m_connectionAcceptThreads, [&](ThreadFunction<void>& function) {
@@ -1509,7 +1565,11 @@ void UniverseServer::flyShips() {
   RecursiveMutexLocker locker(m_mainLock);
   ReadLocker clientsLocker(m_clientsLock);
 
+#ifdef STAR_PLATFORM_N3DS
+  double queuedFlightWaitTime = 0.0;
+#else
   double queuedFlightWaitTime = Root::singleton().assets()->json("/universe_server.config:queuedFlightWaitTime").toDouble();
+#endif
   for (auto clientId : m_queuedFlights.keys()) {
     if (!m_pendingFlights.contains(clientId) && !m_pendingArrivals.contains(clientId)) {
       auto& flight = m_queuedFlights.get(clientId);
@@ -1717,7 +1777,11 @@ void UniverseServer::clearBrokenWorlds() {
       }
     });
 
+  #ifdef STAR_PLATFORM_N3DS
+    int clearBrokenWorldsInterval = 30000;
+  #else
     int clearBrokenWorldsInterval = Root::singleton().assets()->json("/universe_server.config:clearBrokenWorldsInterval").toInt();
+  #endif
     m_clearBrokenWorldsDeadline = Time::monotonicMilliseconds() + clearBrokenWorldsInterval;
   }
 }
@@ -1830,6 +1894,10 @@ void UniverseServer::shutdownInactiveWorlds() {
 }
 
 void UniverseServer::doTriggeredStorage() {
+#ifdef STAR_PLATFORM_N3DS
+  return;
+#endif
+
   RecursiveMutexLocker locker(m_mainLock);
   ReadLocker clientsLocker(m_clientsLock);
 
@@ -1842,7 +1910,11 @@ void UniverseServer::doTriggeredStorage() {
     cleanupAndCommitCelestialDatabase();
 
     locker.lock();
+  #ifdef STAR_PLATFORM_N3DS
+    int storageTriggerInterval = 60000;
+  #else
     int storageTriggerInterval = Root::singleton().assets()->json("/universe_server.config:universeStorageInterval").toInt();
+  #endif
     m_storageTriggerDeadline = Time::monotonicMilliseconds() + storageTriggerInterval;
   }
 }
@@ -2597,8 +2669,13 @@ void UniverseServer::advancePendingConnection(PendingConnection& pendingConnecti
           : "<anonymous>";
       setPendingConnectionState(pendingConnection, PendingConnectionState::FinalizeClient);
 
+    #ifdef STAR_PLATFORM_N3DS
+      String serverAssetsMismatchMessage = "Server assets mismatch";
+      String clientAssetsMismatchMessage = "Client assets mismatch";
+    #else
       String serverAssetsMismatchMessage = assets->json("/universe_server.config:serverAssetsMismatchMessage").toString();
       String clientAssetsMismatchMessage = assets->json("/universe_server.config:clientAssetsMismatchMessage").toString();
+    #endif
 
       if (connectionSettings.getBool("requireLatestVersion", false)
           && (pendingConnection.legacyClient || pendingConnection.clientConnect->info.getUInt("openProtocolVersion", 0) < OpenProtocolVersion)) {
@@ -2626,7 +2703,11 @@ void UniverseServer::advancePendingConnection(PendingConnection& pendingConnecti
         }
 
         if (!pendingConnection.clientConnect->account.empty()) {
+#ifdef STAR_PLATFORM_N3DS
+          pendingConnection.passwordSalt = secureRandomBytes(16);
+#else
           pendingConnection.passwordSalt = secureRandomBytes(assets->json("/universe_server.config:passwordSaltLength").toUInt());
+#endif
           Logger::info("UniverseServer: Sending Handshake Challenge");
           pendingConnection.connection.pushSingle(make_shared<HandshakeChallengePacket>(pendingConnection.passwordSalt));
           pendingConnection.challengeQueued = true;
@@ -2757,8 +2838,13 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
   ConnectionId clientId = m_clients.nextId();
   auto clientContext = make_shared<ServerClientContext>(clientId, pendingConnection.remoteAddress, netRules, clientConnect->playerUuid,
       clientConnect->playerName, clientConnect->shipSpecies, pendingConnection.administrator, clientConnect->shipChunks);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: compact client context ready");
+#else
   clientContext->registerRpcHandlers(m_teamManager->authenticatedRpcHandlers(clientContext->playerUuid()));
+#endif
 
+#ifndef STAR_PLATFORM_N3DS
   String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientConnect->playerUuid.hex()));
   if (File::isFile(clientContextFile)) {
     try {
@@ -2770,6 +2856,9 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
       File::rename(clientContextFile, strf("{}.{}.fail", clientContextFile, Time::millisecondsSinceEpoch()));
     }
   }
+#else
+  Logger::info("N3DS UniverseServer: skipped persisted client context load");
+#endif
 
   if (!pendingConnection.administrator)
     clientContext->setAdmin(false);
@@ -2801,6 +2890,7 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS UniverseServer: spawning player at ship");
   clientWarpPlayer(clientId, WarpAlias::OwnShip);
+  Logger::info("N3DS UniverseServer: queued initial ship warp");
 #else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
@@ -2839,7 +2929,11 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
   }
 #endif
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: skipped initial ship flight queue");
+#else
   clientFlyShip(clientId, clientContext->shipCoordinate().location(), clientContext->shipLocation());
+#endif
   Logger::info("UniverseServer: Client {} connected", clientContext->descriptiveName());
 
   ReadLocker clientsReadLocker(m_clientsLock);
@@ -2967,7 +3061,11 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
     }
 
     if (!clientConnect->account.empty()) {
+    #ifdef STAR_PLATFORM_N3DS
+      auto passwordSalt = secureRandomBytes(16);
+    #else
       auto passwordSalt = secureRandomBytes(assets->json("/universe_server.config:passwordSaltLength").toUInt());
+    #endif
       Logger::info("UniverseServer: Sending Handshake Challenge");
       connection.pushSingle(make_shared<HandshakeChallengePacket>(passwordSalt));
       connection.sendAll(clientWaitLimit);
@@ -3044,8 +3142,13 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   ConnectionId clientId = m_clients.nextId();
   auto clientContext = make_shared<ServerClientContext>(clientId, remoteAddress, netRules, clientConnect->playerUuid,
                                                         clientConnect->playerName, clientConnect->shipSpecies, administrator, clientConnect->shipChunks);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: compact client context ready");
+#else
   clientContext->registerRpcHandlers(m_teamManager->authenticatedRpcHandlers(clientContext->playerUuid()));
+#endif
 
+#ifndef STAR_PLATFORM_N3DS
   String clientContextFile = File::relativeTo(m_storageDirectory, strf("{}.clientcontext", clientConnect->playerUuid.hex()));
   if (File::isFile(clientContextFile)) {
     try {
@@ -3057,6 +3160,9 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
       File::rename(clientContextFile, strf("{}.{}.fail", clientContextFile, Time::millisecondsSinceEpoch()));
     }
   }
+#else
+  Logger::info("N3DS UniverseServer: skipped persisted client context load");
+#endif
 
   // Need to do this after loadServerData because it sets the admin flag
   if (!administrator)
@@ -3090,6 +3196,7 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS UniverseServer: spawning player at ship");
   clientWarpPlayer(clientId, WarpAlias::OwnShip);
+  Logger::info("N3DS UniverseServer: queued initial ship warp");
 #else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
@@ -3130,7 +3237,11 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   }
 #endif
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: skipped initial ship flight queue");
+#else
   clientFlyShip(clientId, clientContext->shipCoordinate().location(), clientContext->shipLocation());
+#endif
   Logger::info("UniverseServer: Client {} connected", clientContext->descriptiveName());
 
   ReadLocker clientsReadLocker(m_clientsLock);

@@ -309,8 +309,14 @@ void PlayerStorage::deletePlayer(Uuid const& uuid) {
 
 WorldChunks PlayerStorage::loadShipData(Uuid const& uuid) {
   RecursiveMutexLocker locker(m_mutex);
-  if (!m_savedPlayersCache.contains(uuid))
+  if (!m_savedPlayersCache.contains(uuid)) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS PlayerStorage: using empty ship data for unsaved player {}", uuid.hex());
+    return {};
+#else
     throw PlayerException(strf("No such stored player with uuid '{}'", uuid.hex()));
+#endif
+  }
 
   String filename = File::relativeTo(m_storageDirectory, strf("{}.shipworld", uuidFileName(uuid)));
   try {

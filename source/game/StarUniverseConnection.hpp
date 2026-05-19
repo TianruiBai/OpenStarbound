@@ -112,6 +112,7 @@ public:
   UniverseConnection removeConnection(ConnectionId clientId);
   List<UniverseConnection> removeAllConnections();
 
+  void update();
   void sendPackets(ConnectionId clientId, List<PacketPtr> packets);
 
   // Get total packets processed across all worker threads

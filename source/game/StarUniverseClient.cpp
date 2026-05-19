@@ -23,6 +23,7 @@
 #include "StarQuestManager.hpp"
 #include "StarPlayerUniverseMap.hpp"
 #include "StarWorldTemplate.hpp"
+#include "StarThread.hpp"
 
 namespace Star {
 
@@ -69,7 +70,7 @@ PlayerPtr UniverseClient::mainPlayer() const {
   return m_mainPlayer;
 }
 
-Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowAssetsMismatch, String const& account, String const& password, bool const& forceLegacy) {
+Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowAssetsMismatch, String const& account, String const& password, bool const& forceLegacy, function<void()> const& pump) {
   auto& root = Root::singleton();
   auto assets = root.assets();
 
@@ -86,6 +87,36 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
 #endif
   Logger::info("UniverseClient: Connecting to server, packet timeout is {}ms", timeout);
 
+  auto pumpSendAll = [&](unsigned wait) {
+    if (!pump)
+      return connection.sendAll(wait);
+
+    auto timer = Timer::withMilliseconds(wait);
+    while (true) {
+      pump();
+      if (connection.sendAll(0))
+        return true;
+      if (timer.timeUp() || !connection.isOpen())
+        return false;
+      Thread::sleep(1);
+    }
+  };
+
+  auto pumpReceiveAny = [&](unsigned wait) {
+    if (!pump)
+      return connection.receiveAny(wait);
+
+    auto timer = Timer::withMilliseconds(wait);
+    while (true) {
+      pump();
+      if (connection.receiveAny(0))
+        return true;
+      if (timer.timeUp() || !connection.isOpen())
+        return false;
+      Thread::sleep(1);
+    }
+  };
+
   {
     auto protocolRequest = make_shared<ProtocolRequestPacket>(StarProtocolVersion);
     if (!forceLegacy) {
@@ -95,8 +126,8 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
     }
     connection.pushSingle(protocolRequest);
   }
-  connection.sendAll(timeout);
-  connection.receiveAny(timeout);
+  pumpSendAll(timeout);
+  pumpReceiveAny(timeout);
 
   auto nextPacket = connection.pullSingle();
   auto protocolResponsePacket = as<ProtocolResponsePacket>(nextPacket);
@@ -140,9 +171,9 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
     {"openProtocolVersion", OpenProtocolVersion }
   };
   connection.pushSingle(std::move(clientConnect));
-  connection.sendAll(timeout);
+  pumpSendAll(timeout);
 
-  connection.receiveAny(timeout);
+  pumpReceiveAny(timeout);
   auto packet = connection.pullSingle();
   if (auto challenge = as<HandshakeChallengePacket>(packet)) {
     Logger::info("UniverseClient: Sending Handshake Response");
@@ -151,9 +182,9 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
     ByteArray passHash = Star::sha256(passAccountSalt);
 
     connection.pushSingle(make_shared<HandshakeResponsePacket>(passHash));
-    connection.sendAll(timeout);
+    pumpSendAll(timeout);
 
-    connection.receiveAny(timeout);
+    pumpReceiveAny(timeout);
     packet = connection.pullSingle();
   }
 
@@ -816,12 +847,17 @@ void UniverseClient::reset() {
   m_warping.reset();
   m_respawning = false;
 
+#ifdef STAR_PLATFORM_N3DS
+  m_warpDelay = GameTimer(0.25f);
+  m_respawnTimer = GameTimer(3.0f);
+#else
   auto assets = Root::singleton().assets();
   m_warpDelay = GameTimer(assets->json("/client.config:playerWarpDelay").toFloat());
   m_respawnTimer = GameTimer(assets->json("/client.config:playerReviveTime").toFloat());
 
   if (m_mainPlayer)
     m_playerStorage->savePlayer(m_mainPlayer);
+#endif
 
   m_connection.reset();
 }

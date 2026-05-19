@@ -33,6 +33,7 @@ ServerClientContext::ServerClientContext(ConnectionId clientId, Maybe<HostAddres
     m_shipSpecies(shipSpecies),
     m_canBecomeAdmin(canBecomeAdmin),
     m_shipChunks(std::move(initialShipChunks)) {
+#ifndef STAR_PLATFORM_N3DS
   m_rpc.registerHandler("ship.applyShipUpgrades", [this](Json const& args) -> Json {
       RecursiveMutexLocker locker(m_mutex);
       setShipUpgrades(shipUpgrades().apply(args));
@@ -60,6 +61,7 @@ ServerClientContext::ServerClientContext(ConnectionId clientId, Maybe<HostAddres
         m_worldThread->setUniverseFlag(flagName);
       return Json();
     });
+#endif
 
   m_netGroup.addNetElement(&m_orbitWarpActionNetState);
   m_netGroup.addNetElement(&m_playerWorldIdNetState);

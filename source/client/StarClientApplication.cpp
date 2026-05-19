@@ -974,9 +974,13 @@ void ClientApplication::changeState(MainAppState newState) {
 #endif
           m_universeServer = make_shared<UniverseServer>(m_root->toStoragePath("universe"));
 #ifdef STAR_PLATFORM_N3DS
-          Logger::info("N3DS game bootstrap: starting local universe server");
+          Logger::info("N3DS game bootstrap: using manual local universe server tick");
+#else
+          Logger::info("ClientApplication: starting local universe server");
 #endif
+#ifndef STAR_PLATFORM_N3DS
           m_universeServer->start();
+#endif
 #ifdef STAR_PLATFORM_N3DS
           Logger::info("N3DS game bootstrap: local universe server started");
 #endif
@@ -989,7 +993,15 @@ void ClientApplication::changeState(MainAppState newState) {
 #ifdef STAR_PLATFORM_N3DS
       Logger::info("N3DS game bootstrap: adding local client");
 #endif
+#ifdef STAR_PLATFORM_N3DS
+      auto pumpLocalServer = [this]() {
+        if (m_universeServer)
+          m_universeServer->n3dsUpdate();
+      };
+      if (auto errorMessage = m_universeClient->connect(m_universeServer->addLocalClient(), false, "", "", false, pumpLocalServer)) {
+#else
       if (auto errorMessage = m_universeClient->connect(m_universeServer->addLocalClient(), "", "")) {
+#endif
         setError(strf("Error connecting locally: {}", *errorMessage));
         return;
       }
@@ -1295,6 +1307,10 @@ void ClientApplication::updateRunning(float dt) {
           p2pNetworkingService->setJoinUnavailable();
       }
     } else {
+#ifdef STAR_PLATFORM_N3DS
+      if (m_universeServer)
+        m_universeServer->n3dsUpdate();
+#endif
       m_universeServer->setListeningTcp(clientIPJoinable);
       if (p2pNetworkingService) {
         p2pNetworkingService->setAcceptingP2PConnections(clientP2PJoinable);

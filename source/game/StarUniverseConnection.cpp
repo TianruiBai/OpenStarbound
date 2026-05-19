@@ -125,6 +125,14 @@ Maybe<PacketStats> UniverseConnection::outgoingStats() const {
 
 UniverseConnectionServer::UniverseConnectionServer(PacketReceiveCallback packetReceiver, size_t numWorkerThreads, bool queueOnlySends)
     : m_packetReceiver(std::move(packetReceiver)), m_shutdown(false), m_queueOnlySends(queueOnlySends) {
+#ifdef STAR_PLATFORM_N3DS
+  if (numWorkerThreads == 0) {
+    m_numWorkerThreads = 0;
+    Logger::info("N3DS UniverseConnectionServer: using threadless polling");
+    return;
+  }
+#endif
+
   if (numWorkerThreads == 0)
     m_numWorkerThreads = max<size_t>(2, std::thread::hardware_concurrency() / 4);
   else
@@ -300,6 +308,13 @@ void UniverseConnectionServer::addConnection(ConnectionId clientId, UniverseConn
   connection->sendQueue = std::move(uc.m_sendQueue);
   connection->receiveQueue = std::move(uc.m_receiveQueue);
   connection->lastActivityTime = Time::monotonicMilliseconds();
+#ifdef STAR_PLATFORM_N3DS
+  if (m_numWorkerThreads == 0) {
+    connection->workerIndex = 0;
+    m_connections.add(clientId, std::move(connection));
+    return;
+  }
+#endif
   connection->workerIndex = clientId % m_numWorkerThreads;
   auto workerIndex = connection->workerIndex;
   m_connections.add(clientId, std::move(connection));
@@ -320,6 +335,17 @@ UniverseConnection UniverseConnectionServer::removeConnection(ConnectionId clien
 
   auto conn = m_connections.take(clientId);
   connectionsLocker.unlock();
+#ifdef STAR_PLATFORM_N3DS
+  if (m_numWorkerThreads == 0) {
+    MutexLocker connectionLocker(conn->mutex);
+
+    UniverseConnection uc;
+    uc.m_packetSocket = take(conn->packetSocket);
+    uc.m_sendQueue = std::move(conn->sendQueue);
+    uc.m_receiveQueue = std::move(conn->receiveQueue);
+    return uc;
+  }
+#endif
   auto workerState = m_workerStates[conn->workerIndex];
   MutexLocker workerLocker(workerState->mutex);
   workerState->connections.remove(clientId);
@@ -337,6 +363,51 @@ UniverseConnection UniverseConnectionServer::removeConnection(ConnectionId clien
   return uc;
 }
 
+void UniverseConnectionServer::update() {
+#ifdef STAR_PLATFORM_N3DS
+  if (m_numWorkerThreads != 0)
+    return;
+
+  List<ConnectionId> connectionIds;
+  {
+    RecursiveMutexLocker connectionsLocker(m_connectionsMutex);
+    connectionIds = m_connections.keys();
+  }
+
+  for (auto clientId : connectionIds) {
+    shared_ptr<Connection> connection;
+    {
+      RecursiveMutexLocker connectionsLocker(m_connectionsMutex);
+      connection = m_connections.value(clientId);
+    }
+
+    if (!connection)
+      continue;
+
+    MutexLocker connectionLocker(connection->mutex);
+    if (!connection->packetSocket || !connection->packetSocket->isOpen())
+      continue;
+
+    if (!connection->sendQueue.empty())
+      connection->packetSocket->sendPackets(take(connection->sendQueue));
+
+    connection->packetSocket->writeData();
+    connection->packetSocket->readData();
+    auto receivePackets = connection->packetSocket->receivePackets();
+    if (!receivePackets.empty()) {
+      connection->lastActivityTime = Time::monotonicMilliseconds();
+      connection->receiveQueue.appendAll(take(receivePackets));
+    }
+
+    if (!connection->receiveQueue.empty()) {
+      List<PacketPtr> toReceive = List<PacketPtr>::from(take(connection->receiveQueue));
+      connectionLocker.unlock();
+      m_packetReceiver(this, clientId, std::move(toReceive));
+    }
+  }
+#endif
+}
+
 List<UniverseConnection> UniverseConnectionServer::removeAllConnections() {
   List<UniverseConnection> removedConnections;
   RecursiveMutexLocker connectionsLocker(m_connectionsMutex);
@@ -350,6 +421,16 @@ void UniverseConnectionServer::sendPackets(ConnectionId clientId, List<PacketPtr
   if (auto conn = m_connections.value(clientId)) {
     connectionsLocker.unlock();
     MutexLocker connectionLocker(conn->mutex);
+#ifdef STAR_PLATFORM_N3DS
+    if (m_numWorkerThreads == 0) {
+      conn->sendQueue.appendAll(std::move(packets));
+      if (conn->packetSocket && conn->packetSocket->isOpen()) {
+        conn->packetSocket->sendPackets(take(conn->sendQueue));
+        conn->packetSocket->writeData();
+      }
+      return;
+    }
+#endif
     auto workerIndex = conn->workerIndex;
     auto packetCount = packets.size();
     conn->sendQueue.appendAll(std::move(packets));

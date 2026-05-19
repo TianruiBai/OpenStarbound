@@ -341,6 +341,10 @@ public:
 
   bool sendPacket(ConnectionId clientId, PacketPtr packet);
 
+#ifdef STAR_PLATFORM_N3DS
+  void n3dsUpdate();
+#endif
+
 protected:
   virtual void run();
 
