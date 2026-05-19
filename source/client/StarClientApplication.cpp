@@ -876,6 +876,8 @@ void ClientApplication::changeState(MainAppState newState) {
         Logger::info("N3DS game bootstrap: created default player {}", m_player->uuid().hex());
       }
     }
+
+    m_root->n3dsReleasePlayerBootstrapCaches();
 #else
     if (m_titleScreen->currentlySelectedPlayer()) {
       m_player = m_titleScreen->currentlySelectedPlayer();
@@ -998,7 +1000,7 @@ void ClientApplication::changeState(MainAppState newState) {
         if (m_universeServer)
           m_universeServer->n3dsUpdate();
       };
-      if (auto errorMessage = m_universeClient->connect(m_universeServer->addLocalClient(), false, "", "", false, pumpLocalServer)) {
+      if (auto errorMessage = m_universeClient->connect(m_universeServer->addLocalClient(), false, "", "", true, pumpLocalServer)) {
 #else
       if (auto errorMessage = m_universeClient->connect(m_universeServer->addLocalClient(), "", "")) {
 #endif

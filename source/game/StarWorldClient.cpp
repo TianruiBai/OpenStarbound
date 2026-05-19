@@ -29,10 +29,23 @@ const std::string SECRET_BROADCAST_PREFIX = "\0Broadcast\0"s;
 
 const float WorldClient::DropDist = 6.0f;
 WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
+#ifndef STAR_PLATFORM_N3DS
   auto& root = Root::singleton();
   auto assets = root.assets();
 
   m_clientConfig = assets->json("/client.config");
+#else
+  m_clientConfig = JsonObject{
+    {"worldDimTime", 0.25f},
+    {"parallaxFadeTime", 0.25f},
+    {"modifiedTilePredictionTimeout", 0.25f},
+    {"particleRegionPadding", 0},
+    {"itemRequestReset", 60},
+    {"worldClientStateUpdateDelta", 5},
+    {"interpolationSettings", JsonObject{{"local", JsonObject{}}, {"normal", JsonObject{}}}}
+  };
+  Logger::info("N3DS WorldClient: using compact client config");
+#endif
 
   m_currentStep = 0;
   m_currentTime = 0;
@@ -68,6 +81,11 @@ WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
 
   m_latency = 0.0;
 
+#ifdef STAR_PLATFORM_N3DS
+  m_blockDamageParticleProbability = 0.0f;
+  m_blockDingParticleProbability = 0.0f;
+  m_damageNotificationBatchDuration = 0.1f;
+#else
   m_blockDamageParticle = Particle(m_clientConfig.getObject("blockDamageParticle"));
   m_blockDamageParticleVariance = Particle(m_clientConfig.getObject("blockDamageParticleVariance"));
   m_blockDamageParticleProbability = m_clientConfig.getFloat("blockDamageParticleProbability");
@@ -77,7 +95,9 @@ WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
   m_blockDingParticleProbability = m_clientConfig.getFloat("blockDingParticleProbability");
 
   m_damageNotificationBatchDuration = m_clientConfig.getFloat("damageNotificationBatchDuration");
+#endif
 
+#ifndef STAR_PLATFORM_N3DS
   m_ambientSounds.setTrackFadeInTime(assets->json("/interface.config:ambientTrackFadeInTime").toFloat());
   m_ambientSounds.setTrackSwitchGrace(assets->json("/interface.config:ambientTrackSwitchGrace").toFloat());
 
@@ -86,6 +106,7 @@ WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
 
   m_altMusicTrack.setTrackFadeInTime(assets->json("/interface.config:musicTrackFadeInTime").toFloat());
   m_altMusicTrack.setTrackSwitchGrace(assets->json("/interface.config:musicTrackFadeInTime").toFloat());
+#endif
   m_altMusicTrack.setVolume(0, 0, 0);
   m_altMusicActive = false;
 

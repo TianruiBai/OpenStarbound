@@ -650,10 +650,16 @@ List<CelestialConstellation> CelestialMasterDatabase::produceConstellations(
 }
 
 CelestialSlaveDatabase::CelestialSlaveDatabase(CelestialBaseInformation baseInformation) {
+#ifdef STAR_PLATFORM_N3DS
+  m_baseInformation = std::move(baseInformation);
+  m_requestTimeout = 10.0f;
+  Logger::info("N3DS CelestialSlaveDatabase: using compact client database");
+#else
   auto config = Root::singleton().assets()->json("/celestial.config");
 
   m_baseInformation = std::move(baseInformation);
   m_requestTimeout = config.getFloat("requestTimeout");
+#endif
 }
 
 void CelestialSlaveDatabase::signalRegion(RectI const& region) {

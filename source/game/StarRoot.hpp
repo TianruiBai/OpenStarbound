@@ -133,6 +133,10 @@ public:
 
   void hotReload();
 
+#ifdef STAR_PLATFORM_N3DS
+  void n3dsReleasePlayerBootstrapCaches();
+#endif
+
   // Translates the given path to be relative to the configured storage
   // location.
   String toStoragePath(String const& path) const;

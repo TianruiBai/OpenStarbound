@@ -189,19 +189,46 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
   }
 
   if (auto success = as<ConnectSuccessPacket>(packet)) {
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: received connect success");
+  #endif
     m_universeClock = make_shared<Clock>();
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: clock ready");
+  #endif
     m_clientContext = make_shared<ClientContext>(success->serverUuid, m_mainPlayer->uuid());
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: client context ready");
+  #endif
     m_clientContext->setNetCompatibilityRules(compatibilityRules);
     m_teamClient = make_shared<TeamClient>(m_mainPlayer, m_clientContext);
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: team client ready");
+  #endif
     m_mainPlayer->setClientContext(m_clientContext);
     m_mainPlayer->setStatistics(m_statistics);
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: player context wired");
+  #endif
     m_worldClient = make_shared<WorldClient>(m_mainPlayer, m_luaRoot);
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: world client ready");
+  #endif
     m_worldClient->clientState().setNetCompatibilityRules(compatibilityRules);
     m_worldClient->setAsyncLighting(true);
 
     m_connection = std::move(connection);
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: connection stored");
+  #endif
     m_celestialDatabase = make_shared<CelestialSlaveDatabase>(std::move(success->celestialInformation));
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: celestial database ready");
+  #endif
     m_systemWorldClient = make_shared<SystemWorldClient>(m_universeClock, m_celestialDatabase, m_mainPlayer->universeMap());
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseClient: system world client ready");
+  #endif
 
     Logger::info("UniverseClient: Joined {} server as client {}", legacyServer ? "Starbound" : "OpenStarbound", success->clientId);
     return {};

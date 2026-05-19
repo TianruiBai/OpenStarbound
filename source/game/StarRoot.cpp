@@ -390,6 +390,21 @@ void Root::hotReload() {
   m_reloadListeners.trigger();
 }
 
+#ifdef STAR_PLATFORM_N3DS
+void Root::n3dsReleasePlayerBootstrapCaches() {
+  {
+    MutexLocker playerFactoryLock(m_playerFactoryMutex);
+    m_playerFactory.reset();
+  }
+  {
+    MutexLocker speciesDatabaseLock(m_speciesDatabaseMutex);
+    m_speciesDatabase.reset();
+  }
+  assets()->clearCache();
+  Logger::info("N3DS Root: released player bootstrap caches");
+}
+#endif
+
 String Root::toStoragePath(String const& path) const {
   return File::relativeTo(m_settings.storageDirectory, File::convertDirSeparators(path));
 }

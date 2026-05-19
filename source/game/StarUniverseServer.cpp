@@ -2866,12 +2866,23 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
   clientContext->setShipUpgrades(clientConnect->shipUpgrades);
 
   m_connectionServer->addConnection(clientId, std::move(pendingConnection.connection));
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: connection registered");
+  m_connectionServer->sendPackets(clientId, {make_shared<ConnectSuccessPacket>(clientId, m_universeSettings->uuid(), m_celestialDatabase->baseInformation())});
+  Logger::info("N3DS UniverseServer: sent compact connect success");
+#else
   m_connectionServer->sendPackets(clientId, {make_shared<ConnectSuccessPacket>(clientId, m_universeSettings->uuid(), m_celestialDatabase->baseInformation()), make_shared<UniverseTimeUpdatePacket>(m_universeClock->time()), make_shared<PausePacket>(*m_pause, GlobalTimescale)});
+#endif
 
   m_clients.add(clientId, clientContext);
+#ifndef STAR_PLATFORM_N3DS
   m_chatProcessor->connectClient(clientId, clientConnect->playerName);
+#else
+  Logger::info("N3DS UniverseServer: skipped chat client registration");
+#endif
   clientsLocker.unlock();
 
+#ifndef STAR_PLATFORM_N3DS
   setPvp(clientId, false);
 
   Vec3I location = clientContext->shipCoordinate().location();
@@ -2886,11 +2897,13 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
       clientContext->setShipCoordinate({});
     }
   }
+#else
+  Logger::info("N3DS UniverseServer: skipped initial PVP/team and system placement");
+#endif
 
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS UniverseServer: spawning player at ship");
-  clientWarpPlayer(clientId, WarpAlias::OwnShip);
-  Logger::info("N3DS UniverseServer: queued initial ship warp");
+  Logger::info("N3DS UniverseServer: skipped initial ship warp queue");
 #else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
@@ -2941,8 +2954,10 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
   auto clients = m_clients.keys();
   clientsReadLocker.unlock();
 
+#ifndef STAR_PLATFORM_N3DS
   for (auto clientId : clients)
     m_connectionServer->sendPackets(clientId, {make_shared<ServerInfoPacket>(players, static_cast<uint16_t>(m_maxPlayers))});
+#endif
 
   for (auto& p : m_scriptContexts)
     p.second->invoke("acceptConnection", clientId);
@@ -3171,12 +3186,23 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   clientContext->setShipUpgrades(clientConnect->shipUpgrades);
 
   m_connectionServer->addConnection(clientId, std::move(connection));
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS UniverseServer: connection registered");
+  m_connectionServer->sendPackets(clientId, {make_shared<ConnectSuccessPacket>(clientId, m_universeSettings->uuid(), m_celestialDatabase->baseInformation())});
+  Logger::info("N3DS UniverseServer: sent compact connect success");
+#else
   m_connectionServer->sendPackets(clientId, {make_shared<ConnectSuccessPacket>(clientId, m_universeSettings->uuid(), m_celestialDatabase->baseInformation()), make_shared<UniverseTimeUpdatePacket>(m_universeClock->time()), make_shared<PausePacket>(*m_pause, GlobalTimescale)});
+#endif
 
   m_clients.add(clientId, clientContext);
+#ifndef STAR_PLATFORM_N3DS
   m_chatProcessor->connectClient(clientId, clientConnect->playerName);
+#else
+  Logger::info("N3DS UniverseServer: skipped chat client registration");
+#endif
   clientsLocker.unlock();
 
+#ifndef STAR_PLATFORM_N3DS
   setPvp(clientId, false);
 
   Vec3I location = clientContext->shipCoordinate().location();
@@ -3192,11 +3218,13 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
       clientContext->setShipCoordinate({});
     }
   }
+#else
+  Logger::info("N3DS UniverseServer: skipped initial PVP/team and system placement");
+#endif
 
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS UniverseServer: spawning player at ship");
-  clientWarpPlayer(clientId, WarpAlias::OwnShip);
-  Logger::info("N3DS UniverseServer: queued initial ship warp");
+  Logger::info("N3DS UniverseServer: skipped initial ship warp queue");
 #else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
@@ -3249,9 +3277,11 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
   auto clients = m_clients.keys();
   clientsReadLocker.unlock();
 
+#ifndef STAR_PLATFORM_N3DS
   for (auto clientId : clients) {
     m_connectionServer->sendPackets(clientId, {make_shared<ServerInfoPacket>(players, static_cast<uint16_t>(m_maxPlayers))});
   }
+#endif
 
   for (auto& p : m_scriptContexts)
     p.second->invoke("acceptConnection", clientId);

@@ -56,6 +56,13 @@ ItemSlotWidget::ItemSlotWidget(ItemPtr const& item, String const& backingImage)
   m_progress = 1;
 
   auto assets = Root::singleton().assets();
+#ifdef STAR_PLATFORM_N3DS
+  m_countPosition = TextPositioning(Vec2F(18, 2), HorizontalAnchor::RightAnchor);
+  m_countFontMode = FontMode::Normal;
+  m_itemDraggableArea = RectI::withSize(Vec2I(), Vec2I(20, 20));
+  m_durabilityOffset = Vec2I();
+  m_newItemIndicator.update(ItemIndicateNewTime);
+#else
   auto interfaceConfig = assets->json("/interface.config");
   m_countPosition = TextPositioning(jsonToVec2F(interfaceConfig.get("itemCountRightAnchor")), HorizontalAnchor::RightAnchor);
   m_countFontMode = FontMode::Normal;
@@ -70,8 +77,12 @@ ItemSlotWidget::ItemSlotWidget(ItemPtr const& item, String const& backingImage)
 
   Json highlightAnimationConfig = interfaceConfig.get("highlightAnimation");
   m_highlightAnimation = Animation(highlightAnimationConfig);
+#endif
   m_highlightEnabled = false;
 
+#ifdef STAR_PLATFORM_N3DS
+  setSize(m_itemDraggableArea.max());
+#else
   Vec2I backingImageSize;
   if (m_backingImage.size()) {
     auto imgMetadata = Root::singleton().imageMetadataDatabase();
@@ -80,10 +91,10 @@ ItemSlotWidget::ItemSlotWidget(ItemPtr const& item, String const& backingImage)
   setSize(m_itemDraggableArea.max().piecewiseMax(backingImageSize));
 
   WidgetParser parser;
-
   parser.construct(assets->json("/interface/itemSlot.config").get("config"), this);
   m_durabilityBar = fetchChild<ProgressWidget>("durabilityBar");
   m_durabilityBar->hide();
+#endif
   m_showDurability = false;
   m_showCount = true;
   m_showRarity = true;
@@ -218,7 +229,7 @@ void ItemSlotWidget::renderImpl() {
     if (!m_newItemIndicator.isComplete())
       context()->drawInterfaceDrawable(m_newItemIndicator.drawable(1.0), Vec2F(screenPosition() + size() / 2), Color::White.toRgba());
 
-    if (m_showDurability) {
+    if (m_showDurability && m_durabilityBar) {
       if (auto durabilityItem = as<DurabilityItem>(m_item)) {
         float amount = durabilityItem->durabilityStatus();
         m_durabilityBar->setCurrentProgressLevel(amount);
@@ -248,7 +259,7 @@ void ItemSlotWidget::renderImpl() {
     context()->drawInterfaceDrawable(m_highlightAnimation.drawable(1.0), Vec2F(screenPosition() + size() / 2), Color::White.toRgba());
   }
 
-  if (!m_item)
+  if (!m_item && m_durabilityBar)
     m_durabilityBar->hide();
 }
 
