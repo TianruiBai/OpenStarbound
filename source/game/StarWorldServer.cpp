@@ -62,6 +62,49 @@ uint64_t phase6MutationSignature(Phase6MutationSignatureWorkItem const& item) {
 }
 
 Json readWorldServerConfig() {
+#ifdef STAR_PLATFORM_N3DS
+  auto timingConfig = JsonObject{
+    {"wiringUpdate", JsonArray{1, 0}},
+    {"liquidUpdate", JsonArray{8, 0}},
+    {"fallingBlocksUpdate", JsonArray{4, 0}},
+    {"blockDamageUpdate", JsonArray{4, 0}},
+    {"worldStorageTick", JsonArray{4, 0}},
+    {"worldStorageGenerate", JsonArray{1, 0}},
+    {"environmentUpdate", JsonArray{8, 0}},
+    {"liquidEngineBackgroundProcessingLimit", 0},
+    {"worldStorageGenerationLevelLimit", 1}
+  };
+
+  return JsonObject{
+    {"phase6WorldParallelism", JsonObject{}},
+    {"skipEmptyEntityUpdateSets", true},
+    {"luaGcPause", 200.0f},
+    {"luaGcStepMultiplier", 200.0f},
+    {"playerStartInitialGenRadius", 2},
+    {"interpolationSettings", JsonObject{
+      {"local", JsonObject{{"entityUpdateDelta", 5}}},
+      {"normal", JsonObject{{"entityUpdateDelta", 5}}}
+    }},
+    {"tileEntityBreakCheckInterval", 1.0f},
+    {"spawnDungeonRetries", 0},
+    {"playerActiveRegionPad", JsonArray{4, 4}},
+    {"playerStartRegionSize", JsonArray{2.0f, 4.0f}},
+    {"playerStartRegionMaximumVerticalSearch", 8},
+    {"playerStartRegionMaximumTries", 4},
+    {"playerSpaceStartRegionSize", JsonArray{2.0f, 4.0f}},
+    {"playerSpaceStartDistanceIncrement", 2.0f},
+    {"playerSpaceStartMaximumTries", 4},
+    {"worldEdgeForceRegionHeight", 0.0f},
+    {"worldEdgeForceRegionForce", 0.0f},
+    {"worldEdgeForceRegionVelocity", 0.0f},
+    {"fidelitySettings", JsonObject{
+      {"minimum", timingConfig},
+      {"low", timingConfig},
+      {"medium", timingConfig},
+      {"high", timingConfig}
+    }}
+  };
+#else
   auto& root = Root::singleton();
   auto worldServerConfig = root.assets()->json("/worldserver.config");
 
@@ -72,6 +115,7 @@ Json readWorldServerConfig() {
   }
 
   return worldServerConfig;
+#endif
 }
 
 void recordPhase6Signature(uint64_t& accumulator, uint64_t signature) {
@@ -217,6 +261,11 @@ void WorldServer::setPause(bool pause) {
 }
 
 void WorldServer::initLua(UniverseServer* universe) {
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: skipped Lua init");
+  return;
+#endif
+
   m_luaRoot->addCallbacks("universe", LuaBindings::makeUniverseServerCallbacks(universe));
   auto assets = Root::singleton().assets();
   for (auto& p : assets->json("/worldserver.config:scriptContexts").toObject()) {
@@ -266,12 +315,16 @@ WorldStructure WorldServer::setCentralStructure(WorldStructure centralStructure)
     }
   }
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: skipped central structure objects");
+#else
   auto objectDatabase = Root::singleton().objectDatabase();
   for (auto structureObject : m_centralStructure.objects()) {
     generateRegion(RectI::withSize(structureObject.position, {1, 1}));
     if (auto object = objectDatabase->createForPlacement(this, structureObject.name, structureObject.position, structureObject.direction, structureObject.parameters))
       addEntity(object);
   }
+#endif
 
   for (auto const& pair : m_clientInfo)
     pair.second->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(m_centralStructure.store()));
@@ -1535,7 +1588,9 @@ void WorldServer::update(float dt) {
           m_phase6WorldParallelismStats.wiringTopologySignatureHash,
           m_phase6WorldParallelismStats.wiringOutputSignatureHash));
     }
+#ifndef STAR_PLATFORM_N3DS
     LogMap::set(strf("server_{}_lua_mem", m_worldId), m_luaRoot->luaMemoryUsage());
+#endif
   });
 }
 
@@ -2234,7 +2289,9 @@ bool WorldServer::isFloatingDungeonWorld() const {
 void WorldServer::init(bool firstTime) {
   auto& root = Root::singleton();
   auto assets = root.assets();
+#ifndef STAR_PLATFORM_N3DS
   auto liquidsDatabase = root.liquidsDatabase();
+#endif
 
   m_serverConfig = readWorldServerConfig();
   auto phase6Config = m_serverConfig.get("phase6WorldParallelism", JsonObject());
@@ -2316,9 +2373,13 @@ void WorldServer::init(bool firstTime) {
   m_tileGetterFunction = [&](Vec2I pos) -> ServerTile const& { return m_tileArray->tile(pos); };
   m_damageManager = make_shared<DamageManager>(this, ServerConnectionId);
   m_wireProcessor = make_shared<WireProcessor>(m_worldStorage);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: skipped Lua root setup");
+#else
   m_luaRoot = make_shared<LuaRoot>();
   m_luaRoot->luaEngine().setNullTerminated(false);
   m_luaRoot->tuneAutoGarbageCollection(m_serverConfig.getFloat("luaGcPause"), m_serverConfig.getFloat("luaGcStepMultiplier"));
+#endif
 
   m_sky = make_shared<Sky>(m_worldTemplate->skyParameters(), false);
 
@@ -2333,11 +2394,20 @@ void WorldServer::init(bool firstTime) {
   m_entityUpdateTimer = GameTimer(m_serverConfig.query("interpolationSettings.normal").getFloat("entityUpdateDelta") / 60.f);
   m_tileEntityBreakCheckTimer = GameTimer(m_serverConfig.getFloat("tileEntityBreakCheckInterval"));
 
+#ifdef STAR_PLATFORM_N3DS
+  LiquidCellEngineParameters liquidEngineParameters{0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 1.0f, 0.01f, 0.01f, 0.001f, 0.5f};
+  m_liquidEngine = make_shared<LiquidCellEngine<LiquidId>>(liquidEngineParameters, make_shared<LiquidWorld>(this));
+#else
   m_liquidEngine = make_shared<LiquidCellEngine<LiquidId>>(liquidsDatabase->liquidEngineParameters(), make_shared<LiquidWorld>(this));
+#endif
   if (m_phase6MutationFixedSeedSignaturesEnabled)
     m_liquidEngine->setRandomSeed(Phase6LiquidFixedSeed);
+#ifndef STAR_PLATFORM_N3DS
   for (auto liquidSettings : liquidsDatabase->allLiquidSettings())
     m_liquidEngine->setLiquidTickDelta(liquidSettings->id, liquidSettings->tickDelta);
+#else
+  Logger::info("N3DS WorldServer: skipped liquid database setup");
+#endif
 
   m_fallingBlocksAgent = make_shared<FallingBlocksAgent>(make_shared<FallingBlocksWorld>(this));
   if (m_phase6MutationFixedSeedSignaturesEnabled)
@@ -2394,8 +2464,15 @@ void WorldServer::init(bool firstTime) {
       m_generatingDungeon = false;
     }
 
+#ifdef STAR_PLATFORM_N3DS
+    if (m_adjustPlayerStart) {
+      m_playerStart = Vec2F(m_geometry.size()) / 2.0f;
+      m_adjustPlayerStart = false;
+    }
+#else
     if (m_adjustPlayerStart)
       m_playerStart = findPlayerStart(firstTime ? Maybe<Vec2F>() : m_playerStart);
+#endif
 
     generateRegion(RectI::integral(RectF(m_playerStart, m_playerStart)).padded(m_serverConfig.getInt("playerStartInitialGenRadius")));
 

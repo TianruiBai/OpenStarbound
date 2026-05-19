@@ -7,6 +7,7 @@
 #include "StarAssets.hpp"
 #include "StarRoot.hpp"
 #include "StarTileDrawer.hpp"
+#include "StarLogging.hpp"
 
 namespace Star {
 
@@ -25,6 +26,9 @@ TilePainter::TilePainter(RendererPtr renderer) : TileDrawer() {
 
   m_textureCache.setTimeToLive(assets->json("/rendering.config:textureTimeout").toInt());
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS TilePainter: skipped eager liquid texture setup");
+#else
   for (auto const& liquid : root.liquidsDatabase()->allLiquidSettings()) {
     m_liquids.set(liquid->id, LiquidInfo{
         m_renderer->createTexture(*assets->image(liquid->config.getString("texture")), TextureAddressing::Wrap),
@@ -33,6 +37,7 @@ TilePainter::TilePainter(RendererPtr renderer) : TileDrawer() {
         liquid->config.getFloat("textureMovementFactor")
       });
   }
+#endif
 }
 
 void TilePainter::adjustLighting(WorldRenderData& renderData) const {
@@ -45,6 +50,9 @@ void TilePainter::adjustLighting(WorldRenderData& renderData) const {
 
       auto lightIndex = Vec2U(pos - renderData.lightMinPosition);
       auto lightValue = renderData.lightMap.get(lightIndex.x(), lightIndex.y());
+
+      if (tile.liquidId >= m_liquids.size())
+        return;
 
       auto const& liquid = m_liquids[tile.liquidId];
       float darknessLevel = (1.f - (lightValue.sum() / 3.0f)) * drawLevel;
@@ -376,6 +384,9 @@ void TilePainter::produceLiquidPrimitives(HashMap<LiquidId, List<RenderPrimitive
     worldRect = RectF::withSize(Vec2F(pos), Vec2F(1.0f, drawLevel));
 
   auto texRect = worldRect.scaled(TilePixels);
+
+  if (tile.liquidId >= m_liquids.size())
+    return;
 
   auto const& liquid = m_liquids[tile.liquidId];
   primitives[tile.liquidId].emplace_back(std::in_place_type_t<RenderQuad>(), liquid.texture,

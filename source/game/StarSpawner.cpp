@@ -12,6 +12,30 @@
 namespace Star {
 
 Spawner::Spawner() {
+#ifdef STAR_PLATFORM_N3DS
+  m_spawnCellSize = 16;
+  m_spawnCellMinimumEmptyTiles = 0;
+  m_spawnCellMinimumLiquidTiles = 0;
+  m_spawnCellMinimumNearSurfaceTiles = 0;
+  m_spawnCellMinimumNearCeilingTiles = 0;
+  m_spawnCellMinimumAirTiles = 0;
+  m_spawnCellMinimumExposedTiles = 0;
+  m_spawnCellNearSurfaceDistance = 0;
+  m_spawnCellNearCeilingDistance = 0;
+  m_minimumDayLevel = 0.0f;
+  m_minimumLiquidLevel = 0.0f;
+  m_spawnCheckResolution = 1.0f;
+  m_spawnSurfaceCheckDistance = 0;
+  m_spawnCeilingCheckDistance = 0;
+  m_spawnProhibitedCheckPadding = 0.0f;
+  m_spawnCellLifetime = 1.0f;
+  m_windowActivationBorder = 0;
+  m_active = false;
+  m_debug = false;
+  Logger::info("N3DS Spawner: using compact inactive spawner");
+  return;
+#endif
+
   auto assets = Root::singleton().assets();
   auto config = assets->json("/spawning.config");
 

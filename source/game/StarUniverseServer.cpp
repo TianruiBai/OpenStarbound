@@ -1215,6 +1215,18 @@ void UniverseServer::n3dsUpdate() {
     processPendingConnections();
     processPlanetTypeChanges();
     warpPlayers();
+#ifdef STAR_PLATFORM_N3DS
+    List<WorldServerThreadPtr> worldThreads;
+    {
+      RecursiveMutexLocker locker(m_mainLock);
+      for (auto const& worldId : m_worlds.keys()) {
+        if (auto worldThread = getWorld(worldId))
+          worldThreads.append(worldThread);
+      }
+    }
+    for (auto const& worldThread : worldThreads)
+      worldThread->n3dsUpdate();
+#endif
     flyShips();
     arriveShips();
     processChat();
@@ -2903,7 +2915,8 @@ bool UniverseServer::finalizePendingConnection(PendingConnection& pendingConnect
 
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS UniverseServer: spawning player at ship");
-  Logger::info("N3DS UniverseServer: skipped initial ship warp queue");
+  clientWarpPlayer(clientId, WarpAlias::OwnShip);
+  Logger::info("N3DS UniverseServer: queued initial ship warp");
 #else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
@@ -3224,7 +3237,8 @@ void UniverseServer::acceptConnection(UniverseConnection connection, Maybe<HostA
 
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS UniverseServer: spawning player at ship");
-  Logger::info("N3DS UniverseServer: skipped initial ship warp queue");
+  clientWarpPlayer(clientId, WarpAlias::OwnShip);
+  Logger::info("N3DS UniverseServer: queued initial ship warp");
 #else
   Json introInstance = assets->json("/universe_server.config:introInstance");
   String speciesIntroInstance = introInstance.getString(clientConnect->shipSpecies, introInstance.getString("default", ""));
@@ -3620,7 +3634,11 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
 
     auto shipWorldThread = make_shared<WorldServerThread>(shipWorld, ClientShipWorldId(clientShipWorldId));
     shipWorldThread->setPause(m_pause);
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS UniverseServer: skipped ship chunk snapshot");
+#else
     clientContext->applyShipChunksUpdate(shipWorldThread->readChunkUpdate(clientContext->shipChunks()));
+#endif
     shipWorldThread->start();
     shipWorldThread->setUpdateAction(bind(&UniverseServer::worldUpdated, this, _1));
 

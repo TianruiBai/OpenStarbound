@@ -4,6 +4,7 @@
 #include "StarConfiguration.hpp"
 #include "StarAssets.hpp"
 #include "StarJsonExtra.hpp"
+#include "StarLogging.hpp"
 
 namespace Star {
 
@@ -29,11 +30,21 @@ void WorldPainter::renderInit(RendererPtr renderer) {
   m_assets = Root::singleton().assets();
 
   m_renderer = std::move(renderer);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldPainter: compact render init begin");
+  auto textureGroup = m_renderer->createTextureGroup(TextureGroupSize::Small);
+  m_tilePainter = make_shared<TilePainter>(m_renderer);
+  Logger::info("N3DS WorldPainter: tile painter ready");
+  m_drawablePainter = make_shared<DrawablePainter>(m_renderer, make_shared<AssetTextureGroup>(textureGroup));
+  Logger::info("N3DS WorldPainter: drawable painter ready");
+  Logger::info("N3DS WorldPainter: compact render init complete");
+#else
   auto textureGroup = m_renderer->createTextureGroup(TextureGroupSize::Large);
   m_textPainter = make_shared<TextPainter>(m_renderer, textureGroup);
   m_tilePainter = make_shared<TilePainter>(m_renderer);
   m_drawablePainter = make_shared<DrawablePainter>(m_renderer, make_shared<AssetTextureGroup>(textureGroup));
   m_environmentPainter = make_shared<EnvironmentPainter>(m_renderer);
+#endif
 }
 
 void WorldPainter::setCameraPosition(WorldGeometry const& geometry, Vec2F const& position) {
@@ -46,10 +57,14 @@ WorldCamera& WorldPainter::camera() {
 }
 
 void WorldPainter::update(float dt) {
-  m_environmentPainter->update(dt);
+  if (m_environmentPainter)
+    m_environmentPainter->update(dt);
 }
 
 void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWaiter) {
+  if (!m_tilePainter || !m_drawablePainter)
+    return;
+
   m_camera.setScreenSize(m_renderer->screenSize());
   m_camera.setTargetPixelRatio(Root::singleton().configuration()->get("zoomLevel").toFloat());
 
@@ -64,15 +79,17 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
   float starAndDebrisRatio = lerp(0.0625f, pixelRatioBasis * 2.0f, m_camera.pixelRatio());
   float orbiterAndPlanetRatio = lerp(0.125f, pixelRatioBasis * 3.0f, m_camera.pixelRatio());
 
-  m_environmentPainter->renderStars(starAndDebrisRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
-  m_environmentPainter->renderDebrisFields(starAndDebrisRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
-  if (renderData.skyRenderData.type != SkyType::Atmosphereless)
-    m_environmentPainter->renderBackOrbiters(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
-  m_environmentPainter->renderPlanetHorizon(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
-  m_environmentPainter->renderSky(Vec2F(m_camera.screenSize()), renderData.skyRenderData);
-  m_environmentPainter->renderFrontOrbiters(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
-  if (renderData.skyRenderData.type == SkyType::Atmosphereless)
-    m_environmentPainter->renderBackOrbiters(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+  if (m_environmentPainter) {
+    m_environmentPainter->renderStars(starAndDebrisRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+    m_environmentPainter->renderDebrisFields(starAndDebrisRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+    if (renderData.skyRenderData.type != SkyType::Atmosphereless)
+      m_environmentPainter->renderBackOrbiters(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+    m_environmentPainter->renderPlanetHorizon(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+    m_environmentPainter->renderSky(Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+    m_environmentPainter->renderFrontOrbiters(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+    if (renderData.skyRenderData.type == SkyType::Atmosphereless)
+      m_environmentPainter->renderBackOrbiters(orbiterAndPlanetRatio, Vec2F(m_camera.screenSize()), renderData.skyRenderData);
+  }
 
   m_renderer->flush();
 
@@ -102,7 +119,7 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
   m_previousCameraCenter = m_camera.centerWorldPosition();
   m_parallaxWorldPosition[1] = m_camera.centerWorldPosition()[1];
 
-  if (!renderData.parallaxLayers.empty())
+  if (m_environmentPainter && !renderData.parallaxLayers.empty())
     m_environmentPainter->renderParallaxLayers(m_parallaxWorldPosition, m_camera, renderData.parallaxLayers, renderData.skyRenderData);
 
   // Main world layers
@@ -156,14 +173,17 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
     m_renderer->render(renderFlatRect(RectF::withSize({}, Vec2F(m_camera.screenSize())), Vec4B(renderData.dimColor, dimLevel), 0.0f));
 
   int64_t textureTimeout = m_assets->json("/rendering.config:textureTimeout").toInt();
-  m_textPainter->cleanup(textureTimeout);
+  if (m_textPainter)
+    m_textPainter->cleanup(textureTimeout);
   m_drawablePainter->cleanup(textureTimeout);
-  m_environmentPainter->cleanup(textureTimeout);
+  if (m_environmentPainter)
+    m_environmentPainter->cleanup(textureTimeout);
   m_tilePainter->cleanup();
 }
 
 void WorldPainter::adjustLighting(WorldRenderData& renderData) {
-  m_tilePainter->adjustLighting(renderData);
+  if (m_tilePainter)
+    m_tilePainter->adjustLighting(renderData);
 }
 
 void WorldPainter::renderParticles(WorldRenderData& renderData, Particle::Layer layer) {
@@ -224,6 +244,9 @@ void WorldPainter::renderParticles(WorldRenderData& renderData, Particle::Layer 
       drawDrawable(std::move(drawable));
 
     } else if (particle.type == Particle::Type::Text) {
+      if (!m_textPainter)
+        continue;
+
       Vec2F position = m_camera.worldToScreen(particle.position);
       int size = min(128.0f, round((float)textParticleFontSize * m_camera.pixelRatio() * particle.size));
       if (size > 0) {
@@ -308,7 +331,7 @@ void WorldPainter::drawDrawable(Drawable drawable) {
   // draw the drawable if it's on screen
   // if it's not on screen, there's a random chance to pre-load
   // pre-load is not done on every tick because it's expensive to look up images with long paths
-  if (RectF::withSize(Vec2F(), Vec2F(m_camera.screenSize())).intersects(drawable.boundBox(false)))
+  if (m_drawablePainter && RectF::withSize(Vec2F(), Vec2F(m_camera.screenSize())).intersects(drawable.boundBox(false)))
     m_drawablePainter->drawDrawable(drawable);
   else if (drawable.isImage() && Random::randf() < m_preloadTextureChance)
     m_assets->tryImage(drawable.imagePart().image);

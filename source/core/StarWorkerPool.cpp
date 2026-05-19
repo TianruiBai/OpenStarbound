@@ -162,6 +162,19 @@ void WorkerPool::WorkerThread::run() {
 }
 
 void WorkerPool::queueWork(function<void()> work) {
+#ifdef STAR_PLATFORM_N3DS
+  bool runImmediately = false;
+  {
+    MutexLocker threadLock(m_threadMutex);
+    runImmediately = m_workerThreads.empty();
+  }
+
+  if (runImmediately) {
+    work();
+    return;
+  }
+#endif
+
   MutexLocker workLock(m_workMutex);
   m_pendingWork.append(std::move(work));
   m_workCondition.signal();

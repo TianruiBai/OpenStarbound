@@ -38,13 +38,34 @@ WorldId WorldServerThread::worldId() const {
 void WorldServerThread::start() {
   m_stop = false;
   m_errorOccurred = false;
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServerThread: using threadless update for {}", printWorldId(m_worldId));
+#else
   Thread::start();
+#endif
 }
 
 void WorldServerThread::stop() {
   m_stop = true;
+#ifndef STAR_PLATFORM_N3DS
   Thread::join();
+#endif
 }
+
+#ifdef STAR_PLATFORM_N3DS
+void WorldServerThread::n3dsUpdate() {
+  if (m_stop || m_errorOccurred)
+    return;
+
+  try {
+    update(WorldServerFidelity::Minimum);
+  } catch (std::exception const& exception) {
+    Logger::error("N3DS WorldServerThread exception caught: {}", outputException(exception, true));
+    m_errorOccurred = true;
+    failPendingCommands("N3DS world server update failed");
+  }
+}
+#endif
 
 void WorldServerThread::setPause(shared_ptr<const atomic<bool>> pause) {
   m_pause = pause;

@@ -87,6 +87,13 @@ MainInterface::MainInterface(UniverseClientPtr client, WorldPainterPtr painter, 
 
   m_stickyTargetingTimer = GameTimer(m_config->monsterHealthBarTime);
 
+#ifdef STAR_PLATFORM_N3DS
+  m_overflowMessage = make_shared<GuiMessage>("", 0);
+  m_disableHud = true;
+  Logger::info("N3DS MainInterface: using compact HUD bootstrap");
+  return;
+#endif
+
   m_inventoryWindow = make_shared<InventoryPane>(this, m_client->mainPlayer(), m_containerInteractor);
   m_paneManager.registerPane(MainInterfacePanes::Inventory, PaneLayer::Window, m_inventoryWindow, [this](PanePtr const&) {
       if (auto player = m_client->mainPlayer())
@@ -215,7 +222,8 @@ MainInterfacePaneManager* MainInterface::paneManager() {
 }
 
 bool MainInterface::escapeDialogOpen() const {
-  return m_paneManager.registeredPaneIsDisplayed(MainInterfacePanes::EscapeDialog) || m_paneManager.registeredPaneIsDisplayed(MainInterfacePanes::Options);
+  return (m_paneManager.maybeRegisteredPane(MainInterfacePanes::EscapeDialog) && m_paneManager.registeredPaneIsDisplayed(MainInterfacePanes::EscapeDialog))
+      || (m_paneManager.maybeRegisteredPane(MainInterfacePanes::Options) && m_paneManager.registeredPaneIsDisplayed(MainInterfacePanes::Options));
 }
 
 void MainInterface::openCraftingWindow(Json const& config, EntityId sourceEntityId) {
@@ -279,6 +287,11 @@ MerchantPanePtr MainInterface::activeMerchantPane() const {
 }
 
 bool MainInterface::handleInputEvent(InputEvent const& event) {
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_chat)
+    return false;
+#endif
+
   auto player = m_client->mainPlayer();
   auto inv = player->inventory();
   auto& root = Root::singleton();
@@ -538,7 +551,7 @@ void MainInterface::preUpdate(float) {
 
   if (m_paneManager.topPane({PaneLayer::Window, PaneLayer::ModalWindow}))
     player->setBusyState(PlayerBusyState::Menu);
-  else if (m_chat->hasFocus())
+  else if (m_chat && m_chat->hasFocus())
     player->setBusyState(PlayerBusyState::Chatting);
   else
     player->setBusyState(PlayerBusyState::None);
@@ -547,6 +560,11 @@ void MainInterface::preUpdate(float) {
 void MainInterface::update(float dt) {
   m_paneManager.update(dt);
   m_cursor.update(dt);
+
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_chat)
+    return;
+#endif
 
   m_questLogInterface->pollDialog(&m_paneManager);
 
@@ -557,13 +575,15 @@ void MainInterface::update(float dt) {
   auto cursorWorldPos = cursorWorldPosition();
   if (player->wireToolInUse()) {
     m_paneManager.displayRegisteredPane(MainInterfacePanes::WireInterface);
-    player->setWireConnector(m_wireInterface.get());
+    if (m_wireInterface)
+      player->setWireConnector(m_wireInterface.get());
   } else {
     m_paneManager.dismissRegisteredPane(MainInterfacePanes::WireInterface);
   }
 
   // update inventory pane items, to know if item slots changed
-  m_inventoryWindow->updateItems();
+  if (m_inventoryWindow)
+    m_inventoryWindow->updateItems();
 
   // update mouseover target
   EntityId newMouseOverTarget = NullEntityId;
@@ -851,9 +871,12 @@ void MainInterface::renderInWorldElements() {
     return;
 
   m_guiContext->clearTextStyle();
-  m_questIndicatorPainter->render();
-  m_nameplatePainter->render();
-  m_chatBubbleManager->render();
+  if (m_questIndicatorPainter)
+    m_questIndicatorPainter->render();
+  if (m_nameplatePainter)
+    m_nameplatePainter->render();
+  if (m_chatBubbleManager)
+    m_chatBubbleManager->render();
 }
 
 void MainInterface::render() {
@@ -881,7 +904,7 @@ Vec2F MainInterface::cursorWorldPosition() const {
 }
 
 bool MainInterface::isDebugDisplayed() {
-  return m_clientCommandProcessor->debugDisplayEnabled();
+  return m_clientCommandProcessor && m_clientCommandProcessor->debugDisplayEnabled();
 }
 
 void MainInterface::doChat(String const& chat, bool addToHistory) {
@@ -891,13 +914,15 @@ void MainInterface::doChat(String const& chat, bool addToHistory) {
   if (chat.beginsWith("/")) {
     m_lastCommand = chat;
 
-    for (auto const& result : m_clientCommandProcessor->handleCommand(chat, true))
-      m_chat->addLine(result);
+    if (m_clientCommandProcessor && m_chat) {
+      for (auto const& result : m_clientCommandProcessor->handleCommand(chat, true))
+        m_chat->addLine(result);
+    }
   } else {
-    m_client->sendChat(chat, m_chat->sendMode());
+    m_client->sendChat(chat, m_chat ? m_chat->sendMode() : ChatSendMode::Broadcast);
   }
 
-  if (addToHistory)
+  if (addToHistory && m_chat)
     m_chat->addHistory(chat);
 }
 
@@ -932,7 +957,7 @@ void MainInterface::queueItemPickupText(ItemPtr const& item) {
 }
 
 bool MainInterface::fixedCamera() const {
-  return m_clientCommandProcessor->fixedCameraEnabled();
+  return m_clientCommandProcessor && m_clientCommandProcessor->fixedCameraEnabled();
 }
 
 bool MainInterface::hudVisible() const {
@@ -964,6 +989,11 @@ void MainInterface::warpToOwnShip() {
 
 void MainInterface::warpTo(WarpAction const& warpAction) {
   if (m_client->beamUpRule() == BeamUpRule::AnywhereWithWarning) {
+    if (!m_confirmationDialog) {
+      m_client->warpPlayer(warpAction, true, "beam");
+      return;
+    }
+
     if (m_confirmationDialog->isDisplayed())
       m_confirmationDialog->dismiss();
 
@@ -1031,10 +1061,18 @@ void MainInterface::reviveScriptPanes(List<ScriptPaneInfo>& panes) {
 }
 
 void MainInterface::displayDefaultPanes() {
-  m_paneManager.displayRegisteredPane(MainInterfacePanes::ActionBar);
-  m_paneManager.displayRegisteredPane(MainInterfacePanes::Chat);
-  m_paneManager.displayRegisteredPane(MainInterfacePanes::TeamBar);
-  m_paneManager.displayRegisteredPane(MainInterfacePanes::StatusPane);
+  if (m_paneManager.maybeRegisteredPane(MainInterfacePanes::ActionBar))
+    m_paneManager.displayRegisteredPane(MainInterfacePanes::ActionBar);
+  if (m_paneManager.maybeRegisteredPane(MainInterfacePanes::Chat))
+    m_paneManager.displayRegisteredPane(MainInterfacePanes::Chat);
+  if (m_paneManager.maybeRegisteredPane(MainInterfacePanes::TeamBar))
+    m_paneManager.displayRegisteredPane(MainInterfacePanes::TeamBar);
+  if (m_paneManager.maybeRegisteredPane(MainInterfacePanes::StatusPane))
+    m_paneManager.displayRegisteredPane(MainInterfacePanes::StatusPane);
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_actionBar)
+    Logger::info("N3DS MainInterface: default HUD panes deferred");
+#endif
 }
 
 PanePtr MainInterface::createEscapeDialog() {
@@ -1425,7 +1463,7 @@ void MainInterface::renderDebug() {
   }
   SpatialLogger::setObserved(true);
 
-  if (m_clientCommandProcessor->debugHudEnabled()) {
+  if (m_clientCommandProcessor && m_clientCommandProcessor->debugHudEnabled()) {
     auto assets = Root::singleton().assets();
     m_guiContext->setTextStyle(m_config->debugTextStyle);
     m_guiContext->setLineSpacing(0.5f);
@@ -1523,7 +1561,9 @@ void MainInterface::renderDebug() {
 }
 
 void MainInterface::updateCursor() {
-  Maybe<String> cursorOverride = m_actionBar->cursorOverride(m_cursorScreenIPos);
+  Maybe<String> cursorOverride;
+  if (m_actionBar)
+    cursorOverride = m_actionBar->cursorOverride(m_cursorScreenIPos);
 
   if (!cursorOverride) {
     if (auto pane = m_paneManager.getPaneAt(m_cursorScreenIPos / interfaceScale())) {
@@ -1559,6 +1599,9 @@ void MainInterface::updateCursor() {
 }
 
 void MainInterface::renderCursor() {
+  if (!m_cursorItem)
+    return;
+
   // if we're currently playing a cinematic, we should not render the mouse.
   if (m_cinematicOverlay && !m_cinematicOverlay->completed())
     return m_guiContext->applicationController()->setCursorVisible(false);

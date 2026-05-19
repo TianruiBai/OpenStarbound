@@ -44,6 +44,9 @@ public:
   void start();
   // Signals the WorldServerThread to stop and then joins it
   void stop();
+#ifdef STAR_PLATFORM_N3DS
+  void n3dsUpdate();
+#endif
   void setPause(shared_ptr<const atomic<bool>> pause);
 
   // An exception occurred from the actual WorldServer itself and the
