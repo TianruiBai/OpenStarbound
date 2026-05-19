@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <vector>
 
 #ifdef STAR_PLATFORM_N3DS
 #include <3ds.h>
@@ -36,6 +35,8 @@ constexpr int N3dsTopScreenWidth = 400;
 constexpr int N3dsTopScreenHeight = 240;
 constexpr int N3dsBottomScreenWidth = 320;
 constexpr int N3dsBottomScreenHeight = 240;
+constexpr unsigned N3dsMaxTextureExtent = 1024;
+constexpr size_t N3dsTextureUploadBudget = 6 * 1024 * 1024;
 constexpr bool N3dsDrawTopDiagnostics = false;
 
 u32 toC2dColor(Vec4B const& color) {
@@ -48,6 +49,10 @@ inline float toTopScreenY(float yBottomOrigin) {
 
 inline float toBottomScreenY(float yBottomOrigin) {
   return static_cast<float>(N3dsBottomScreenHeight) - yBottomOrigin;
+}
+
+inline Vec2F toTopScreenPoint(Vec2F const& bottomOriginPoint) {
+  return Vec2F(bottomOriginPoint[0], toTopScreenY(bottomOriginPoint[1]));
 }
 
 unsigned n3dsTextureExtent(unsigned value) {
@@ -396,42 +401,39 @@ private:
 
     unsigned storageWidth = n3dsTextureExtent(image.width());
     unsigned storageHeight = n3dsTextureExtent(image.height());
-    constexpr unsigned MaxTextureExtent = 512;
-    constexpr size_t TextureUploadBudget = 2 * 1024 * 1024;
-    if (storageWidth > MaxTextureExtent || storageHeight > MaxTextureExtent) {
+    if (storageWidth > N3dsMaxTextureExtent || storageHeight > N3dsMaxTextureExtent) {
       Logger::warn("N3dsStubTexture: skipping oversized texture {}x{}", image.width(), image.height());
       return;
     }
 
     size_t textureBytes = static_cast<size_t>(storageWidth) * storageHeight * 4;
-    if (n3dsTextureBytesInUse() + textureBytes > TextureUploadBudget) {
+    if (n3dsTextureBytesInUse() + textureBytes > N3dsTextureUploadBudget) {
       Logger::warn("N3dsStubTexture: skipping texture {}x{} because upload budget is exhausted", image.width(), image.height());
-      return;
-    }
-
-    Image rgbaImage = image.pixelFormat() == PixelFormat::RGBA32 ? image : image.convert(PixelFormat::RGBA32);
-    std::vector<uint8_t> tiledUploadData(textureBytes, 0);
-    for (unsigned y = 0; y < image.height(); ++y) {
-      for (unsigned x = 0; x < image.width(); ++x) {
-        size_t sourceOffset = (static_cast<size_t>(y) * image.width() + x) * 4;
-        size_t destinationOffset = n3dsTiledPixelIndex(x, y, storageWidth) * 4;
-        writeNativeRgba8Pixel(tiledUploadData.data() + destinationOffset, rgbaImage.data() + sourceOffset);
-      }
-    }
-
-    if (!C3D_TexInit(&m_texture, static_cast<u16>(storageWidth), static_cast<u16>(storageHeight), GPU_RGBA8)) {
-      Logger::warn("N3dsStubTexture: C3D_TexInit failed for {}x{}", image.width(), image.height());
       return;
     }
 
     void* linearUploadData = linearAlloc(textureBytes);
     if (!linearUploadData) {
-      C3D_TexDelete(&m_texture);
       Logger::warn("N3dsStubTexture: linearAlloc failed for {} byte upload", textureBytes);
       return;
     }
 
-    std::memcpy(linearUploadData, tiledUploadData.data(), textureBytes);
+    std::memset(linearUploadData, 0, textureBytes);
+    auto* uploadBytes = static_cast<uint8_t*>(linearUploadData);
+    for (unsigned y = 0; y < image.height(); ++y) {
+      for (unsigned x = 0; x < image.width(); ++x) {
+        size_t destinationOffset = n3dsTiledPixelIndex(x, y, storageWidth) * 4;
+        auto pixel = image.getrgb({x, y});
+        writeNativeRgba8Pixel(uploadBytes + destinationOffset, pixel.ptr());
+      }
+    }
+
+    if (!C3D_TexInit(&m_texture, static_cast<u16>(storageWidth), static_cast<u16>(storageHeight), GPU_RGBA8)) {
+      linearFree(linearUploadData);
+      Logger::warn("N3dsStubTexture: C3D_TexInit failed for {}x{}", image.width(), image.height());
+      return;
+    }
+
     C3D_TexUpload(&m_texture, linearUploadData);
     linearFree(linearUploadData);
 
@@ -527,25 +529,41 @@ bool drawTexturedQuad(RenderQuad const& quad) {
     return false;
 
   auto texture = dynamic_cast<N3dsStubTexture const*>(quad.texture.get());
-  if (!texture || !texture->ready() || !isAxisAlignedQuad(quad) || !isAxisAlignedTextureRect(quad))
+  if (!texture || !texture->ready() || !isAxisAlignedTextureRect(quad))
     return false;
 
-  float minX = std::min(std::min(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::min(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
-  float maxX = std::max(std::max(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::max(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
-  float minY = std::min(std::min(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1]), std::min(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1]));
-  float maxY = std::max(std::max(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1]), std::max(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1]));
-
-  float width = maxX - minX;
-  float height = maxY - minY;
-  if (width <= 0.0f || height <= 0.0f)
-    return true;
-
-  C2D_DrawParams params = {{minX, toTopScreenY(maxY), width, height}, {0.0f, 0.0f}, 0.0f, 0.0f};
   C2D_ImageTint tint;
   C2D_Image image;
   Tex3DS_SubTexture subTexture;
   if (!texture->imageForQuad(quad, image, subTexture))
     return false;
+
+  C2D_DrawParams params{};
+  if (isAxisAlignedQuad(quad)) {
+    float minX = std::min(std::min(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::min(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
+    float maxX = std::max(std::max(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::max(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
+    float minY = std::min(std::min(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1]), std::min(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1]));
+    float maxY = std::max(std::max(quad.a.screenCoordinate[1], quad.b.screenCoordinate[1]), std::max(quad.c.screenCoordinate[1], quad.d.screenCoordinate[1]));
+
+    float width = maxX - minX;
+    float height = maxY - minY;
+    if (width <= 0.0f || height <= 0.0f)
+      return true;
+
+    params = {{minX, toTopScreenY(maxY), width, height}, {0.0f, 0.0f}, 0.0f, 0.0f};
+  } else {
+    Vec2F topLeft = toTopScreenPoint(quad.d.screenCoordinate);
+    Vec2F topRight = toTopScreenPoint(quad.c.screenCoordinate);
+    Vec2F bottomLeft = toTopScreenPoint(quad.a.screenCoordinate);
+    Vec2F widthVector = topRight - topLeft;
+    Vec2F heightVector = bottomLeft - topLeft;
+    float width = vmag(widthVector);
+    float height = vmag(heightVector);
+    if (width <= 0.0f || height <= 0.0f)
+      return true;
+
+    params = {{topLeft[0], topLeft[1], width, height}, {0.0f, 0.0f}, 0.0f, std::atan2(widthVector[1], widthVector[0])};
+  }
 
   if (isOpaqueWhite(quad.a.color))
     return C2D_DrawImage(image, &params, nullptr);
@@ -702,6 +720,9 @@ void N3dsStubRenderer::sealImmediatePrimitiveBatch() {
 
 void N3dsStubRenderer::flush(Mat3F const& transformation) {
   sealImmediatePrimitiveBatch();
+
+  if (m_primitiveBatches.empty() && m_frameCounter > 0)
+    return;
 
 #ifdef STAR_PLATFORM_N3DS
   if (m_gpuReady && m_topTarget) {

@@ -683,20 +683,16 @@ void ClientApplication::changeState(MainAppState newState) {
 
   if (newState == MainAppState::Mods) {
 #ifdef STAR_PLATFORM_N3DS
-    m_cinematicOverlay->stop();
-    Logger::info("N3DS cinematic skipped for Mods state");
-#else
-    m_cinematicOverlay->load(m_root->assets()->json("/cinematics/mods/modloading.cinematic"));
+    Logger::info("N3DS loading asset-backed Mods cinematic");
 #endif
+    m_cinematicOverlay->load(m_root->assets()->json("/cinematics/mods/modloading.cinematic"));
   }
 
   if (newState == MainAppState::Splash) {
 #ifdef STAR_PLATFORM_N3DS
-    m_cinematicOverlay->stop();
-    Logger::info("N3DS cinematic skipped for Splash state");
-#else
+    Logger::info("N3DS loading asset-backed Splash cinematic");
+  #endif
     m_cinematicOverlay->load(m_root->assets()->json("/cinematics/splash.cinematic"));
-#endif
     m_rootLoader = Thread::invoke("Async root loader", [this]() {
         m_root->fullyLoad();
       });
@@ -750,6 +746,12 @@ void ClientApplication::changeState(MainAppState newState) {
 
     m_cinematicOverlay->stop();
 
+  #ifdef STAR_PLATFORM_N3DS
+    m_guiContext->assetTextureGroup()->cleanup(0);
+    m_root->assets()->clearCache();
+    Logger::info("N3DS Title bootstrap: cleared splash texture and asset caches");
+  #endif
+
 #ifdef STAR_PLATFORM_N3DS
     Logger::info("N3DS Title bootstrap: creating PlayerStorage");
 #endif
@@ -759,11 +761,9 @@ void ClientApplication::changeState(MainAppState newState) {
 #endif
     m_statistics = make_shared<Statistics>(m_root->toStoragePath("player"), app->statisticsService());
 #ifdef STAR_PLATFORM_N3DS
-    Logger::info("N3DS Title bootstrap: lightweight mode active, skipping UniverseClient and TitleScreen");
-    m_universeClient.reset();
-    m_titleScreen.reset();
-    m_mainMixer->setUniverseClient({});
-#else
+    try {
+      Logger::info("N3DS Title bootstrap: creating UniverseClient and TitleScreen");
+#endif
     m_universeClient = make_shared<UniverseClient>(m_playerStorage, m_statistics);
 
     m_universeClient->setLuaCallbacks("input", LuaBindings::makeInputCallbacks());
@@ -801,6 +801,14 @@ void ClientApplication::changeState(MainAppState newState) {
     m_titleScreen = make_shared<TitleScreen>(m_playerStorage, m_mainMixer->mixer(), m_universeClient);
     if (auto renderer = Application::renderer())
       m_titleScreen->renderInit(renderer);
+#ifdef STAR_PLATFORM_N3DS
+      Logger::info("N3DS Title bootstrap: real TitleScreen active");
+    } catch (std::exception const& e) {
+      Logger::error("N3DS Title bootstrap failed, falling back to lightweight title placeholder: {}", outputException(e, false));
+      m_universeClient.reset();
+      m_titleScreen.reset();
+      m_mainMixer->setUniverseClient({});
+    }
 #endif
   }
 
@@ -837,6 +845,12 @@ void ClientApplication::changeState(MainAppState newState) {
         return;
       }
     }
+
+  #ifdef STAR_PLATFORM_N3DS
+    m_guiContext->assetTextureGroup()->cleanup(0);
+    m_root->assets()->clearCache();
+    Logger::info("N3DS game bootstrap: cleared title texture and asset caches");
+  #endif
 
     m_mainMixer->setUniverseClient(m_universeClient);
     m_universeClient->setMainPlayer(m_player);
@@ -1054,11 +1068,7 @@ void ClientApplication::updateModsWarning(float) {
 
 void ClientApplication::updateSplash(float dt) {
   m_cinematicOverlay->update(dt);
-#ifdef STAR_PLATFORM_N3DS
-  if (!m_rootLoader.isRunning())
-#else
   if (!m_rootLoader.isRunning() && (m_cinematicOverlay->completable() || m_cinematicOverlay->completed()))
-#endif
     changeState(MainAppState::Title);
 }
 
@@ -1090,6 +1100,24 @@ void ClientApplication::updateTitle(float dt) {
   }
 
   m_titleScreen->update(dt);
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool sN3dsAutoStartConsumed = false;
+  if (!sN3dsAutoStartConsumed && m_titleScreen->currentState() == TitleState::Main) {
+    String autoStartMarker = m_root->toStoragePath("n3ds_autostart_singleplayer");
+    if (File::exists(autoStartMarker)) {
+      sN3dsAutoStartConsumed = true;
+      Logger::info("N3DS Title update: consuming singleplayer autostart marker");
+      try {
+        File::remove(autoStartMarker);
+      } catch (std::exception const& e) {
+        Logger::warn("N3DS Title update: could not remove autostart marker: {}", outputException(e, false));
+      }
+
+      m_titleScreen->n3dsQuickStartSinglePlayer();
+    }
+  }
+#endif
 
   bool inputActive = m_titleScreen->textInputActive();
   m_input->setTextInputActive(inputActive);

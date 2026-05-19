@@ -6,11 +6,11 @@
 namespace Star {
 
 void logPngError(png_structp png_ptr, png_const_charp c) {
-  Logger::debug("PNG error in file: '{}', {}", ((IODevice*)png_get_error_ptr(png_ptr))->deviceName(), c);
+  Logger::warn("PNG error in file: '{}', {}", ((IODevice*)png_get_error_ptr(png_ptr))->deviceName(), c);
 };
 
 void logPngWarning(png_structp png_ptr, png_const_charp c) {
-  Logger::debug("PNG warning in file: '{}', {}", ((IODevice*)png_get_error_ptr(png_ptr))->deviceName(), c);
+  Logger::warn("PNG warning in file: '{}', {}", ((IODevice*)png_get_error_ptr(png_ptr))->deviceName(), c);
 };
 
 void readPngData(png_structp pngPtr, png_bytep data, png_size_t length) {
@@ -100,6 +100,11 @@ Image Image::readPng(IODevicePtr device) {
     bitdepth = 8;
   }
 
+  png_set_interlace_handling(png_ptr);
+  png_read_update_info(png_ptr, info_ptr);
+  bitdepth = png_get_bit_depth(png_ptr, info_ptr);
+  channels = png_get_channels(png_ptr, info_ptr);
+
   if (bitdepth != 8 || (channels != 3 && channels != 4)) {
     png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
     throw ImageException(strf("Unsupported PNG pixel format in file {}", device->deviceName()));
@@ -108,11 +113,240 @@ Image Image::readPng(IODevicePtr device) {
   Image image(img_width, img_height, channels == 3 ? PixelFormat::RGB24 : PixelFormat::RGBA32);
 
   std::unique_ptr<png_bytep[]> row_ptrs(new png_bytep[img_height]);
-  size_t stride = img_width * channels;
+  size_t stride = png_get_rowbytes(png_ptr, info_ptr);
+  size_t imageStride = img_width * channels;
+  if (stride != imageStride) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException(strf("Unsupported PNG row format in file {}", device->deviceName()));
+  }
   for (size_t i = 0; i < img_height; ++i)
-    row_ptrs[i] = (png_bytep)image.data() + (img_height - i - 1) * stride;
+    row_ptrs[i] = (png_bytep)image.data() + (img_height - i - 1) * imageStride;
 
   png_read_image(png_ptr, row_ptrs.get());
+  png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+
+  return image;
+}
+
+Image Image::readPngRegion(IODevicePtr device, RectU const& region) {
+  png_byte header[8]{};
+  device->readFull((char*)header, sizeof(header));
+
+  if (png_sig_cmp(header, 0, sizeof(header)))
+    throw ImageException(strf("File {} is not a png image!", device->deviceName()));
+
+  png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  if (!png_ptr)
+    throw ImageException("Internal libPNG error");
+
+  png_set_error_fn(png_ptr, (png_voidp)device.get(), logPngError, logPngWarning);
+
+  png_infop info_ptr = png_create_info_struct(png_ptr);
+  if (!info_ptr) {
+    png_destroy_read_struct(&png_ptr, nullptr, nullptr);
+    throw ImageException("Internal libPNG error");
+  }
+
+  png_infop end_info = png_create_info_struct(png_ptr);
+  if (!end_info) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+    throw ImageException("Internal libPNG error");
+  }
+
+  if (setjmp(png_jmpbuf(png_ptr))) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException("Internal error reading png.");
+  }
+
+  png_set_read_fn(png_ptr, device.get(), readPngData);
+  png_set_sig_bytes(png_ptr, sizeof(header));
+  png_read_info(png_ptr, info_ptr);
+
+  png_uint_32 img_width = png_get_image_width(png_ptr, info_ptr);
+  png_uint_32 img_height = png_get_image_height(png_ptr, info_ptr);
+  png_uint_32 bitdepth = png_get_bit_depth(png_ptr, info_ptr);
+  png_uint_32 channels = png_get_channels(png_ptr, info_ptr);
+  png_uint_32 color_type = png_get_color_type(png_ptr, info_ptr);
+
+  if (region.xMax() > img_width || region.yMax() > img_height)
+    throw ImageException(strf("PNG region {} out of bounds for image {}x{} in file {}", region, img_width, img_height, device->deviceName()));
+
+  if (color_type == PNG_COLOR_TYPE_PALETTE) {
+    png_set_palette_to_rgb(png_ptr);
+    channels = 3;
+    bitdepth = 8;
+  }
+
+  if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+    if (bitdepth < 8) {
+      png_set_expand_gray_1_2_4_to_8(png_ptr);
+      bitdepth = 8;
+    }
+    png_set_gray_to_rgb(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+      channels = 4;
+    else
+      channels = 3;
+  }
+
+  if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS)) {
+    png_set_tRNS_to_alpha(png_ptr);
+    channels += 1;
+  }
+
+  if (bitdepth == 16) {
+    png_set_strip_16(png_ptr);
+    bitdepth = 8;
+  }
+
+  int interlacePasses = png_set_interlace_handling(png_ptr);
+  png_read_update_info(png_ptr, info_ptr);
+  bitdepth = png_get_bit_depth(png_ptr, info_ptr);
+  channels = png_get_channels(png_ptr, info_ptr);
+
+  if (interlacePasses != 1) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException(strf("Interlaced PNG region reads are unsupported in file {}", device->deviceName()));
+  }
+
+  if (bitdepth != 8 || (channels != 3 && channels != 4)) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException(strf("Unsupported PNG pixel format in file {}", device->deviceName()));
+  }
+
+  Image image(region.width(), region.height(), channels == 3 ? PixelFormat::RGB24 : PixelFormat::RGBA32);
+  size_t stride = png_get_rowbytes(png_ptr, info_ptr);
+  size_t outputStride = region.width() * channels;
+  std::unique_ptr<png_byte[]> row(new png_byte[stride]);
+
+  for (png_uint_32 pngY = 0; pngY < img_height; ++pngY) {
+    png_read_row(png_ptr, row.get(), nullptr);
+    png_uint_32 imageY = img_height - pngY - 1;
+    if (imageY >= region.yMin() && imageY < region.yMax()) {
+      size_t outputOffset = static_cast<size_t>(imageY - region.yMin()) * outputStride;
+      size_t inputOffset = static_cast<size_t>(region.xMin()) * channels;
+      std::memcpy(image.data() + outputOffset, row.get() + inputOffset, outputStride);
+    }
+  }
+
+  png_read_end(png_ptr, end_info);
+  png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+
+  return image;
+}
+
+Image Image::readPngRegionScaled(IODevicePtr device, RectU const& region, Vec2U const& outputSize) {
+  if (outputSize[0] == 0 || outputSize[1] == 0)
+    throw ImageException("PNG scaled region output size must be non-zero");
+
+  png_byte header[8]{};
+  device->readFull((char*)header, sizeof(header));
+
+  if (png_sig_cmp(header, 0, sizeof(header)))
+    throw ImageException(strf("File {} is not a png image!", device->deviceName()));
+
+  png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  if (!png_ptr)
+    throw ImageException("Internal libPNG error");
+
+  png_set_error_fn(png_ptr, (png_voidp)device.get(), logPngError, logPngWarning);
+
+  png_infop info_ptr = png_create_info_struct(png_ptr);
+  if (!info_ptr) {
+    png_destroy_read_struct(&png_ptr, nullptr, nullptr);
+    throw ImageException("Internal libPNG error");
+  }
+
+  png_infop end_info = png_create_info_struct(png_ptr);
+  if (!end_info) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+    throw ImageException("Internal libPNG error");
+  }
+
+  if (setjmp(png_jmpbuf(png_ptr))) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException("Internal error reading png.");
+  }
+
+  png_set_read_fn(png_ptr, device.get(), readPngData);
+  png_set_sig_bytes(png_ptr, sizeof(header));
+  png_read_info(png_ptr, info_ptr);
+
+  png_uint_32 imageWidth = png_get_image_width(png_ptr, info_ptr);
+  png_uint_32 imageHeight = png_get_image_height(png_ptr, info_ptr);
+  png_uint_32 bitdepth = png_get_bit_depth(png_ptr, info_ptr);
+  png_uint_32 channels = png_get_channels(png_ptr, info_ptr);
+  png_uint_32 colorType = png_get_color_type(png_ptr, info_ptr);
+
+  if (region.xMax() > imageWidth || region.yMax() > imageHeight)
+    throw ImageException(strf("PNG region {} out of bounds for image {}x{} in file {}", region, imageWidth, imageHeight, device->deviceName()));
+
+  if (colorType == PNG_COLOR_TYPE_PALETTE) {
+    png_set_palette_to_rgb(png_ptr);
+    channels = 3;
+    bitdepth = 8;
+  }
+
+  if (colorType == PNG_COLOR_TYPE_GRAY || colorType == PNG_COLOR_TYPE_GRAY_ALPHA) {
+    if (bitdepth < 8) {
+      png_set_expand_gray_1_2_4_to_8(png_ptr);
+      bitdepth = 8;
+    }
+    png_set_gray_to_rgb(png_ptr);
+    if (colorType == PNG_COLOR_TYPE_GRAY_ALPHA)
+      channels = 4;
+    else
+      channels = 3;
+  }
+
+  if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS)) {
+    png_set_tRNS_to_alpha(png_ptr);
+    channels += 1;
+  }
+
+  if (bitdepth == 16) {
+    png_set_strip_16(png_ptr);
+    bitdepth = 8;
+  }
+
+  int interlacePasses = png_set_interlace_handling(png_ptr);
+  png_read_update_info(png_ptr, info_ptr);
+  bitdepth = png_get_bit_depth(png_ptr, info_ptr);
+  channels = png_get_channels(png_ptr, info_ptr);
+
+  if (interlacePasses != 1) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException(strf("Interlaced PNG scaled region reads are unsupported in file {}", device->deviceName()));
+  }
+
+  if (bitdepth != 8 || (channels != 3 && channels != 4)) {
+    png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
+    throw ImageException(strf("Unsupported PNG pixel format in file {}", device->deviceName()));
+  }
+
+  Image image(outputSize, channels == 3 ? PixelFormat::RGB24 : PixelFormat::RGBA32);
+  size_t inputStride = png_get_rowbytes(png_ptr, info_ptr);
+  size_t outputStride = outputSize[0] * channels;
+  std::unique_ptr<png_byte[]> sourceRow(new png_byte[inputStride]);
+
+  for (png_uint_32 pngY = 0; pngY < imageHeight; ++pngY) {
+    png_read_row(png_ptr, sourceRow.get(), nullptr);
+    png_uint_32 sourceY = imageHeight - pngY - 1;
+    if (sourceY < region.yMin() || sourceY >= region.yMax())
+      continue;
+
+    unsigned destinationY = static_cast<unsigned>((static_cast<size_t>(sourceY - region.yMin()) * outputSize[1]) / region.height());
+    if (destinationY >= outputSize[1])
+      destinationY = outputSize[1] - 1;
+
+    auto destinationRow = image.data() + static_cast<size_t>(destinationY) * outputStride;
+    for (unsigned destinationX = 0; destinationX < outputSize[0]; ++destinationX) {
+      unsigned sourceX = region.xMin() + static_cast<unsigned>((static_cast<size_t>(destinationX) * region.width()) / outputSize[0]);
+      std::memcpy(destinationRow + static_cast<size_t>(destinationX) * channels, sourceRow.get() + static_cast<size_t>(sourceX) * channels, channels);
+    }
+  }
+
+  png_read_end(png_ptr, end_info);
   png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
 
   return image;
@@ -188,6 +422,11 @@ tuple<Vec2U, PixelFormat> Image::readPngMetadata(IODevicePtr device) {
     png_set_tRNS_to_alpha(png_ptr);
     channels += 1;
   }
+
+  png_set_interlace_handling(png_ptr);
+  png_read_update_info(png_ptr, info_ptr);
+  bitdepth = png_get_bit_depth(png_ptr, info_ptr);
+  channels = png_get_channels(png_ptr, info_ptr);
 
   png_destroy_read_struct(&png_ptr, &info_ptr, &end_info);
 

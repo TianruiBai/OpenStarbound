@@ -8,7 +8,20 @@
 #include "StarSpeciesDatabase.hpp"
 #include "StarDanceDatabase.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include "StarLogging.hpp"
+#include <malloc.h>
+#endif
+
 namespace Star {
+
+#ifdef STAR_PLATFORM_N3DS
+static void logN3dsHumanoidMemory(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS humanoid memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label, info.arena, info.uordblks, info.fordblks, info.keepcost);
+}
+#endif
 
 extern EnumMap<HumanoidEmote> const HumanoidEmoteNames{
   {HumanoidEmote::Idle, "Idle"},
@@ -297,11 +310,33 @@ Humanoid::Humanoid(Json const& config) : Humanoid() {
 }
 
 Humanoid::Humanoid(HumanoidIdentity const& identity, JsonObject parameters, Json config) : Humanoid() {
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("constructor begin");
+#endif
   m_identity = identity;
-  m_baseConfig = (Root::singleton().speciesDatabase()->humanoidConfig(identity, parameters, config));
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("after identity copy");
+#endif
+  auto speciesDatabase = Root::singleton().speciesDatabase();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("after species database");
+#endif
+  m_baseConfig = speciesDatabase->humanoidConfig(identity, parameters, config);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("after humanoid config");
+#endif
   loadConfig(JsonObject());
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("after load config");
+#endif
   loadAnimation();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("after load animation");
+#endif
   setIdentity(identity);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("after set identity");
+#endif
 }
 
 void Humanoid::setIdentity(HumanoidIdentity const& identity) {
@@ -2304,10 +2339,22 @@ Json Humanoid::humanoidConfig(bool withOverrides) {
 }
 
 NetHumanoid::NetHumanoid(HumanoidIdentity identity, JsonObject parameters, Json config) {
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("net constructor begin");
+#endif
   m_config = config;
   m_humanoidParameters.reset(parameters);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("net before humanoid");
+#endif
   m_humanoid = make_shared<Humanoid>(identity, parameters, config);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("net after humanoid");
+#endif
   setupNetElements();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsHumanoidMemory("net after setup elements");
+#endif
 }
 
 void NetHumanoid::netStore(DataStream& ds, NetCompatibilityRules rules) const {

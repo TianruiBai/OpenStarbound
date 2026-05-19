@@ -35,6 +35,32 @@ void AssetSource::forEachAssetPath(function<void(String const&)> callback) const
 
 #ifdef STAR_PLATFORM_N3DS
 namespace {
+Vec2U n3dsScaledFrameSize(Vec2U frameSize) {
+  constexpr unsigned N3dsMaxDecodedFrameExtent = 128;
+  unsigned maxExtent = std::max(frameSize[0], frameSize[1]);
+  if (maxExtent <= N3dsMaxDecodedFrameExtent)
+    return frameSize;
+
+  float scale = static_cast<float>(N3dsMaxDecodedFrameExtent) / static_cast<float>(maxExtent);
+  return {
+      std::max(1u, static_cast<unsigned>(std::lround(frameSize[0] * scale))),
+      std::max(1u, static_cast<unsigned>(std::lround(frameSize[1] * scale)))
+  };
+}
+
+Vec2U n3dsScaledImageSize(Vec2U imageSize) {
+  constexpr unsigned N3dsMaxDecodedImageExtent = 128;
+  unsigned maxExtent = std::max(imageSize[0], imageSize[1]);
+  if (maxExtent <= N3dsMaxDecodedImageExtent)
+    return imageSize;
+
+  float scale = static_cast<float>(N3dsMaxDecodedImageExtent) / static_cast<float>(maxExtent);
+  return {
+      std::max(1u, static_cast<unsigned>(std::lround(imageSize[0] * scale))),
+      std::max(1u, static_cast<unsigned>(std::lround(imageSize[1] * scale)))
+  };
+}
+
 void logN3dsAssetMemory(String const& label) {
   auto info = mallinfo();
   Logger::info("N3DS memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
@@ -1439,6 +1465,39 @@ shared_ptr<Assets::AssetData> Assets::loadImage(AssetPath const& path) const {
     });
 
   } else if (path.subPath) {
+#ifdef STAR_PLATFORM_N3DS
+    if (auto frames = bestFramesSpecification(path.basePath)) {
+      if (auto alias = frames->aliases.ptr(*path.subPath)) {
+        return loadAsset(AssetId{AssetType::Image, {path.basePath, *alias, path.directives}});
+      } else if (auto frameRect = frames->frames.ptr(*path.subPath)) {
+        if (auto descriptor = m_files.ptr(path.basePath); descriptor && descriptor->patchSources.empty()) {
+          auto source = descriptor->source;
+          auto sourceName = descriptorSourceName(*descriptor, path.basePath);
+          auto basePath = path.basePath;
+          auto frameName = *path.subPath;
+          auto frame = *frameRect;
+
+          return unlockDuring([&]() {
+            auto imageSize = get<0>(Image::readPngMetadata(source->open(sourceName)));
+            if (frame.xMax() > imageSize[0] || frame.yMax() > imageSize[1])
+              throw AssetException(strf("Frame '{}' in image '{}' is out of bounds", frameName, basePath));
+
+            RectU imageFrame = RectU::withSize({frame.xMin(), imageSize[1] - frame.yMax()}, frame.size());
+            Vec2U scaledFrameSize = n3dsScaledFrameSize(frame.size());
+            auto newData = make_shared<ImageData>();
+            if (scaledFrameSize == frame.size())
+              newData->image = make_shared<Image>(Image::readPngRegion(source->open(sourceName), imageFrame));
+            else
+              newData->image = make_shared<Image>(Image::readPngRegionScaled(source->open(sourceName), imageFrame, scaledFrameSize));
+            Logger::info("N3DS loaded cropped PNG frame '{}:{}' as {}x{} from {}x{}", basePath, frameName,
+                newData->image->width(), newData->image->height(), frame.width(), frame.height());
+            return newData;
+          });
+        }
+      }
+    }
+#endif
+
     auto imageData = as<ImageData>(loadAsset(AssetId{AssetType::Image, {path.basePath, {}, {}}}));
     if (!imageData)
       return {};
@@ -1474,6 +1533,25 @@ shared_ptr<Assets::AssetData> Assets::loadImage(AssetPath const& path) const {
 
   } else {
     auto imageData = make_shared<ImageData>();
+#ifdef STAR_PLATFORM_N3DS
+    if (auto descriptor = m_files.ptr(path.basePath); descriptor && descriptor->patchSources.empty()) {
+      auto source = descriptor->source;
+      auto sourceName = descriptorSourceName(*descriptor, path.basePath);
+      auto basePath = path.basePath;
+
+      imageData->image = unlockDuring([&]() {
+        auto imageSize = get<0>(Image::readPngMetadata(source->open(sourceName)));
+        Vec2U scaledImageSize = n3dsScaledImageSize(imageSize);
+        if (scaledImageSize == imageSize)
+          return make_shared<Image>(Image::readPng(source->open(sourceName)));
+
+        auto image = make_shared<Image>(Image::readPngRegionScaled(source->open(sourceName), RectU::withSize(Vec2U(), imageSize), scaledImageSize));
+        Logger::info("N3DS loaded scaled PNG image '{}' as {}x{} from {}x{}", basePath,
+            image->width(), image->height(), imageSize[0], imageSize[1]);
+        return image;
+      });
+    } else
+#endif
     imageData->image = unlockDuring([&]() {
       return readImage(path.basePath);
     });

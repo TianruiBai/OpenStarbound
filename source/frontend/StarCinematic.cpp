@@ -4,6 +4,7 @@
 #include "StarWorldClient.hpp"
 #include "StarAssets.hpp"
 #include "StarGuiContext.hpp"
+#include "StarImageMetadataDatabase.hpp"
 #include "StarPlayer.hpp"
 
 namespace Star {
@@ -254,7 +255,13 @@ void Cinematic::drawDrawable(Drawable const& drawable, float drawableScale, Vec2
   if (drawable.isImage()) {
     auto const& imagePart = drawable.imagePart();
     auto texture = textureGroup->loadTexture(imagePart.image);
-    auto size = Vec2F(texture->size());
+    auto textureSize = Vec2F(texture->size());
+    auto size = textureSize;
+  #ifdef STAR_PLATFORM_N3DS
+    try {
+      size = Vec2F(Root::singleton().imageMetadataDatabase()->imageSize(imagePart.image));
+    } catch (...) {}
+  #endif
 
     RectF imageRect(Vec2F(), size);
 
@@ -277,9 +284,9 @@ void Cinematic::drawDrawable(Drawable const& drawable, float drawableScale, Vec2
 
     primitives.emplace_back(std::in_place_type_t<RenderQuad>(), std::move(texture),
         lowerLeft,  Vec2F{0, 0},
-        lowerRight, Vec2F{size[0], 0},
-        upperRight, Vec2F{size[0], size[1]},
-        upperLeft,  Vec2F{0, size[1]},
+      lowerRight, Vec2F{textureSize[0], 0},
+      upperRight, Vec2F{textureSize[0], textureSize[1]},
+      upperLeft,  Vec2F{0, textureSize[1]},
         drawableColor, 0.0f);
   } else {
     starAssert(drawable.part.empty());

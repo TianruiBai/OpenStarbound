@@ -118,7 +118,7 @@ private:
   StringMap<SpeciesDefinitionPtr> m_species;
 
   mutable RecursiveMutex m_luaMutex;
-  LuaRootPtr m_luaRoot;
+  mutable LuaRootPtr m_luaRoot;
 };
 
 }

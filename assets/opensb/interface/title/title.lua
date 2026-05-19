@@ -18,6 +18,15 @@ local logoScaleDirection = 1
 local logoScaleSpeed = 1
 local terry = false
 
+local function fittedBackdropScale(image, scale, window)
+  local sourceSize = root.imageSize(image)
+  if window[1] <= 480 or window[2] <= 300 then
+    scale = math.min(scale, (window[1] * 0.82) / sourceSize[1], (window[2] * 0.46) / sourceSize[2])
+  end
+
+  return scale, vec2.mul(sourceSize, scale)
+end
+
 function update(dt)
   if not terry then return end
   -- yes, they really did it like this
@@ -51,13 +60,13 @@ function render(data)
   for i, v in pairs(backdropImages) do
     local offset, image, scale, origin, misc = table.unpack(v)
     origin = origin or {0.5, 1.0}
-    local imageSize = vec2.mul(root.imageSize(image), scale)
+    local drawScale, imageSize = fittedBackdropScale(image, scale, window)
     local position = vec2.add(vec2.mul(window, origin), vec2.sub(offset, vec2.mul(imageSize, vec2.sub(origin, 0.5))))
     if misc and misc.terry then
       terry = true
-      canvas:drawImageDrawable(image, position, scale * logoScale, {255, 255, 255}, logoRotation)
+      canvas:drawImageDrawable(image, position, drawScale * logoScale, {255, 255, 255}, logoRotation)
     else
-      canvas:drawImageDrawable(image, position, scale)
+      canvas:drawImageDrawable(image, position, drawScale)
     end 
   end
   canvas:drawText(releaseLabel, {position = {window[1] - 7, 7}, horizontalAnchor = "right", verticalAnchor = "bottom"}, 8, {204, 218, 238, 190})

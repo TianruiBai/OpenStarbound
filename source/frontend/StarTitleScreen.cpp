@@ -4,6 +4,8 @@
 #include "StarRoot.hpp"
 #include "StarJsonExtra.hpp"
 #include "StarPlayer.hpp"
+#include "StarPlayerFactory.hpp"
+#include "StarPlayerLog.hpp"
 #include "StarGuiContext.hpp"
 #include "StarPaneManager.hpp"
 #include "StarButtonWidget.hpp"
@@ -23,13 +25,20 @@
 namespace Star {
 
 TitleScreen::TitleScreen(PlayerStoragePtr playerStorage, MixerPtr mixer, UniverseClientPtr client)
-  : m_playerStorage(playerStorage), m_skipMultiPlayerConnection(false), m_mixer(mixer) {
+  : m_playerStorage(playerStorage), m_client(std::move(client)), m_skipMultiPlayerConnection(false), m_mixer(mixer) {
   m_titleState = TitleState::Quit;
 
   auto assets = Root::singleton().assets();
 
   m_guiContext = GuiContext::singletonPtr();
 
+#ifdef STAR_PLATFORM_N3DS
+  // PLACEHOLDER: The random title-world backdrop builds the local celestial database.
+  // Keep the real title UI path alive on memory-constrained N3DS until the
+  // remote-client profile has a cheaper menu backdrop.
+  Logger::info("N3DS TitleScreen: using lightweight sky backdrop");
+  m_skyBackdrop = make_shared<Sky>();
+#else
   m_celestialDatabase = make_shared<CelestialMasterDatabase>();
   auto randomWorld = m_celestialDatabase->findRandomWorld(10, 50, [this](CelestialCoordinate const& coordinate) {
       return is<TerrestrialWorldParameters>(m_celestialDatabase->parameters(coordinate)->visitableParameters());
@@ -40,22 +49,29 @@ TitleScreen::TitleScreen(PlayerStoragePtr playerStorage, MixerPtr mixer, Univers
 
   SkyParameters skyParameters(randomWorld, m_celestialDatabase);
   m_skyBackdrop = make_shared<Sky>(skyParameters, true);
+#endif
 
   m_musicTrack = make_shared<AmbientNoisesDescription>(assets->json("/interface/windowconfig/title.config:music").toObject(), "/");
 
   initMainMenu();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS TitleScreen: deferring secondary title panes");
+#else
   initCharSelectionMenu();
   initCharCreationMenu();
   initMultiPlayerMenu();
-  initOptionsMenu(client);
+  initOptionsMenu(m_client);
   initModsMenu();
+#endif
 
   resetState();
 }
 
 void TitleScreen::renderInit(RendererPtr renderer) {
   m_renderer = std::move(renderer);
+#ifndef STAR_PLATFORM_N3DS
   m_environmentPainter = make_shared<EnvironmentPainter>(m_renderer);
+#endif
 }
 
 void TitleScreen::render() {
@@ -63,6 +79,11 @@ void TitleScreen::render() {
 
   float pixelRatio = m_guiContext->interfaceScale();
   Vec2F screenSize = Vec2F(m_guiContext->windowSize());
+
+#ifdef STAR_PLATFORM_N3DS
+  auto skyBackdropDarken = jsonToColor(assets->json("/interface/windowconfig/title.config:skyBackdropDarken"));
+  m_renderer->render(renderFlatRect(RectF(0, 0, windowWidth(), windowHeight()), skyBackdropDarken.toRgba(), 0.0f));
+#else
   auto skyRenderData = m_skyBackdrop->renderData();
 
   float pixelRatioBasis = screenSize[1] / 1080.0f;
@@ -82,6 +103,7 @@ void TitleScreen::render() {
   m_renderer->render(renderFlatRect(RectF(0, 0, windowWidth(), windowHeight()), skyBackdropDarken.toRgba(), 0.0f));
 
   m_renderer->flush();
+#endif
 
   if (auto canvas = m_backgroundMenu->findChild("canvas")) {
     canvas->setPosition(Vec2I());
@@ -90,7 +112,9 @@ void TitleScreen::render() {
   m_scriptComponent->invoke("render", JsonObject{{"interfaceScale", interfaceScale()}
   });
 
+#ifndef STAR_PLATFORM_N3DS
   m_renderer->flush();
+#endif
   m_backgroundMenu->render(RectI(Vec2I(), Vec2I(m_guiContext->windowInterfaceSize())));
   m_paneManager.render();
   renderCursor();
@@ -102,6 +126,47 @@ bool TitleScreen::handleInputEvent(InputEvent const& event) {
   if (auto mouseMove = event.ptr<MouseMoveEvent>())
     m_cursorScreenPos = Vec2I(mouseMove->mousePosition);
 
+#ifdef STAR_PLATFORM_N3DS
+  if (auto keyDown = event.ptr<KeyDownEvent>()) {
+    if (keyDown->key == Key::Space && m_titleState == TitleState::Main) {
+      Logger::info("N3DS TitleScreen: Space shortcut entered multiplayer character select");
+      switchState(TitleState::MultiPlayerSelectCharacter);
+      return true;
+    }
+
+    if (keyDown->key == Key::Return) {
+      if (m_titleState == TitleState::Main) {
+        Logger::info("N3DS TitleScreen: A shortcut quick-starting single player");
+        n3dsQuickStartSinglePlayer();
+        return true;
+      }
+
+      if (m_titleState == TitleState::SinglePlayerSelectCharacter) {
+        n3dsQuickStartSinglePlayer();
+        return true;
+      }
+
+      if (m_titleState == TitleState::MultiPlayerSelectCharacter) {
+        if (auto playerUuid = m_playerStorage->playerUuidAt(0)) {
+          m_mainAppPlayer = m_playerStorage->loadPlayer(*playerUuid);
+          if (m_mainAppPlayer) {
+            m_playerStorage->moveToFront(m_mainAppPlayer->uuid());
+            Logger::info("N3DS TitleScreen: A shortcut selected multiplayer player {}", m_mainAppPlayer->uuid().hex());
+            if (m_skipMultiPlayerConnection)
+              switchState(TitleState::StartMultiPlayer);
+            else
+              switchState(TitleState::MultiPlayerConnect);
+            return true;
+          }
+        }
+
+        switchState(TitleState::MultiPlayerCreateCharacter);
+        return true;
+      }
+    }
+  }
+#endif
+
   if (event.is<KeyDownEvent>()) {
     if (GuiContext::singleton().actions(event).contains(InterfaceAction::TitleBack)) {
       back();
@@ -112,6 +177,32 @@ bool TitleScreen::handleInputEvent(InputEvent const& event) {
   return m_paneManager.sendInputEvent(event);
 }
 
+#ifdef STAR_PLATFORM_N3DS
+void TitleScreen::n3dsQuickStartSinglePlayer() {
+  m_guiContext->assetTextureGroup()->cleanup(0);
+  Root::singleton().assets()->clearCache();
+  Logger::info("N3DS TitleScreen: quick-start cleared title texture and asset caches");
+
+  if (auto playerUuid = m_playerStorage->playerUuidAt(0)) {
+    m_mainAppPlayer = m_playerStorage->loadPlayer(*playerUuid);
+    if (m_mainAppPlayer) {
+      m_playerStorage->moveToFront(m_mainAppPlayer->uuid());
+      Logger::info("N3DS TitleScreen: quick-start selected player {}", m_mainAppPlayer->uuid().hex());
+      switchState(TitleState::StartSinglePlayer);
+      return;
+    }
+  }
+
+  m_mainAppPlayer = Root::singleton().playerFactory()->create();
+  m_mainAppPlayer->setName("N3DS Explorer");
+  m_mainAppPlayer->log()->setIntroComplete(true);
+  m_playerStorage->savePlayer(m_mainAppPlayer);
+  m_playerStorage->moveToFront(m_mainAppPlayer->uuid());
+  Logger::info("N3DS TitleScreen: quick-start created default player {}", m_mainAppPlayer->uuid().hex());
+  switchState(TitleState::StartSinglePlayer);
+}
+#endif
+
 void TitleScreen::update(float dt) {
   m_cursor.update(dt);
 
@@ -120,13 +211,16 @@ void TitleScreen::update(float dt) {
   m_mainMenu->determineSizeFromChildren();
   m_backgroundMenu->determineSizeFromChildren();
 
+#ifndef STAR_PLATFORM_N3DS
   m_skyBackdrop->update(dt);
   m_environmentPainter->update(dt);
+#endif
 
   m_backgroundMenu->update(dt);
   m_paneManager.update(dt);
 
   m_scriptComponent->update(dt);
+#ifndef STAR_PLATFORM_N3DS
   if (!finishedState()) {
     if (auto audioSample = m_musicTrackManager.updateAmbient(m_musicTrack, m_skyBackdrop->isDayTime())) {
       m_currentMusicTrack = audioSample;
@@ -135,6 +229,7 @@ void TitleScreen::update(float dt) {
       m_mixer->play(audioSample);
     }
   }
+#endif
 }
 
 bool TitleScreen::textInputActive() const {
@@ -185,8 +280,9 @@ String TitleScreen::multiPlayerAddress() const {
 }
 
 void TitleScreen::setMultiPlayerAddress(String address) {
-  m_multiPlayerMenu->fetchChild<TextBoxWidget>("address")->setText(address);
   m_connectionAddress = std::move(address);
+  if (m_multiPlayerMenu)
+    m_multiPlayerMenu->fetchChild<TextBoxWidget>("address")->setText(m_connectionAddress);
 }
 
 String TitleScreen::multiPlayerPort() const {
@@ -194,8 +290,9 @@ String TitleScreen::multiPlayerPort() const {
 }
 
 void TitleScreen::setMultiPlayerPort(String port) {
-  m_multiPlayerMenu->fetchChild<TextBoxWidget>("port")->setText(port);
   m_connectionPort = std::move(port);
+  if (m_multiPlayerMenu)
+    m_multiPlayerMenu->fetchChild<TextBoxWidget>("port")->setText(m_connectionPort);
 }
 
 String TitleScreen::multiPlayerAccount() const {
@@ -203,8 +300,9 @@ String TitleScreen::multiPlayerAccount() const {
 }
 
 void TitleScreen::setMultiPlayerAccount(String account) {
-  m_multiPlayerMenu->fetchChild<TextBoxWidget>("account")->setText(account);
   m_account = std::move(account);
+  if (m_multiPlayerMenu)
+    m_multiPlayerMenu->fetchChild<TextBoxWidget>("account")->setText(m_account);
 }
 
 String TitleScreen::multiPlayerPassword() const {
@@ -212,8 +310,9 @@ String TitleScreen::multiPlayerPassword() const {
 }
 
 void TitleScreen::setMultiPlayerPassword(String password) {
-  m_multiPlayerMenu->fetchChild<TextBoxWidget>("password")->setText(password);
   m_password = std::move(password);
+  if (m_multiPlayerMenu)
+    m_multiPlayerMenu->fetchChild<TextBoxWidget>("password")->setText(m_password);
 }
 
 bool TitleScreen::multiPlayerForceLegacy() const {
@@ -221,8 +320,9 @@ bool TitleScreen::multiPlayerForceLegacy() const {
 }
 
 void TitleScreen::setMultiPlayerForceLegacy(bool const& forceLegacy) {
-  m_multiPlayerMenu->fetchChild<ButtonWidget>("legacyCheckbox")->setChecked(forceLegacy);
   m_forceLegacy = forceLegacy;
+  if (m_multiPlayerMenu)
+    m_multiPlayerMenu->fetchChild<ButtonWidget>("legacyCheckbox")->setChecked(m_forceLegacy);
 }
 
 void TitleScreen::initMainMenu() {
@@ -285,6 +385,7 @@ void TitleScreen::initMainMenu() {
 }
 
 void TitleScreen::initCharSelectionMenu() {
+#ifndef STAR_PLATFORM_N3DS
   auto deleteDialog = make_shared<Pane>();
 
   GuiReader reader;
@@ -293,6 +394,9 @@ void TitleScreen::initCharSelectionMenu() {
   reader.registerCallback("cancel", [=](Widget*) { deleteDialog->dismiss(); });
 
   reader.construct(Root::singleton().assets()->json("/interface/windowconfig/deletedialog.config"), deleteDialog.get());
+#else
+  Logger::info("N3DS TitleScreen: deferring delete dialog pane");
+#endif
 
   auto charSelectionMenu = make_shared<CharSelectionPane>(m_playerStorage, [=]() {
       if (m_titleState == TitleState::SinglePlayerSelectCharacter)
@@ -311,7 +415,24 @@ void TitleScreen::initCharSelectionMenu() {
             switchState(TitleState::MultiPlayerConnect);
         }
     }, [=](Uuid playerUuid) {
+#ifdef STAR_PLATFORM_N3DS
+      auto deleteDialog = m_paneManager.maybeRegisteredPane("deleteDialog");
+      if (!deleteDialog) {
+        deleteDialog = make_shared<Pane>();
+
+        GuiReader reader;
+        reader.registerCallback("delete", [=](Widget*) { deleteDialog->dismiss(); });
+        reader.registerCallback("cancel", [=](Widget*) { deleteDialog->dismiss(); });
+        reader.construct(Root::singleton().assets()->json("/interface/windowconfig/deletedialog.config"), deleteDialog.get());
+
+        m_paneManager.registerPane("deleteDialog", PaneLayer::ModalWindow, deleteDialog, [this](PanePtr const&) {
+            if (auto charSelectionMenu = m_paneManager.maybeRegisteredPane<CharSelectionPane>("charSelectionMenu"))
+              charSelectionMenu->updateCharacterPlates();
+          });
+      }
+#else
       auto deleteDialog = m_paneManager.registeredPane("deleteDialog");
+#endif
       deleteDialog->fetchChild<ButtonWidget>("delete")->setCallback([=](Widget*) {
         m_playerStorage->deletePlayer(playerUuid);
         deleteDialog->dismiss();
@@ -321,9 +442,11 @@ void TitleScreen::initCharSelectionMenu() {
   charSelectionMenu->setAnchor(PaneAnchor::Center);
   charSelectionMenu->lockPosition();
 
+#ifndef STAR_PLATFORM_N3DS
   m_paneManager.registerPane("deleteDialog", PaneLayer::ModalWindow, deleteDialog, [=](PanePtr const&) {
       charSelectionMenu->updateCharacterPlates();
     });
+#endif
   m_paneManager.registerPane("charSelectionMenu", PaneLayer::Hud, charSelectionMenu);
 }
 
@@ -446,6 +569,12 @@ void TitleScreen::initMultiPlayerMenu() {
 
   readerConnect.construct(assets->json("/interface/windowconfig/multiplayer.config"), m_multiPlayerMenu.get());
 
+  m_multiPlayerMenu->fetchChild<TextBoxWidget>("address")->setText(m_connectionAddress);
+  m_multiPlayerMenu->fetchChild<TextBoxWidget>("port")->setText(m_connectionPort);
+  m_multiPlayerMenu->fetchChild<TextBoxWidget>("account")->setText(m_account);
+  m_multiPlayerMenu->fetchChild<TextBoxWidget>("password")->setText(m_password);
+  m_multiPlayerMenu->fetchChild<ButtonWidget>("legacyCheckbox")->setChecked(m_forceLegacy);
+
   populateServerList(serverList);
 
   m_paneManager.registerPane("multiplayerMenu", PaneLayer::Hud, m_multiPlayerMenu);
@@ -492,18 +621,46 @@ void TitleScreen::switchState(TitleState titleState) {
     m_paneManager.displayRegisteredPane("backMenu");
 
     if (titleState == TitleState::Options) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("optionsMenu"))
+        initOptionsMenu(m_client);
+#endif
       m_paneManager.displayRegisteredPane("optionsMenu");
     } if (titleState == TitleState::Mods) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("modsMenu"))
+        initModsMenu();
+#endif
       m_paneManager.displayRegisteredPane("modsMenu");
     } else if (titleState == TitleState::SinglePlayerSelectCharacter) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("charSelectionMenu"))
+        initCharSelectionMenu();
+#endif
       m_paneManager.displayRegisteredPane("charSelectionMenu");
     } else if (titleState == TitleState::SinglePlayerCreateCharacter) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("charCreationMenu"))
+        initCharCreationMenu();
+#endif
       m_paneManager.displayRegisteredPane("charCreationMenu");
     } else if (titleState == TitleState::MultiPlayerSelectCharacter) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("charSelectionMenu"))
+        initCharSelectionMenu();
+#endif
       m_paneManager.displayRegisteredPane("charSelectionMenu");
     } else if (titleState == TitleState::MultiPlayerCreateCharacter) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("charCreationMenu"))
+        initCharCreationMenu();
+#endif
       m_paneManager.displayRegisteredPane("charCreationMenu");
     } else if (titleState == TitleState::MultiPlayerConnect) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!m_paneManager.maybeRegisteredPane("multiplayerMenu"))
+        initMultiPlayerMenu();
+#endif
       m_paneManager.displayRegisteredPane("multiplayerMenu");
       m_paneManager.displayRegisteredPane("serverSelect");
       if (auto addressWidget = m_multiPlayerMenu->fetchChild("address"))

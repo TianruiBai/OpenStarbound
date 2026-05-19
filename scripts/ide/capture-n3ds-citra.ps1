@@ -12,6 +12,7 @@ param(
   [int]$WindowTimeoutSeconds = 30,
   [int]$CaptureDelaySeconds = 15,
   [switch]$NoRepack,
+  [switch]$AutoStartSinglePlayer,
   [switch]$KeepCitraOpen
 )
 
@@ -32,6 +33,7 @@ $romfs = Resolve-RepoPath $RomfsPath
 $threeDsxTool = Resolve-RepoPath $ThreeDsxToolPath
 $threeDsx = Resolve-RepoPath $ThreeDsxPath
 $capture = Resolve-RepoPath $CaptureDir
+$usingDefaultAssetsRomfs = $RomfsPath -eq "assets"
 
 if ($BasePakPath) {
   $basePak = (Resolve-Path -LiteralPath $BasePakPath).Path
@@ -60,6 +62,15 @@ if ($BasePakPath) {
   } else {
     Write-Host "Base assets already staged: $sdmcPak"
   }
+
+  if ($usingDefaultAssetsRomfs) {
+    $romfs = Join-Path $repoRoot "build\citra-repack\romfs-sdmc-base"
+    if (Test-Path $romfs) { Remove-Item -Recurse -Force $romfs }
+    New-Item -ItemType Directory -Path $romfs -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot "assets\opensb") -Destination (Join-Path $romfs "opensb") -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot "assets\sbinit.config") -Destination (Join-Path $romfs "sbinit.config") -Force
+    Write-Host "Using SDMC base asset RomFS overlay: $romfs"
+  }
 }
 
 if (!(Test-Path $citraExe)) { throw "Citra executable not found: $citraExe" }
@@ -76,6 +87,16 @@ if (!$NoRepack) {
 if (!(Test-Path $threeDsx)) { throw "3DSX not found: $threeDsx" }
 if (Test-Path $capture) { Remove-Item -Recurse -Force $capture }
 New-Item -ItemType Directory -Path $capture -Force | Out-Null
+
+$sdmcStorage = Join-Path $env:APPDATA "Citra\sdmc\OpenStarbound\storage"
+$autoStartMarker = Join-Path $sdmcStorage "n3ds_autostart_singleplayer"
+if ($AutoStartSinglePlayer) {
+  New-Item -ItemType Directory -Path $sdmcStorage -Force | Out-Null
+  Set-Content -LiteralPath $autoStartMarker -Value "1" -NoNewline
+  Write-Host "N3DS singleplayer autostart marker staged: $autoStartMarker"
+} else {
+  Remove-Item -LiteralPath $autoStartMarker -Force -ErrorAction SilentlyContinue
+}
 
 Get-Process citra-qt -ErrorAction SilentlyContinue | Stop-Process -Force
 

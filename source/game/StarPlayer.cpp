@@ -41,7 +41,19 @@
 #include "StarEntityLuaBindings.hpp"
 #include "StarDanceDatabase.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include <malloc.h>
+#endif
+
 namespace Star {
+
+#ifdef STAR_PLATFORM_N3DS
+void logN3dsPlayerMemory(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS player memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label, info.arena, info.uordblks, info.fordblks, info.keepcost);
+}
+#endif
 
 EnumMap<Player::State> const Player::StateNames{
   {Player::State::Idle, "idle"},
@@ -58,6 +70,9 @@ EnumMap<Player::State> const Player::StateNames{
 };
 
 Player::Player(PlayerConfigPtr config, Uuid uuid) {
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("constructor begin");
+#endif
   auto assets = Root::singleton().assets();
 
   m_config = config;
@@ -77,40 +92,100 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
   setUniqueId(uuid.hex());
   m_identity = m_config->defaultIdentity;
   m_identityUpdated = true;
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after identity setup");
+#endif
 
   m_questManager = make_shared<QuestManager>(this);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after quest manager");
+#endif
   m_tools = make_shared<ToolUser>();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after tool user");
+#endif
   m_armor = make_shared<ArmorWearer>();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after armor wearer");
+#endif
   m_companions = make_shared<PlayerCompanions>(config->companionsConfig);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after companions");
+#endif
 
   for (auto& p : config->genericScriptContexts) {
+#ifdef STAR_PLATFORM_N3DS
+    logN3dsPlayerMemory(strf("before generic script {}", p.first));
+#endif
     auto scriptComponent = make_shared<GenericScriptComponent>();
     scriptComponent->setScript(p.second);
     m_genericScriptContexts.set(p.first, scriptComponent);
+#ifdef STAR_PLATFORM_N3DS
+    logN3dsPlayerMemory(strf("after generic script {}", p.first));
+#endif
   }
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after base components");
+#endif
 
   // all of these are defaults and won't include the correct humanoid config for the species
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("before net humanoid");
+#endif
   m_netHumanoid.addNetElement(make_shared<NetHumanoid>(m_identity, m_humanoidParameters, Json()));
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after net humanoid");
+#endif
   auto movementParameters = ActorMovementParameters(jsonMerge(humanoid()->defaultMovementParameters(), humanoid()->playerMovementParameters().value(m_config->movementParameters)));
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after movement parameters");
+#endif
   if (!movementParameters.physicsEffectCategories)
     movementParameters.physicsEffectCategories = StringSet({"player"});
   m_movementController = make_shared<ActorMovementController>(movementParameters);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after movement controller");
+#endif
   m_zeroGMovementParameters = ActorMovementParameters(m_config->zeroGMovementParameters);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after zero g movement parameters");
+#endif
 
   m_techController = make_shared<TechController>();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after tech controller");
+#endif
   m_statusController = make_shared<StatusController>(m_config->statusControllerSettings);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after status controller");
+#endif
   m_deployment = make_shared<PlayerDeployment>(m_config->deploymentConfig);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after deployment");
+#endif
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after movement/status components");
+#endif
 
   m_inventory = make_shared<PlayerInventory>();
   m_inventory->setPlayer(this);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after inventory");
+#endif
 
   m_blueprints = make_shared<PlayerBlueprints>();
   m_universeMap = make_shared<PlayerUniverseMap>();
   m_codexes = make_shared<PlayerCodexes>();
   m_techs = make_shared<PlayerTech>();
   m_log = make_shared<PlayerLog>();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after metadata components");
+#endif
 
   setModeType(PlayerMode::Casual);
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after mode config");
+#endif
 
   m_useDown = false;
   m_edgeTriggeredUse = false;
@@ -121,6 +196,9 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
 
   m_effectsAnimator = make_shared<NetworkedAnimator>(assets->fetchJson(m_config->effectsAnimator));
   m_effectEmitter = make_shared<EffectEmitter>();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after effects animator");
+#endif
 
   m_interactRadius = assets->json("/player.config:interactRadius").toFloat();
 
@@ -143,6 +221,9 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
   m_interruptRadioMessage = false;
 
   m_songbook = make_shared<Songbook>(species());
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after songbook");
+#endif
 
   m_lastDamagedOtherTimer = 0;
   m_lastDamagedTarget = NullEntityId;
@@ -150,6 +231,9 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
   m_ageItemsTimer = GameTimer(assets->json("/player.config:ageItemsEvery").toFloat());
 
   refreshEquipment();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after refresh equipment");
+#endif
 
   m_foodLowThreshold = assets->json("/player.config:foodLowThreshold").toFloat();
   m_foodLowStatusEffects = assets->json("/player.config:foodLowStatusEffects").toArray().transformed(jsonToPersistentStatusEffect);
@@ -207,6 +291,9 @@ Player::Player(PlayerConfigPtr config, Uuid uuid) {
 
   m_netGroup.setNeedsLoadCallback(bind(&Player::getNetStates, this, _1));
   m_netGroup.setNeedsStoreCallback(bind(&Player::setNetStates, this));
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("constructor complete");
+#endif
 }
 
 Player::Player(PlayerConfigPtr config, ByteArray const& netStore, NetCompatibilityRules rules) : Player(config) {

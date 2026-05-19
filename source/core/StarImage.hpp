@@ -3,6 +3,7 @@
 #include "StarString.hpp"
 #include "StarVector.hpp"
 #include "StarIODevice.hpp"
+#include "StarRect.hpp"
 
 namespace Star {
 
@@ -27,6 +28,8 @@ STAR_CLASS(Image);
 class Image {
 public:
   static Image readPng(IODevicePtr device);
+  static Image readPngRegion(IODevicePtr device, RectU const& region);
+  static Image readPngRegionScaled(IODevicePtr device, RectU const& region, Vec2U const& outputSize);
   static bool isPng(IODevicePtr device);
   // Returns the size and pixel format that would be constructed from the given
   // png file, without actually loading it.

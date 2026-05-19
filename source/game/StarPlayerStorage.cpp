@@ -22,7 +22,45 @@ PlayerStorage::PlayerStorage(String const& storageDir) {
   }
 
 #ifdef STAR_PLATFORM_N3DS
-  Logger::info("N3DS PlayerStorage: skipping existing player scan at startup");
+  auto n3dsConfiguration = Root::singleton().configuration();
+  if (n3dsConfiguration->get("clearPlayerFiles").toBool()) {
+    Logger::info("Clearing all player files");
+    for (auto file : File::dirList(m_storageDirectory)) {
+      if (!file.second)
+        File::remove(File::relativeTo(m_storageDirectory, file.first));
+    }
+  } else {
+    for (auto file : File::dirList(m_storageDirectory)) {
+      if (file.second || !file.first.endsWith(".player"))
+        continue;
+
+      auto fileName = file.first.rsplit('.', 1).at(0);
+      try {
+        Uuid uuid(fileName);
+        if (m_playerFileNames.insert(uuid, fileName))
+          m_savedPlayersCache[uuid] = Json();
+      } catch (std::exception const& e) {
+        Logger::error("N3DS PlayerStorage: ignoring player file with invalid uuid {} : {}", file.first, outputException(e, false));
+      }
+    }
+  }
+
+  try {
+    String filename = File::relativeTo(m_storageDirectory, "metadata");
+    m_metadata = Json::parseJson(File::readFileString(filename)).toObject();
+
+    if (auto order = m_metadata.value("order")) {
+      for (auto const& jUuid : order.iterateArray()) {
+        auto entry = m_savedPlayersCache.find(Uuid(jUuid.toString()));
+        if (entry != m_savedPlayersCache.end())
+          m_savedPlayersCache.toBack(entry);
+      }
+    }
+  } catch (std::exception const& e) {
+    Logger::warn("N3DS PlayerStorage: error loading player storage metadata file, resetting: {}", outputException(e, false));
+  }
+
+  Logger::info("N3DS PlayerStorage: indexed {} player file(s) for lazy load", m_savedPlayersCache.size());
   return;
 #endif
 
@@ -127,6 +165,10 @@ Maybe<Uuid> PlayerStorage::playerUuidByName(String const& name, Maybe<Uuid> exce
   for (auto& cache : m_savedPlayersCache) {
     if (except && *except == cache.first)
       continue;
+#ifdef STAR_PLATFORM_N3DS
+    else if (cache.second.isNull() && cleanMatch.empty())
+      return cache.first;
+#endif
     else if (auto name = cache.second.optQueryString("identity.name")) {
       auto cleanName = Text::stripEscapeCodes(*name).toLower();
       auto len = cleanName.size();
@@ -149,6 +191,10 @@ List<Uuid> PlayerStorage::playerUuidListByName(String const& name, Maybe<Uuid> e
   for (auto& cache : m_savedPlayersCache) {
     if (except && *except == cache.first)
       continue;
+#ifdef STAR_PLATFORM_N3DS
+    else if (cache.second.isNull() && cleanMatch.empty())
+      list.append(cache.first);
+#endif
     else if (auto name = cache.second.optQueryString("identity.name")) {
       auto cleanName = Text::stripEscapeCodes(*name).toLower();
       if (cleanMatch == "" || cleanName.utf8().rfind(cleanMatch.utf8()) != NPos) {
@@ -185,9 +231,26 @@ Json PlayerStorage::savePlayer(PlayerPtr const& player) {
 
 Maybe<Json> PlayerStorage::maybeGetPlayerData(Uuid const& uuid) {
   RecursiveMutexLocker locker(m_mutex);
-  if (auto cache = m_savedPlayersCache.ptr(uuid))
+  if (auto cache = m_savedPlayersCache.ptr(uuid)) {
+#ifdef STAR_PLATFORM_N3DS
+    if (cache->isNull()) {
+      try {
+        String filename = File::relativeTo(m_storageDirectory, strf("{}.player", uuidFileName(uuid)));
+        if (!File::exists(filename))
+          return {};
+
+        auto entityFactory = Root::singleton().entityFactory();
+        *cache = entityFactory->loadVersionedJson(VersionedJson::readFile(filename), EntityType::Player);
+        Logger::info("N3DS PlayerStorage: lazily loaded player {}", uuid.hex());
+      } catch (std::exception const& e) {
+        Logger::error("N3DS PlayerStorage: error loading player {}, ignoring! {}", uuid.hex(), outputException(e, false));
+        m_savedPlayersCache.remove(uuid);
+        return {};
+      }
+    }
+#endif
     return *cache;
-  else
+  } else
     return {};
 }
 

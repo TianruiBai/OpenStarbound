@@ -50,14 +50,16 @@ public:
   void update(float dt);
 
 private:
+  typedef LuaMessageHandlingComponent<LuaStorableComponent<LuaUpdatableComponent<LuaWorldComponent<LuaBaseComponent>>>>
+      CompanionScriptComponent;
+
   LuaCallbacks makeCompanionsCallbacks();
 
   World* m_world;
-  Json m_config;
+  Json const* m_config;
+  JsonObject m_scriptStorage;
   StringMap<List<CompanionPtr>> m_companions;
-
-  LuaMessageHandlingComponent<LuaStorableComponent<LuaUpdatableComponent<LuaWorldComponent<LuaBaseComponent>>>>
-      m_scriptComponent;
+  shared_ptr<CompanionScriptComponent> m_scriptComponent;
 };
 
 }

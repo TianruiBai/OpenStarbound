@@ -47,8 +47,10 @@ PlayerConfig::PlayerConfig(JsonObject const& cfg) {
 
   bodyMaterialKind = cfg.get("bodyMaterialKind").toString();
 
+#ifndef STAR_PLATFORM_N3DS
   for (auto& p : cfg.get("genericScriptContexts").optObject().value(JsonObject()))
     genericScriptContexts[p.first] = p.second.toString();
+#endif
 }
 
 PlayerFactory::PlayerFactory() : m_rebuilder(make_shared<Rebuilder>("player")) {

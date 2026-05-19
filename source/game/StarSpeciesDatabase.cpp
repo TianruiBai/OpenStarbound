@@ -27,7 +27,7 @@ SpeciesOption::SpeciesOption()
     undyColorDirectives(),
     hairColorDirectives() {}
 
-SpeciesDatabase::SpeciesDatabase() : m_luaRoot(make_shared<LuaRoot>()) {
+SpeciesDatabase::SpeciesDatabase() {
   auto assets = Root::singleton().assets();
 
   auto& files = assets->scanExtension("species");
@@ -56,6 +56,8 @@ Json SpeciesDatabase::humanoidConfig(HumanoidIdentity identity, JsonObject param
   auto speciesDef = species(identity.species);
   if (speciesDef->m_buildScripts.size() > 0) {
     RecursiveMutexLocker locker(m_luaMutex);
+    if (!m_luaRoot)
+      m_luaRoot = make_shared<LuaRoot>();
     auto context = m_luaRoot->createContext(speciesDef->m_buildScripts);
     context.setCallbacks("root", LuaBindings::makeRootCallbacks());
     context.setCallbacks("sb", LuaBindings::makeUtilityCallbacks());
@@ -92,6 +94,8 @@ CharacterCreationResult SpeciesDatabase::createHumanoid(
   auto speciesDefinition = species(speciesChoice);
   if (speciesDefinition->m_creationScripts.size() > 0) {
     RecursiveMutexLocker locker(m_luaMutex);
+    if (!m_luaRoot)
+      m_luaRoot = make_shared<LuaRoot>();
     auto context = m_luaRoot->createContext(speciesDefinition->m_creationScripts);
     context.setCallbacks("root", LuaBindings::makeRootCallbacks());
     context.setCallbacks("sb", LuaBindings::makeUtilityCallbacks());

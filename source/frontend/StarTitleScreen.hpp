@@ -63,6 +63,9 @@ public:
   // connection screen if 'skipConnection' is true.  If the player backs out of
   // the multiplayer menu, the skip connection is forgotten.
   void goToMultiPlayerSelectCharacter(bool skipConnection);
+#ifdef STAR_PLATFORM_N3DS
+  void n3dsQuickStartSinglePlayer();
+#endif
 
   void stopMusic();
 
@@ -126,6 +129,7 @@ private:
 
   PlayerPtr m_mainAppPlayer;
   PlayerStoragePtr m_playerStorage;
+  UniverseClientPtr m_client;
 
   bool m_skipMultiPlayerConnection;
   String m_connectionAddress;

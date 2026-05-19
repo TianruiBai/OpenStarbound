@@ -1,5 +1,10 @@
 #include "StarDrawablePainter.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include "StarImageMetadataDatabase.hpp"
+#include "StarRoot.hpp"
+#endif
+
 namespace Star {
 
 DrawablePainter::DrawablePainter(RendererPtr renderer, AssetTextureGroupPtr textureGroup) {
@@ -38,11 +43,17 @@ void DrawablePainter::drawDrawable(Drawable const& drawable) {
 
     Vec2F position = drawable.position;
     Vec2F textureSize(texture->size());
+    Vec2F logicalSize = textureSize;
+#ifdef STAR_PLATFORM_N3DS
+    try {
+      logicalSize = Vec2F(Root::singleton().imageMetadataDatabase()->imageSize(imagePart->image));
+    } catch (std::exception const&) {}
+#endif
     Mat3F transformation = imagePart->transformation;
     Vec2F lowerLeft  = { transformation[0][2] += position.x(), transformation[1][2] += position.y() };
-    Vec2F lowerRight = transformation * Vec2F(textureSize.x(), 0.f);
-    Vec2F upperRight = transformation * textureSize;
-    Vec2F upperLeft  = transformation * Vec2F(0.f, textureSize.y());
+    Vec2F lowerRight = transformation * Vec2F(logicalSize.x(), 0.f);
+    Vec2F upperRight = transformation * logicalSize;
+    Vec2F upperLeft  = transformation * Vec2F(0.f, logicalSize.y());
 
     float param1 = drawable.fullbright ? 0.0f : 1.0f;
 

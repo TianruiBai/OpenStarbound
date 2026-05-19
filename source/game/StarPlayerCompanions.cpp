@@ -53,10 +53,12 @@ Maybe<float> Companion::stat(String const& statName) const {
   return {};
 }
 
-PlayerCompanions::PlayerCompanions(Json const& config) : m_config(config) {}
+PlayerCompanions::PlayerCompanions(Json const& config) : m_world(nullptr), m_config(&config) {}
 
 void PlayerCompanions::diskLoad(Json const& diskStore) {
-  m_scriptComponent.setScriptStorage(diskStore.getObject("scriptStorage", JsonObject{}));
+  m_scriptStorage = diskStore.getObject("scriptStorage", JsonObject{});
+  if (m_scriptComponent)
+    m_scriptComponent->setScriptStorage(m_scriptStorage);
   m_companions = jsonToMapV<StringMap<List<CompanionPtr>>>(diskStore.getObject("companions", JsonObject{}),
       [](Json const& companions) {
         return companions.toArray().transformed([](Json const& json) { return make_shared<Companion>(json); });
@@ -65,7 +67,7 @@ void PlayerCompanions::diskLoad(Json const& diskStore) {
 
 Json PlayerCompanions::diskStore() const {
   JsonObject result;
-  result["scriptStorage"] = m_scriptComponent.getScriptStorage();
+  result["scriptStorage"] = m_scriptComponent ? m_scriptComponent->getScriptStorage() : m_scriptStorage;
   result["companions"] = jsonFromMapV(m_companions,
       [](List<CompanionPtr> const& companions) { return companions.transformed(mem_fn(&Companion::toJson)); });
   return result;
@@ -80,42 +82,53 @@ List<CompanionPtr> PlayerCompanions::getCompanions(String const& category) const
 void PlayerCompanions::init(Entity* player, World* world) {
   m_world = world;
 
-  m_scriptComponent.setScripts(jsonToStringList(m_config.getArray("scripts", JsonArray())));
-  m_scriptComponent.setUpdateDelta(m_config.getInt("scriptDelta", 10));
+  if (!m_scriptComponent)
+    m_scriptComponent = make_shared<CompanionScriptComponent>();
 
-  m_scriptComponent.addCallbacks("entity", LuaBindings::makeEntityCallbacks(player));
-  m_scriptComponent.addCallbacks("player", LuaBindings::makePlayerCallbacks(as<Player>(player)));
-  m_scriptComponent.addCallbacks(
+  m_scriptComponent->setScriptStorage(m_scriptStorage);
+  m_scriptComponent->setScripts(jsonToStringList(m_config->getArray("scripts", JsonArray())));
+  m_scriptComponent->setUpdateDelta(m_config->getInt("scriptDelta", 10));
+
+  m_scriptComponent->addCallbacks("entity", LuaBindings::makeEntityCallbacks(player));
+  m_scriptComponent->addCallbacks("player", LuaBindings::makePlayerCallbacks(as<Player>(player)));
+  m_scriptComponent->addCallbacks(
       "status", LuaBindings::makeStatusControllerCallbacks(as<Player>(player)->statusController()));
-  m_scriptComponent.addCallbacks("playerCompanions", makeCompanionsCallbacks());
+  m_scriptComponent->addCallbacks("playerCompanions", makeCompanionsCallbacks());
 
-  m_scriptComponent.addCallbacks("config",
+  m_scriptComponent->addCallbacks("config",
       LuaBindings::makeConfigCallbacks([this](
-          String const& name, Json const& def) { return m_config.query(name, def); }));
+          String const& name, Json const& def) { return m_config->query(name, def); }));
 
-  m_scriptComponent.init(world);
+  m_scriptComponent->init(world);
 }
 
 void PlayerCompanions::uninit() {
-  m_scriptComponent.uninit();
-  m_scriptComponent.removeCallbacks("entity");
-  m_scriptComponent.removeCallbacks("player");
-  m_scriptComponent.removeCallbacks("status");
-  m_scriptComponent.removeCallbacks("playerCompanions");
-  m_scriptComponent.removeCallbacks("config");
+  if (m_scriptComponent) {
+    m_scriptStorage = m_scriptComponent->getScriptStorage();
+    m_scriptComponent->uninit();
+    m_scriptComponent->removeCallbacks("entity");
+    m_scriptComponent->removeCallbacks("player");
+    m_scriptComponent->removeCallbacks("status");
+    m_scriptComponent->removeCallbacks("playerCompanions");
+    m_scriptComponent->removeCallbacks("config");
+  }
   m_world = nullptr;
 }
 
 void PlayerCompanions::dismissCompanion(String const& category, Uuid const& podUuid) {
-  m_scriptComponent.invoke("dismissCompanion", category, podUuid.hex());
+  if (m_scriptComponent)
+    m_scriptComponent->invoke("dismissCompanion", category, podUuid.hex());
 }
 
 Maybe<Json> PlayerCompanions::receiveMessage(String const& message, bool localMessage, JsonArray const& args) {
-  return m_scriptComponent.handleMessage(message, localMessage, args);
+  if (m_scriptComponent)
+    return m_scriptComponent->handleMessage(message, localMessage, args);
+  return {};
 }
 
 void PlayerCompanions::update(float dt) {
-  m_scriptComponent.update(m_scriptComponent.updateDt(dt));
+  if (m_scriptComponent)
+    m_scriptComponent->update(m_scriptComponent->updateDt(dt));
 }
 
 LuaCallbacks PlayerCompanions::makeCompanionsCallbacks() {
