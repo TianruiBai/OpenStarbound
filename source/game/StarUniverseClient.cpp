@@ -221,7 +221,11 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
     Logger::info("N3DS UniverseClient: world client ready");
   #endif
     m_worldClient->clientState().setNetCompatibilityRules(compatibilityRules);
+  #ifdef STAR_PLATFORM_N3DS
+    m_worldClient->setAsyncLighting(false);
+  #else
     m_worldClient->setAsyncLighting(true);
+  #endif
 
     m_connection = std::move(connection);
   #ifdef STAR_PLATFORM_N3DS

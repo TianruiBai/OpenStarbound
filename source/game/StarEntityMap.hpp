@@ -125,7 +125,11 @@ public:
   List<shared_ptr<EntityT>> atTile(Vec2I const& pos) const;
 
 private:
+#ifdef STAR_PLATFORM_N3DS
+  typedef SpatialHash2D<EntityId, float, EntityPtr, int, 64> SpatialMap;
+#else
   typedef SpatialHash2D<EntityId, float, EntityPtr> SpatialMap;
+#endif
 
   WorldGeometry m_geometry;
 

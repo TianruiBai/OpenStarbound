@@ -165,9 +165,23 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
     Logger::info("N3DS WorldPainter: original world layer path active");
     loggedOriginalFrame = true;
   }
+  static bool loggedBeforeTileSetup = false;
+  if (!loggedBeforeTileSetup) {
+    Logger::info("N3DS WorldPainter: before tile painter setup tiles={}x{} entities={} parallax={} fullbright={}",
+        renderData.tiles.size(0), renderData.tiles.size(1), renderData.entityDrawables.size(), renderData.parallaxLayers.size(), renderData.isFullbright);
+    loggedBeforeTileSetup = true;
+  }
 #endif
 
   m_tilePainter->setup(m_camera, renderData);
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedAfterTileSetup = false;
+  if (!loggedAfterTileSetup) {
+    Logger::info("N3DS WorldPainter: after tile painter setup");
+    loggedAfterTileSetup = true;
+  }
+#endif
 
   // Stars, Debris Fields, Sky, and Orbiters
 

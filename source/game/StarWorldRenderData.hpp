@@ -48,7 +48,7 @@ struct WorldRenderData {
 };
 
 inline void WorldRenderData::clear() {
-  tiles.resize({0, 0}); // keep reserved
+  tiles.clear(); // keep reserved
 
   entityDrawables.clear();
   particles = nullptr;

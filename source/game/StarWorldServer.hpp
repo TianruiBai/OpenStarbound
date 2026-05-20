@@ -272,7 +272,7 @@ public:
   // Give this world a central structure.  If there is a previous central
   // structure it is removed first.  Returns the structure with transformed
   // coordinates.
-  WorldStructure setCentralStructure(WorldStructure centralStructure);
+  WorldStructure const& setCentralStructure(WorldStructure centralStructure);
   WorldStructure const& centralStructure() const;
   // If there is an active central structure, it is removed and all unmodified
   // objects and blocks associated with the structure are removed.

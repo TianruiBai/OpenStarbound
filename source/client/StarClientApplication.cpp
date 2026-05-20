@@ -1140,7 +1140,11 @@ void ClientApplication::changeState(MainAppState newState) {
           Logger::info("N3DS game bootstrap: presenting first original world frame");
           renderer->switchEffectConfig("world");
           worldClient->render(m_renderData, 0);
+          Logger::info("N3DS game bootstrap: first frame world render returned tiles={}x{} entities={}",
+              m_renderData.tiles.size(0), m_renderData.tiles.size(1), m_renderData.entityDrawables.size());
+          Logger::info("N3DS game bootstrap: first frame painter begin");
           m_worldPainter->render(m_renderData, {});
+          Logger::info("N3DS game bootstrap: first frame painter returned");
           renderer->flush(Mat3F::identity());
           Logger::info("N3DS game bootstrap: first original world frame presented");
         }

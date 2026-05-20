@@ -507,7 +507,13 @@ void Player::init(World* world, EntityId entityId, EntityMode mode) {
 #endif
 
   m_xAimPositionNetState.setInterpolator(world->geometry().xLerpFunction());
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("before init refresh equipment");
+#endif
   refreshEquipment();
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after init refresh equipment");
+#endif
 }
 
 void Player::uninit() {
@@ -1515,13 +1521,22 @@ void Player::refreshItems() {
   if (isSlave())
     return;
 
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("before refresh items");
+#endif
   m_tools->setItems(m_inventory->primaryHeldItem(), m_inventory->secondaryHeldItem());
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after refresh items");
+#endif
 }
 
 void Player::refreshArmor() {
   if (isSlave())
     return;
 
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("before refresh armor");
+#endif
   bool shouldSetArmorSecrets = m_clientContext && m_clientContext->netCompatibilityRules().version() < 9;
   for (uint8_t i = 0; i != 20; ++i) {
     auto slot = (EquipmentSlot)i;
@@ -2238,6 +2253,9 @@ void Player::getNetArmorSecrets() {
       }
     }
   }
+#ifdef STAR_PLATFORM_N3DS
+  logN3dsPlayerMemory("after refresh armor");
+#endif
 }
 
 void Player::setAdmin(bool isAdmin) {

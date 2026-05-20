@@ -3641,12 +3641,16 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
       }
       Logger::info("N3DS UniverseServer: creating bounded original ship world {} from structure region {}", worldSize, structureRegion);
       shipWorld = make_shared<WorldServer>(worldSize, File::ephemeralFile());
-      shipStructure = shipWorld->setCentralStructure(shipStructure);
+        auto shipForegroundBlocks = shipStructure.foregroundBlocks().size();
+        auto shipBackgroundBlocks = shipStructure.backgroundBlocks().size();
+        auto shipObjects = shipStructure.objects().size();
+        auto shipOverlays = shipStructure.backgroundOverlays().size() + shipStructure.foregroundOverlays().size();
+        auto shipUpgradeConfig = shipStructure.configValue("shipUpgrades");
+        shipWorld->setCentralStructure(std::move(shipStructure));
       Logger::info("N3DS UniverseServer: original ship structure placed blocks fg={} bg={} objects={} overlays={}",
-          shipStructure.foregroundBlocks().size(), shipStructure.backgroundBlocks().size(), shipStructure.objects().size(),
-          shipStructure.backgroundOverlays().size() + shipStructure.foregroundOverlays().size());
+          shipForegroundBlocks, shipBackgroundBlocks, shipObjects, shipOverlays);
       currentUpgrades.apply(Root::singleton().assets()->json("/ships/shipupgrades.config"));
-      currentUpgrades.apply(shipStructure.configValue("shipUpgrades"));
+        currentUpgrades.apply(shipUpgradeConfig);
       if (currentUpgrades.maxFuel == 0)
         currentUpgrades.maxFuel = 1000;
       if (currentUpgrades.crewSize == 0)

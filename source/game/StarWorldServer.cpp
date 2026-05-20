@@ -118,6 +118,21 @@ Json readWorldServerConfig() {
 #endif
 }
 
+#ifdef STAR_PLATFORM_N3DS
+Json n3dsCentralStructureBootstrapStore(WorldStructure const& structure) {
+  return JsonObject{
+      {"region", jsonFromRectI(structure.region())},
+      {"anchorPosition", jsonFromVec2I(structure.anchorPosition())},
+      {"config", JsonObject()},
+      {"backgroundOverlays", JsonArray()},
+      {"foregroundOverlays", JsonArray()},
+      {"backgroundBlocks", JsonArray()},
+      {"foregroundBlocks", JsonArray()},
+      {"objects", JsonArray()},
+      {"flaggedBlocks", JsonObject()}};
+}
+#endif
+
 void recordPhase6Signature(uint64_t& accumulator, uint64_t signature) {
   size_t hash = accumulator;
   hashCombine(hash, static_cast<size_t>(signature));
@@ -284,7 +299,7 @@ void WorldServer::initLua(UniverseServer* universe) {
   }
 }
 
-WorldStructure WorldServer::setCentralStructure(WorldStructure centralStructure) {
+WorldStructure const& WorldServer::setCentralStructure(WorldStructure centralStructure) {
   removeCentralStructure();
 
   m_centralStructure = std::move(centralStructure);
@@ -436,8 +451,13 @@ WorldStructure WorldServer::setCentralStructure(WorldStructure centralStructure)
   }
 #endif
 
-  for (auto const& pair : m_clientInfo)
+  for (auto const& pair : m_clientInfo) {
+#ifdef STAR_PLATFORM_N3DS
+    pair.second->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(n3dsCentralStructureBootstrapStore(m_centralStructure)));
+#else
     pair.second->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(m_centralStructure.store()));
+#endif
+  }
 
   return m_centralStructure;
 }
@@ -561,10 +581,11 @@ bool WorldServer::addClient(ConnectionId clientId, SpawnTarget const& spawnTarge
   Logger::info("N3DS WorldServer: queued WorldStartPacket");
 #endif
 
-  clientInfo->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(m_centralStructure.store()));
-
 #ifdef STAR_PLATFORM_N3DS
-  Logger::info("N3DS WorldServer: queued central structure update packet");
+  clientInfo->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(n3dsCentralStructureBootstrapStore(m_centralStructure)));
+  Logger::info("N3DS WorldServer: queued central structure bootstrap packet");
+#else
+  clientInfo->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(m_centralStructure.store()));
 #endif
 
   for (auto& p : m_scriptContexts)

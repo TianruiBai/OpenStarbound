@@ -511,14 +511,34 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
     Logger::info("N3DS WorldClient: original render data path active");
     loggedOriginalRender = true;
   }
+  static bool loggedRenderBeforeClear = false;
+  if (!loggedRenderBeforeClear) {
+    Logger::info("N3DS WorldClient: render before clear");
+    loggedRenderBeforeClear = true;
+  }
 #endif
 
   if (!m_lightingThread && m_asyncLighting)
     m_lightingThread = Thread::invoke("WorldClient::lightingMain", mem_fn(&WorldClient::lightingMain), this);
 
   renderData.clear();
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderClearReturned = false;
+  if (!loggedRenderClearReturned) {
+    Logger::info("N3DS WorldClient: render clear returned inWorld={}", inWorld());
+    loggedRenderClearReturned = true;
+  }
+#endif
   if (!inWorld())
     return;
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterClear = false;
+  if (!loggedRenderAfterClear) {
+    Logger::info("N3DS WorldClient: render after clear");
+    loggedRenderAfterClear = true;
+  }
+#endif
 
   // If we're dimming the world, then that takes priority
   m_worldDimTimer.tick();
@@ -557,6 +577,14 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   RectI tileRange = window.padded(bufferTiles);
   renderData.tileMinPosition = tileRange.min();
 
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderWindow = false;
+  if (!loggedRenderWindow) {
+    Logger::info("N3DS WorldClient: render window={} tileRange={} buffer={}", window, tileRange, bufferTiles);
+    loggedRenderWindow = true;
+  }
+#endif
+
 #ifndef STAR_PLATFORM_N3DS
   if (!m_fullBright) {
     {
@@ -588,10 +616,25 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   bool inspecting = m_mainPlayer->inspecting();
 
   EntityId playerAimInteractive = NullEntityId;
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderBeforeInteraction = false;
+  if (!loggedRenderBeforeInteraction) {
+    Logger::info("N3DS WorldClient: render before interaction query");
+    loggedRenderBeforeInteraction = true;
+  }
+#endif
   if (Root::singleton().configuration()->get("interactiveHighlight").toBool()) {
     if (auto entity = m_mainPlayer->bestInteractionEntity(false))
       playerAimInteractive = entity->entityId();
   }
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterInteraction = false;
+  if (!loggedRenderAfterInteraction) {
+    Logger::info("N3DS WorldClient: render after interaction query");
+    loggedRenderAfterInteraction = true;
+  }
+#endif
 
   const List<Directives>* directives = nullptr;
   if (auto& worldTemplate = m_worldTemplate) {
@@ -599,6 +642,14 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
       if (auto& globalDirectives = parameters->globalDirectives)
         directives = &globalDirectives.get();
   }
+  #ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderBeforeEntities = false;
+  if (!loggedRenderBeforeEntities) {
+    Logger::info("N3DS WorldClient: render before entity drawables");
+    loggedRenderBeforeEntities = true;
+  }
+#endif
+
   m_entityMap->forAllEntities([&](EntityPtr const& entity) {
       if (m_startupHiddenEntities.contains(entity->entityId()))
         return;
@@ -670,6 +721,22 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
       return a->entityId() < b->entityId();
     });
 
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterEntities = false;
+  if (!loggedRenderAfterEntities) {
+    Logger::info("N3DS WorldClient: render after entity drawables count={}", renderData.entityDrawables.size());
+    loggedRenderAfterEntities = true;
+  }
+#endif
+
+  #ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderBeforeTiles = false;
+  if (!loggedRenderBeforeTiles) {
+    Logger::info("N3DS WorldClient: render before tile gather");
+    loggedRenderBeforeTiles = true;
+  }
+#endif
+
   m_tileArray->tileEachTo(renderData.tiles, tileRange, [&](RenderTile& renderTile, Vec2I const&, ClientTile const& clientTile) {
       renderTile.foreground = clientTile.foreground;
       renderTile.foregroundMod = clientTile.foregroundMod;
@@ -692,6 +759,14 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
       renderTile.liquidId = clientTile.liquid.liquid;
       renderTile.liquidLevel = floatToByte(clientTile.liquid.level);
     });
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterTiles = false;
+  if (!loggedRenderAfterTiles) {
+    Logger::info("N3DS WorldClient: render after tile gather tiles={}x{}", renderData.tiles.size(0), renderData.tiles.size(1));
+    loggedRenderAfterTiles = true;
+  }
+#endif
 
   for (auto& pair : m_predictedTiles) {
     Vec2I tileArrayPos = m_geometry.diff(pair.first, renderData.tileMinPosition);
@@ -744,9 +819,33 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   renderData.particles = &m_particles->particles();
   LogMap::set("client_render_particle_count", renderData.particles->size());
 
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderBeforeSky = false;
+  if (!loggedRenderBeforeSky) {
+    Logger::info("N3DS WorldClient: render before sky data");
+    loggedRenderBeforeSky = true;
+  }
+#endif
+
   renderData.skyRenderData = m_sky->renderData();
 
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterSky = false;
+  if (!loggedRenderAfterSky) {
+    Logger::info("N3DS WorldClient: render after sky data");
+    loggedRenderAfterSky = true;
+  }
+#endif
+
   auto environmentBiome = mainEnvironmentBiome();
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterBiome = false;
+  if (!loggedRenderAfterBiome) {
+    Logger::info("N3DS WorldClient: render after environment biome");
+    loggedRenderAfterBiome = true;
+  }
+#endif
 
   m_parallaxFadeTimer.tick();
   if (m_parallaxFadeTimer.ready() && m_nextParallax) {
@@ -784,6 +883,14 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   stableSort(renderData.parallaxLayers, [](ParallaxLayer const& a, ParallaxLayer const& b) {
       return tie(a.zLevel, a.verticalOrigin) > tie(b.zLevel, b.verticalOrigin);
     });
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedRenderAfterParallax = false;
+  if (!loggedRenderAfterParallax) {
+    Logger::info("N3DS WorldClient: render after parallax sort count={}", renderData.parallaxLayers.size());
+    loggedRenderAfterParallax = true;
+  }
+#endif
 
   auto overlayToDrawable = [](WorldStructure::Overlay const& overlay) -> Drawable {
     Drawable drawable = Drawable::makeImage(overlay.image, 1.0f / TilePixels, false, overlay.min);
@@ -1991,17 +2098,38 @@ void WorldClient::initWorld(WorldStartPacket const& startPacket) {
   m_inWorld = true;
   
   if (!m_mainPlayer->isDead()) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS WorldClient: main player init begin");
+#endif
     m_mainPlayer->init(this, m_entityMap->reserveEntityId(), EntityMode::Master);
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS WorldClient: main player init complete");
+#endif
     m_entityMap->addEntity(m_mainPlayer);
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS WorldClient: main player added");
+#endif
   }
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: moving player to start");
+#endif
   m_mainPlayer->moveTo(startPacket.playerStart);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: player moved to start");
+#endif
   if (const auto& parameters = m_worldTemplate->worldParameters())
     m_mainPlayer->overrideTech(parameters->overrideTech);
   else
     m_mainPlayer->overrideTech({});
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: player tech override complete");
+#endif
 
   // Auto reposition the client window on the player when the main player
   // changes position.
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: center window begin");
+#endif
   centerClientWindowOnPlayer();
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS WorldClient: WorldStart complete");
