@@ -487,22 +487,30 @@ WorldClientState& WorldClient::clientState() {
 
 void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
 #ifdef STAR_PLATFORM_N3DS
-  renderData.clear();
-  if (!inWorld())
-    return;
+  if (Root::singleton().configuration()->get("n3dsCompactWorldFallback").optBool().value(false)) {
+    renderData.clear();
+    if (!inWorld())
+      return;
 
-  static bool loggedCompactRender = false;
-  if (!loggedCompactRender) {
-    Logger::info("N3DS WorldClient: compact render data active");
-    loggedCompactRender = true;
+    static bool loggedCompactRender = false;
+    if (!loggedCompactRender) {
+      Logger::info("N3DS WorldClient: compact render data fallback active");
+      loggedCompactRender = true;
+    }
+
+    renderData.geometry = m_geometry;
+    renderData.tileMinPosition = m_clientState.window().min();
+    renderData.isFullbright = true;
+    renderData.dimLevel = 0.0f;
+    renderData.dimColor = Vec3B();
+    return;
   }
 
-  renderData.geometry = m_geometry;
-  renderData.tileMinPosition = m_clientState.window().min();
-  renderData.isFullbright = true;
-  renderData.dimLevel = 0.0f;
-  renderData.dimColor = Vec3B();
-  return;
+  static bool loggedOriginalRender = false;
+  if (!loggedOriginalRender) {
+    Logger::info("N3DS WorldClient: original render data path active");
+    loggedOriginalRender = true;
+  }
 #endif
 
   if (!m_lightingThread && m_asyncLighting)

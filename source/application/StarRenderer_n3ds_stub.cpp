@@ -17,6 +17,18 @@
 
 namespace Star {
 
+namespace {
+bool sN3dsTitleMenuInputActive = false;
+}
+
+void setN3dsTitleMenuInputActive(bool active) {
+  sN3dsTitleMenuInputActive = active;
+}
+
+bool n3dsTitleMenuInputActive() {
+  return sN3dsTitleMenuInputActive;
+}
+
 // ---- Stub Texture -------------------------------------------------------
 
 namespace {
@@ -124,18 +136,26 @@ void drawTopScreenDiagnostics(FrameReplayStats const& stats) {
 }
 
 void drawBottomSlot(float x, float y, float size, bool selected, bool filled, u32 fillColor) {
-  u32 border = selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(84, 92, 102, 255);
+  u32 shadow = C2D_Color32(5, 7, 10, 220);
+  u32 border = selected ? C2D_Color32(255, 242, 126, 255) : C2D_Color32(80, 84, 92, 255);
+  C2D_DrawRectSolid(x + 1.0f, y + 2.0f, 0.0f, size, size, shadow);
   C2D_DrawRectSolid(x, y, 0.0f, size, size, border);
-  C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, size - 4.0f, size - 4.0f, C2D_Color32(26, 29, 34, 255));
+  C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, size - 4.0f, size - 4.0f, C2D_Color32(23, 26, 31, 255));
+  C2D_DrawRectSolid(x + 3.0f, y + 3.0f, 0.0f, size - 6.0f, 5.0f, C2D_Color32(50, 55, 64, 255));
 
-  if (filled)
-    C2D_DrawRectSolid(x + 6.0f, y + 6.0f, 0.0f, size - 12.0f, size - 12.0f, fillColor);
+  if (filled) {
+    C2D_DrawRectSolid(x + 7.0f, y + 9.0f, 0.0f, size - 14.0f, size - 14.0f, fillColor);
+    C2D_DrawRectSolid(x + 9.0f, y + 11.0f, 0.0f, size - 18.0f, 3.0f, C2D_Color32(255, 255, 255, 90));
+  }
 }
 
 void drawBottomStatusBar(float x, float y, float width, float height, float fill, u32 color) {
-  C2D_DrawRectSolid(x, y, 0.0f, width, height, C2D_Color32(58, 62, 70, 255));
-  C2D_DrawRectSolid(x + 1.0f, y + 1.0f, 0.0f, width - 2.0f, height - 2.0f, C2D_Color32(18, 20, 24, 255));
-  C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, std::max(0.0f, (width - 4.0f) * fill), height - 4.0f, color);
+  float clampedFill = std::clamp(fill, 0.0f, 1.0f);
+  C2D_DrawRectSolid(x, y, 0.0f, width, height, C2D_Color32(8, 10, 14, 255));
+  C2D_DrawRectSolid(x + 1.0f, y + 1.0f, 0.0f, width - 2.0f, height - 2.0f, C2D_Color32(88, 92, 102, 255));
+  C2D_DrawRectSolid(x + 2.0f, y + 2.0f, 0.0f, width - 4.0f, height - 4.0f, C2D_Color32(18, 20, 24, 255));
+  C2D_DrawRectSolid(x + 3.0f, y + 3.0f, 0.0f, std::max(0.0f, (width - 6.0f) * clampedFill), height - 6.0f, color);
+  C2D_DrawRectSolid(x + 3.0f, y + 3.0f, 0.0f, std::max(0.0f, (width - 6.0f) * clampedFill), 2.0f, C2D_Color32(255, 255, 255, 60));
 }
 
 void drawBottomRoundButton(float x, float y, float radius, bool active, u32 color) {
@@ -169,6 +189,42 @@ void drawBottomButtonGlyph(float x, float y, BottomButtonGlyph glyph, u32 color)
 void drawBottomQuickButton(float x, float y, float radius, bool active, u32 color, BottomButtonGlyph glyph) {
   drawBottomRoundButton(x, y, radius, active, color);
   drawBottomButtonGlyph(x, y, glyph, C2D_Color32(255, 255, 255, 255));
+}
+
+void drawBottomToolIcon(float x, float y, unsigned index, bool selected) {
+  float size = selected ? 34.0f : 28.0f;
+  u32 border = selected ? C2D_Color32(255, 242, 126, 255) : C2D_Color32(68, 72, 82, 255);
+  u32 fill = selected ? C2D_Color32(38, 42, 50, 255) : C2D_Color32(24, 27, 33, 255);
+  C2D_DrawRectSolid(x - size / 2.0f + 2.0f, y - size / 2.0f + 3.0f, 0.0f, size, size, C2D_Color32(0, 0, 0, 190));
+  C2D_DrawRectSolid(x - size / 2.0f, y - size / 2.0f, 0.0f, size, size, border);
+  C2D_DrawRectSolid(x - size / 2.0f + 2.0f, y - size / 2.0f + 2.0f, 0.0f, size - 4.0f, size - 4.0f, fill);
+
+  u32 icon = index == 0 ? C2D_Color32(232, 188, 72, 255) : index == 1 ? C2D_Color32(220, 104, 240, 255) : index == 2 ? C2D_Color32(120, 190, 255, 255) : C2D_Color32(255, 234, 116, 255);
+  if (index == 0) {
+    C2D_DrawLine(x - 8.0f, y + 9.0f, icon, x + 7.0f, y - 7.0f, icon, 3.0f, 0.0f);
+    C2D_DrawTriangle(x + 5.0f, y - 10.0f, icon, x + 12.0f, y - 5.0f, icon, x + 5.0f, y + 1.0f, icon, 0.0f);
+  } else if (index == 1) {
+    C2D_DrawCircleSolid(x - 4.0f, y - 2.0f, 0.0f, 6.0f, icon);
+    C2D_DrawLine(x + 2.0f, y + 4.0f, icon, x + 11.0f, y + 13.0f, icon, 3.0f, 0.0f);
+  } else if (index == 2) {
+    C2D_DrawLine(x - 9.0f, y + 8.0f, icon, x + 8.0f, y - 9.0f, icon, 4.0f, 0.0f);
+    C2D_DrawRectSolid(x + 5.0f, y - 12.0f, 0.0f, 5.0f, 10.0f, icon);
+  } else {
+    C2D_DrawCircleSolid(x - 2.0f, y - 2.0f, 0.0f, 7.0f, icon);
+    C2D_DrawLine(x + 4.0f, y + 4.0f, icon, x + 12.0f, y + 12.0f, icon, 3.0f, 0.0f);
+  }
+}
+
+void drawBottomMissionCard(bool inWorld) {
+  C2D_DrawRectSolid(70.0f, 55.0f, 0.0f, 206.0f, 40.0f, C2D_Color32(8, 9, 12, 230));
+  C2D_DrawRectSolid(72.0f, 57.0f, 0.0f, 202.0f, 36.0f, C2D_Color32(54, 58, 66, 255));
+  C2D_DrawRectSolid(75.0f, 60.0f, 0.0f, 196.0f, 30.0f, C2D_Color32(32, 35, 42, 255));
+  C2D_DrawRectSolid(85.0f, 70.0f, 0.0f, inWorld ? 106.0f : 60.0f, 4.0f, C2D_Color32(255, 255, 255, 230));
+  C2D_DrawRectSolid(85.0f, 80.0f, 0.0f, inWorld ? 142.0f : 92.0f, 4.0f, inWorld ? C2D_Color32(72, 220, 128, 255) : C2D_Color32(255, 224, 48, 255));
+  C2D_DrawCircleSolid(58.0f, 75.0f, 0.0f, 20.0f, C2D_Color32(70, 76, 86, 255));
+  C2D_DrawCircleSolid(58.0f, 75.0f, 0.0f, 16.0f, C2D_Color32(24, 27, 33, 255));
+  C2D_DrawLine(50.0f, 67.0f, C2D_Color32(120, 126, 136, 255), 66.0f, 83.0f, C2D_Color32(120, 126, 136, 255), 3.0f, 0.0f);
+  C2D_DrawLine(66.0f, 67.0f, C2D_Color32(120, 126, 136, 255), 50.0f, 83.0f, C2D_Color32(120, 126, 136, 255), 3.0f, 0.0f);
 }
 
 void drawBottomMovementPad(float x, float y, bool circlePadActive, bool dpadActive) {
@@ -225,38 +281,104 @@ void drawBottomStartupDiagnostics(uint32_t diagnosticBits) {
   }
 }
 
+C2D_TextBuf& bottomOverlayTextBuffer() {
+  static C2D_TextBuf textBuffer = C2D_TextBufNew(2048);
+  return textBuffer;
+}
+
+void drawBottomText(char const* text, float x, float y, float scale, u32 color) {
+  C2D_Text parsedText;
+  C2D_TextParse(&parsedText, bottomOverlayTextBuffer(), text);
+  C2D_TextOptimize(&parsedText);
+  C2D_DrawText(&parsedText, C2D_WithColor, x, y, 0.0f, scale, scale, color);
+}
+
+void drawBottomTitleMenu(N3dsHandheldOverlayState const& overlayState) {
+  C2D_TextBufClear(bottomOverlayTextBuffer());
+
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(13, 17, 25, 255));
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 48.0f, C2D_Color32(23, 31, 45, 255));
+  C2D_DrawRectSolid(0.0f, 48.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(88, 104, 124, 255));
+  drawBottomText("OPENSTARBOUND", 18.0f, 13.0f, 0.62f, C2D_Color32(230, 238, 246, 255));
+  drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
+
+  struct MenuItem {
+    char const* label;
+    u32 accent;
+  };
+
+  static const MenuItem MenuItems[] = {
+      {"Single Player", C2D_Color32(255, 214, 82, 255)},
+      {"Multiplayer", C2D_Color32(88, 190, 255, 255)},
+      {"Settings", C2D_Color32(92, 220, 144, 255)},
+      {"Exit", C2D_Color32(238, 82, 92, 255)},
+  };
+
+  constexpr float ButtonX = 18.0f;
+  constexpr float ButtonY = 58.0f;
+  constexpr float ButtonW = 284.0f;
+  constexpr float ButtonH = 34.0f;
+  constexpr float ButtonGap = 10.0f;
+
+  for (unsigned item = 0; item < 4; ++item) {
+    float y = ButtonY + item * (ButtonH + ButtonGap);
+    bool selected = item == overlayState.selectedTitleMenuItem;
+    u32 base = selected ? C2D_Color32(52, 64, 82, 255) : C2D_Color32(30, 37, 49, 255);
+    u32 border = selected ? C2D_Color32(226, 234, 244, 255) : C2D_Color32(74, 84, 98, 255);
+
+    C2D_DrawRectSolid(ButtonX, y, 0.0f, ButtonW, ButtonH, border);
+    C2D_DrawRectSolid(ButtonX + 1.0f, y + 1.0f, 0.0f, ButtonW - 2.0f, ButtonH - 2.0f, base);
+    C2D_DrawRectSolid(ButtonX + 8.0f, y + 8.0f, 0.0f, 5.0f, ButtonH - 16.0f, MenuItems[item].accent);
+    drawBottomText(MenuItems[item].label, ButtonX + 24.0f, y + 8.0f, 0.52f, selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(204, 214, 226, 255));
+  }
+
+  drawBottomText("A: Select   B: Exit   X: Multi   Y: Settings", 16.0f, 224.0f, 0.34f, C2D_Color32(160, 174, 190, 255));
+
+  if (overlayState.touchPressed)
+    drawBottomCursor(overlayState.touchPosition, true, true);
+}
+
 void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, unsigned frameCounter) {
   (void)frameCounter;
 
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(13, 16, 21, 255));
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 36.0f, C2D_Color32(24, 29, 36, 255));
-  C2D_DrawRectSolid(0.0f, 198.0f, 0.0f, 320.0f, 42.0f, C2D_Color32(24, 27, 33, 255));
-  C2D_DrawRectSolid(0.0f, 36.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(58, 66, 76, 255));
-  C2D_DrawRectSolid(0.0f, 197.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(58, 66, 76, 255));
+  if (overlayState.titleMenuActive) {
+    drawBottomTitleMenu(overlayState);
+    return;
+  }
 
-  drawBottomStatusBar(10.0f, 7.0f, 88.0f, 7.0f, 0.78f, C2D_Color32(232, 64, 72, 255));
-  drawBottomStatusBar(10.0f, 18.0f, 88.0f, 7.0f, 0.62f, C2D_Color32(72, 176, 255, 255));
-  drawBottomStatusBar(108.0f, 7.0f, 48.0f, 7.0f, 0.95f, C2D_Color32(72, 220, 128, 255));
-  drawBottomStatusBar(108.0f, 18.0f, 48.0f, 7.0f, overlayState.circlePadActive ? 1.0f : 0.25f, C2D_Color32(255, 224, 48, 255));
+  C2D_TextBufClear(bottomOverlayTextBuffer());
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(178, 232, 248, 255));
+  C2D_DrawCircleSolid(42.0f, 38.0f, 0.0f, 34.0f, C2D_Color32(220, 246, 255, 255));
+  C2D_DrawCircleSolid(104.0f, 26.0f, 0.0f, 28.0f, C2D_Color32(210, 242, 255, 255));
+  C2D_DrawCircleSolid(248.0f, 45.0f, 0.0f, 42.0f, C2D_Color32(222, 247, 255, 255));
+  C2D_DrawRectSolid(0.0f, 198.0f, 0.0f, 320.0f, 42.0f, C2D_Color32(28, 30, 36, 235));
+  C2D_DrawRectSolid(0.0f, 197.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(82, 88, 98, 255));
+
+  drawBottomStatusBar(10.0f, 9.0f, 98.0f, 10.0f, overlayState.healthFill, C2D_Color32(232, 64, 72, 255));
+  drawBottomStatusBar(10.0f, 23.0f, 98.0f, 10.0f, overlayState.energyFill, C2D_Color32(72, 176, 255, 255));
+  drawBottomStatusBar(118.0f, 9.0f, 58.0f, 10.0f, overlayState.breathFill, C2D_Color32(72, 220, 128, 255));
+  drawBottomStatusBar(118.0f, 23.0f, 58.0f, 10.0f, overlayState.circlePadActive ? 1.0f : 0.22f, C2D_Color32(255, 224, 48, 255));
   drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
 
-  drawBottomRoundButton(210.0f, 18.0f, 7.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
-  drawBottomRoundButton(242.0f, 18.0f, 9.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
-  drawBottomRoundButton(276.0f, 18.0f, 9.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
-  drawBottomRoundButton(308.0f, 18.0f, 7.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
+  for (unsigned icon = 0; icon < 4; ++icon)
+    drawBottomToolIcon(118.0f + icon * 36.0f, 44.0f, icon, icon == overlayState.selectedHotbarSlot % 4);
 
-  C2D_DrawRectSolid(12.0f, 47.0f, 0.0f, 164.0f, 30.0f, C2D_Color32(27, 32, 39, 255));
-  C2D_DrawCircleSolid(28.0f, 62.0f, 0.0f, 8.0f, C2D_Color32(255, 224, 48, 255));
-  C2D_DrawRectSolid(44.0f, 55.0f, 0.0f, 112.0f, 4.0f, C2D_Color32(96, 224, 255, 255));
-  C2D_DrawRectSolid(44.0f, 65.0f, 0.0f, 86.0f, 4.0f, C2D_Color32(72, 220, 128, 255));
+  drawBottomMissionCard(overlayState.inWorld);
 
-  C2D_DrawRectSolid(12.0f, 86.0f, 0.0f, 164.0f, 82.0f, C2D_Color32(20, 24, 30, 255));
-  drawBottomMovementPad(60.0f, 127.0f, overlayState.circlePadActive, overlayState.dpadActive);
-  C2D_DrawRectSolid(112.0f, 105.0f, 0.0f, overlayState.circlePadActive ? 44.0f : 22.0f, 5.0f, C2D_Color32(72, 220, 128, 255));
-  C2D_DrawRectSolid(112.0f, 122.0f, 0.0f, overlayState.dpadActive ? 50.0f : 26.0f, 5.0f, C2D_Color32(255, 224, 48, 255));
-  C2D_DrawRectSolid(112.0f, 139.0f, 0.0f, overlayState.pointerPressed ? 38.0f : 18.0f, 5.0f, C2D_Color32(96, 224, 255, 255));
+  drawBottomRoundButton(210.0f, 21.0f, 7.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
+  drawBottomRoundButton(242.0f, 21.0f, 9.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
+  drawBottomRoundButton(276.0f, 21.0f, 9.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
+  drawBottomRoundButton(308.0f, 21.0f, 7.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
 
-  C2D_DrawRectSolid(196.0f, 86.0f, 0.0f, 112.0f, 100.0f, C2D_Color32(20, 24, 30, 255));
+  C2D_DrawRectSolid(14.0f, 110.0f, 0.0f, 112.0f, 70.0f, C2D_Color32(17, 20, 26, 220));
+  drawBottomMovementPad(70.0f, 145.0f, overlayState.circlePadActive, overlayState.dpadActive);
+
+  C2D_DrawRectSolid(146.0f, 112.0f, 0.0f, 56.0f, 56.0f, C2D_Color32(16, 19, 24, 225));
+  C2D_DrawCircleSolid(174.0f, 140.0f, 0.0f, 18.0f, C2D_Color32(68, 74, 84, 255));
+  C2D_DrawCircleSolid(174.0f, 140.0f, 0.0f, 11.0f, C2D_Color32(38, 42, 50, 255));
+  C2D_DrawCircleSolid(174.0f, 140.0f, 0.0f, 5.0f, C2D_Color32(255, 224, 48, 255));
+
+  C2D_DrawRectSolid(214.0f, 100.0f, 0.0f, 94.0f, 86.0f, C2D_Color32(18, 21, 27, 225));
   drawBottomQuickButton(292.0f, 144.0f, 13.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255), BottomButtonGlyph::Check);
   drawBottomQuickButton(260.0f, 174.0f, 13.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255), BottomButtonGlyph::Cross);
   drawBottomQuickButton(260.0f, 114.0f, 13.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255), BottomButtonGlyph::Up);
@@ -269,8 +391,8 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
   float slotX = 11.0f;
   float slotY = 206.0f;
   u32 slotColors[] = {
-      C2D_Color32(232, 64, 72, 255), C2D_Color32(255, 224, 48, 255), C2D_Color32(72, 220, 128, 255), C2D_Color32(96, 224, 255, 255), C2D_Color32(216, 120, 255, 255),
-      C2D_Color32(255, 144, 72, 255), C2D_Color32(160, 220, 96, 255), C2D_Color32(96, 144, 255, 255), C2D_Color32(255, 104, 160, 255), C2D_Color32(224, 224, 224, 255)};
+      C2D_Color32(232, 188, 72, 255), C2D_Color32(220, 104, 240, 255), C2D_Color32(120, 190, 255, 255), C2D_Color32(255, 234, 116, 255), C2D_Color32(80, 160, 255, 255),
+      C2D_Color32(255, 144, 72, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255)};
   for (unsigned slot = 0; slot < 10; ++slot)
     drawBottomSlot(slotX + slot * (slotSize + slotGap), slotY, slotSize, slot == overlayState.selectedHotbarSlot, slot < 6, slotColors[slot]);
 
@@ -421,8 +543,9 @@ private:
     std::memset(linearUploadData, 0, textureBytes);
     auto* uploadBytes = static_cast<uint8_t*>(linearUploadData);
     for (unsigned y = 0; y < image.height(); ++y) {
+      unsigned destinationY = image.height() - y - 1;
       for (unsigned x = 0; x < image.width(); ++x) {
-        size_t destinationOffset = n3dsTiledPixelIndex(x, y, storageWidth) * 4;
+        size_t destinationOffset = (static_cast<size_t>(destinationY) * storageWidth + x) * 4;
         auto pixel = image.getrgb({x, y});
         writeNativeRgba8Pixel(uploadBytes + destinationOffset, pixel.ptr());
       }
@@ -549,6 +672,16 @@ bool drawTexturedQuad(RenderQuad const& quad) {
     float height = maxY - minY;
     if (width <= 0.0f || height <= 0.0f)
       return true;
+
+    static unsigned loggedLargeTexturedQuads = 0;
+    if (width > 250.0f && height > 80.0f && loggedLargeTexturedQuads < 12) {
+      Logger::info("N3DS textured quad {} screen [{},{}]-[{},{}] uv a{} b{} c{} d{} subtex w={} h={} l={} t={} r={} b={}",
+          loggedLargeTexturedQuads,
+          minX, minY, maxX, maxY,
+          quad.a.textureCoordinate, quad.b.textureCoordinate, quad.c.textureCoordinate, quad.d.textureCoordinate,
+          subTexture.width, subTexture.height, subTexture.left, subTexture.top, subTexture.right, subTexture.bottom);
+      ++loggedLargeTexturedQuads;
+    }
 
     params = {{minX, toTopScreenY(maxY), width, height}, {0.0f, 0.0f}, 0.0f, 0.0f};
   } else {
@@ -699,7 +832,26 @@ void N3dsStubRenderer::renderBuffer(RenderBufferPtr const& renderBuffer, Mat3F c
 }
 
 void N3dsStubRenderer::setHandheldOverlayState(N3dsHandheldOverlayState overlayState) {
+  overlayState.inWorld = m_handheldOverlayState.inWorld;
+  overlayState.titleMenuActive = m_handheldOverlayState.titleMenuActive;
+  overlayState.healthFill = m_handheldOverlayState.healthFill;
+  overlayState.energyFill = m_handheldOverlayState.energyFill;
+  overlayState.breathFill = m_handheldOverlayState.breathFill;
   m_handheldOverlayState = overlayState;
+}
+
+void N3dsStubRenderer::setHandheldGameplayState(bool inWorld, float healthFill, float energyFill, float breathFill) {
+  m_handheldOverlayState.inWorld = inWorld;
+  m_handheldOverlayState.healthFill = std::clamp(healthFill, 0.0f, 1.0f);
+  m_handheldOverlayState.energyFill = std::clamp(energyFill, 0.0f, 1.0f);
+  m_handheldOverlayState.breathFill = std::clamp(breathFill, 0.0f, 1.0f);
+}
+
+void N3dsStubRenderer::setHandheldTitleMenuState(bool active) {
+  m_handheldOverlayState.titleMenuActive = active;
+  if (active)
+    m_handheldOverlayState.inWorld = false;
+  setN3dsTitleMenuInputActive(active);
 }
 
 void N3dsStubRenderer::sealImmediatePrimitiveBatch() {

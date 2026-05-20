@@ -13,6 +13,12 @@ struct N3dsHandheldOverlayState {
   Vec2F pointerPosition = {200.0f, 120.0f};
   Vec2F touchPosition = {160.0f, 120.0f};
   unsigned selectedHotbarSlot = 0;
+  unsigned selectedTitleMenuItem = 0;
+  float healthFill = 1.0f;
+  float energyFill = 1.0f;
+  float breathFill = 1.0f;
+  bool inWorld = false;
+  bool titleMenuActive = false;
   bool pointerPressed = false;
   bool touchPressed = false;
   bool circlePadActive = false;
@@ -61,6 +67,8 @@ public:
   void flush(Mat3F const& transformation) override;
 
   void setHandheldOverlayState(N3dsHandheldOverlayState overlayState);
+  void setHandheldGameplayState(bool inWorld, float healthFill, float energyFill, float breathFill);
+  void setHandheldTitleMenuState(bool active);
 
 private:
   struct PrimitiveBatch {
@@ -86,5 +94,8 @@ private:
   unsigned m_frameCounter = 0;
   N3dsHandheldOverlayState m_handheldOverlayState;
 };
+
+void setN3dsTitleMenuInputActive(bool active);
+bool n3dsTitleMenuInputActive();
 
 }

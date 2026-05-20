@@ -58,6 +58,7 @@ struct N3dsInputState {
   bool touchPressed = false;
   bool touchUiPressed = false;
   bool cStickPointerPressed = false;
+  unsigned selectedTitleMenuItem = 0;
   Star::Vec2F lastTouchPosition = {0.0f, 0.0f};
   Star::Vec2F pointerPosition = {200.0f, 120.0f};
   Star::N3dsHandheldOverlayState handheldOverlay;
@@ -155,6 +156,36 @@ void appendKeyTapEvents(Star::List<Star::InputEvent>& outEvents, Star::Key key) 
 void appendHotbarSelectEvents(Star::List<Star::InputEvent>& outEvents, N3dsInputState& state, unsigned slot) {
   state.handheldOverlay.selectedHotbarSlot = std::min(slot, N3dsBottomHotbarSlotCount - 1);
   appendKeyTapEvents(outEvents, n3dsHotbarKeyForSlot(state.handheldOverlay.selectedHotbarSlot));
+}
+
+Star::Key n3dsTitleMenuKeyForItem(unsigned item) {
+  static constexpr Star::Key MenuKeys[] = {
+      Star::Key::Return,
+      Star::Key::Space,
+      Star::Key::E,
+      Star::Key::Escape,
+  };
+
+  return MenuKeys[std::min(item, 3u)];
+}
+
+Star::Maybe<unsigned> n3dsBottomTitleMenuItemAt(float x, float yTopOrigin) {
+  constexpr float ButtonX = 18.0f;
+  constexpr float ButtonY = 58.0f;
+  constexpr float ButtonW = 284.0f;
+  constexpr float ButtonH = 34.0f;
+  constexpr float ButtonGap = 10.0f;
+
+  if (x < ButtonX || x >= ButtonX + ButtonW || yTopOrigin < ButtonY)
+    return {};
+
+  float relativeY = yTopOrigin - ButtonY;
+  unsigned item = static_cast<unsigned>(relativeY / (ButtonH + ButtonGap));
+  float itemY = item * (ButtonH + ButtonGap);
+  if (item >= 4 || relativeY < itemY || relativeY >= itemY + ButtonH)
+    return {};
+
+  return item;
 }
 
 Star::Maybe<Star::Key> n3dsBottomQuickActionAt(float x, float yTopOrigin) {
@@ -400,10 +431,33 @@ Star::List<Star::InputEvent> n3dsProcessInputEvents(N3dsInputState& state) {
   down |= circleDown;
   up |= circleUp;
 
-  if (down & KEY_DRIGHT)
-    appendHotbarSelectEvents(events, state, (state.handheldOverlay.selectedHotbarSlot + 1) % N3dsBottomHotbarSlotCount);
-  if (down & KEY_DLEFT)
-    appendHotbarSelectEvents(events, state, (state.handheldOverlay.selectedHotbarSlot + N3dsBottomHotbarSlotCount - 1) % N3dsBottomHotbarSlotCount);
+  bool titleMenuActive = Star::n3dsTitleMenuInputActive();
+  state.handheldOverlay.titleMenuActive = titleMenuActive;
+  if (titleMenuActive) {
+    if (down & KEY_DDOWN)
+      state.selectedTitleMenuItem = (state.selectedTitleMenuItem + 1) % 4;
+    if (down & KEY_DUP)
+      state.selectedTitleMenuItem = (state.selectedTitleMenuItem + 3) % 4;
+
+    if (down & KEY_A)
+      appendKeyTapEvents(events, n3dsTitleMenuKeyForItem(state.selectedTitleMenuItem));
+    if (down & KEY_B)
+      appendKeyTapEvents(events, Star::Key::Escape);
+    if (down & KEY_X)
+      appendKeyTapEvents(events, Star::Key::Space);
+    if (down & KEY_Y)
+      appendKeyTapEvents(events, Star::Key::E);
+
+    constexpr u32 TitleMenuControlMask = KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT | KEY_A | KEY_B | KEY_X | KEY_Y | KEY_START;
+    down &= ~TitleMenuControlMask;
+    up &= ~TitleMenuControlMask;
+  } else {
+    if (down & KEY_DRIGHT)
+      appendHotbarSelectEvents(events, state, (state.handheldOverlay.selectedHotbarSlot + 1) % N3dsBottomHotbarSlotCount);
+    if (down & KEY_DLEFT)
+      appendHotbarSelectEvents(events, state, (state.handheldOverlay.selectedHotbarSlot + N3dsBottomHotbarSlotCount - 1) % N3dsBottomHotbarSlotCount);
+  }
+  state.handheldOverlay.selectedTitleMenuItem = state.selectedTitleMenuItem;
 
   appendMappedKeyEvents(events, down, up, n3dsKeyMods(held));
   appendMappedControllerButtonEvents(events, down, up);
@@ -455,7 +509,15 @@ Star::List<Star::InputEvent> n3dsProcessInputEvents(N3dsInputState& state) {
 
   bool touchHandledByBottomUi = state.touchUiPressed;
   if (touchNow && !state.touchPressed && !state.touchUiPressed) {
-    if (auto slot = n3dsBottomHotbarSlotAt((float)touch.px, (float)touch.py)) {
+    if (titleMenuActive) {
+      if (auto item = n3dsBottomTitleMenuItemAt((float)touch.px, (float)touch.py)) {
+        state.selectedTitleMenuItem = *item;
+        state.handheldOverlay.selectedTitleMenuItem = state.selectedTitleMenuItem;
+        appendKeyTapEvents(events, n3dsTitleMenuKeyForItem(state.selectedTitleMenuItem));
+        touchHandledByBottomUi = true;
+        state.touchUiPressed = true;
+      }
+    } else if (auto slot = n3dsBottomHotbarSlotAt((float)touch.px, (float)touch.py)) {
       appendHotbarSelectEvents(events, state, *slot);
       touchHandledByBottomUi = true;
       state.touchUiPressed = true;

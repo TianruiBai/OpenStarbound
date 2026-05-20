@@ -32,10 +32,16 @@
 #include "StarHttpTrustDialog.hpp"
 #include "StarMainInterfaceTypes.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include "StarRenderer_n3ds_stub.hpp"
+#endif
+
 #ifndef STAR_PLATFORM_N3DS
 #include "imgui.h"
 #include "imgui_freetype.h"
 #endif
+
+#include <algorithm>
 
 #if defined STAR_SYSTEM_WINDOWS
 #include <windows.h>
@@ -490,24 +496,63 @@ void ClientApplication::render() {
     m_cinematicOverlay->render();
 
   } else if (m_state == MainAppState::Title) {
+#ifdef STAR_PLATFORM_N3DS
+    if (auto n3dsRenderer = dynamic_cast<N3dsStubRenderer*>(renderer.get()))
+      n3dsRenderer->setHandheldTitleMenuState(m_titleScreen && m_titleScreen->currentState() == TitleState::Main);
+#endif
     if (m_titleScreen)
       m_titleScreen->render();
+#ifdef STAR_PLATFORM_N3DS
+    if (!m_titleScreen || m_titleScreen->currentState() != TitleState::Main)
+      m_cinematicOverlay->render();
+#else
     m_cinematicOverlay->render();
+#endif
 
   } else if (m_state > MainAppState::Title) {
     WorldClientPtr worldClient = m_universeClient->worldClient();
     if (worldClient) {
 #ifdef STAR_PLATFORM_N3DS
+      auto totalStart = Time::monotonicMicroseconds();
+      if (auto n3dsRenderer = dynamic_cast<N3dsStubRenderer*>(renderer.get()))
+        n3dsRenderer->setHandheldTitleMenuState(false);
       renderer->switchEffectConfig("world");
+      auto clientStart = totalStart;
       worldClient->render(m_renderData, 0);
-      m_worldPainter->render(m_renderData, {});
+      LogMap::set("client_render_world_client", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - clientStart));
+
+      auto paintStart = Time::monotonicMicroseconds();
+      m_worldPainter->render(m_renderData, [&]() -> bool {
+        return worldClient->waitForLighting(&m_renderData);
+      });
+      LogMap::set("client_render_world_painter", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - paintStart));
+      LogMap::set("client_render_world_total", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - totalStart));
+
+      if (auto n3dsRenderer = dynamic_cast<N3dsStubRenderer*>(renderer.get())) {
+        auto resourceFill = [](float value, float maxValue) {
+          if (maxValue <= 0.0f)
+            return 0.0f;
+          return std::clamp(value / maxValue, 0.0f, 1.0f);
+        };
+
+        float healthFill = 1.0f;
+        float energyFill = 1.0f;
+        float breathFill = 1.0f;
+        if (m_player) {
+          try {
+            healthFill = resourceFill(m_player->health(), m_player->maxHealth());
+            energyFill = resourceFill(m_player->energy(), m_player->maxEnergy());
+            breathFill = resourceFill(m_player->breath(), m_player->maxBreath());
+          } catch (std::exception const&) {}
+        }
+        n3dsRenderer->setHandheldGameplayState(worldClient->inWorld(), healthFill, energyFill, breathFill);
+      }
       static bool loggedN3dsInWorldRender = false;
       if (!loggedN3dsInWorldRender && worldClient->inWorld()) {
         Logger::info("N3DS ClientApplication: in-world render complete");
         loggedN3dsInWorldRender = true;
       }
-      return;
-#endif
+      #else
 
       auto totalStart = Time::monotonicMicroseconds();
       renderer->switchEffectConfig("world");
@@ -534,6 +579,7 @@ void ClientApplication::render() {
           }
         }
       }
+#endif
     }
     renderer->switchEffectConfig("interface");
     auto start = Time::monotonicMicroseconds();
@@ -1340,11 +1386,9 @@ void ClientApplication::updateTitle(float dt) {
 
   } else if (m_titleScreen->currentState() == TitleState::Quit) {
 #ifdef STAR_PLATFORM_N3DS
-    Logger::info("OSBN3DSState: intercepted TitleState::Quit, resetting title state");
-    m_titleScreen->resetState();
-#else
-    changeState(MainAppState::Quit);
+    Logger::info("OSBN3DSState: TitleState::Quit selected on bottom title menu");
 #endif
+    changeState(MainAppState::Quit);
   }
 }
 

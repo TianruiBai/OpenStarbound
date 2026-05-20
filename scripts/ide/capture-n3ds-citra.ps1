@@ -16,6 +16,7 @@ param(
   [switch]$NoRepack,
   [switch]$UseCxi,
   [switch]$AutoStartSinglePlayer,
+  [switch]$UseExistingCitraLayout,
   [switch]$KeepCitraOpen
 )
 
@@ -154,6 +155,83 @@ if ($UseCxi) {
 if (Test-Path $capture) { Remove-Item -Recurse -Force $capture }
 New-Item -ItemType Directory -Path $capture -Force | Out-Null
 
+function Set-CitraIniValue([System.Collections.Generic.List[string]]$lines, [string]$section, [string]$key, [string]$value) {
+  $sectionHeader = "[$section]"
+  $sectionIndex = -1
+  for ($i = 0; $i -lt $lines.Count; ++$i) {
+    if ($lines[$i] -eq $sectionHeader) {
+      $sectionIndex = $i
+      break
+    }
+  }
+
+  if ($sectionIndex -lt 0) {
+    if ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -ne "") { $lines.Add("") }
+    $lines.Add($sectionHeader)
+    $sectionIndex = $lines.Count - 1
+  }
+
+  $insertIndex = $lines.Count
+  for ($i = $sectionIndex + 1; $i -lt $lines.Count; ++$i) {
+    if ($lines[$i] -match '^\[.*\]$') {
+      $insertIndex = $i
+      break
+    }
+
+    if ($lines[$i] -like "$key=*") {
+      $lines[$i] = "$key=$value"
+      return
+    }
+  }
+
+  $lines.Insert($insertIndex, "$key=$value")
+}
+
+$citraConfigPath = Join-Path $env:APPDATA "Citra\config\qt-config.ini"
+$citraConfigBackupBytes = $null
+if (!$UseExistingCitraLayout -and (Test-Path $citraConfigPath)) {
+  $citraConfigBackupBytes = [System.IO.File]::ReadAllBytes($citraConfigPath)
+  $lines = New-Object 'System.Collections.Generic.List[string]'
+  $lines.AddRange([System.IO.File]::ReadAllLines($citraConfigPath))
+
+  $layoutScale = [Math]::Max(1, [Math]::Min([Math]::Floor(($WindowWidth - 40) / 400), [Math]::Floor(($WindowHeight - 120) / 480)))
+  $topWidth = 400 * $layoutScale
+  $topHeight = 240 * $layoutScale
+  $bottomWidth = 320 * $layoutScale
+  $bottomHeight = 240 * $layoutScale
+  $bottomLeft = [Math]::Floor(($topWidth - $bottomWidth) / 2)
+  $bottomTop = $topHeight
+
+  Set-CitraIniValue $lines "Layout" "layout_option\default" "false"
+  Set-CitraIniValue $lines "Layout" "layout_option" "0"
+  Set-CitraIniValue $lines "Layout" "swap_screen\default" "false"
+  Set-CitraIniValue $lines "Layout" "swap_screen" "false"
+  Set-CitraIniValue $lines "Layout" "upright_screen\default" "false"
+  Set-CitraIniValue $lines "Layout" "upright_screen" "false"
+  Set-CitraIniValue $lines "Layout" "custom_layout\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_layout" "true"
+  Set-CitraIniValue $lines "Layout" "custom_top_left\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_top_left" "0"
+  Set-CitraIniValue $lines "Layout" "custom_top_top\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_top_top" "0"
+  Set-CitraIniValue $lines "Layout" "custom_top_right\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_top_right" "$topWidth"
+  Set-CitraIniValue $lines "Layout" "custom_top_bottom\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_top_bottom" "$topHeight"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_left\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_left" "$bottomLeft"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_top\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_top" "$bottomTop"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_right\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_right" "$($bottomLeft + $bottomWidth)"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_bottom\default" "false"
+  Set-CitraIniValue $lines "Layout" "custom_bottom_bottom" "$($bottomTop + $bottomHeight)"
+
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllLines($citraConfigPath, $lines, $utf8NoBom)
+  Write-Host "Using temporary Citra custom layout: top ${topWidth}x${topHeight}, bottom ${bottomWidth}x${bottomHeight}"
+}
+
 $sdmcStorage = Join-Path $env:APPDATA "Citra\sdmc\OpenStarbound\storage"
 $autoStartMarker = Join-Path $sdmcStorage "n3ds_autostart_singleplayer"
 if ($AutoStartSinglePlayer) {
@@ -166,13 +244,13 @@ if ($AutoStartSinglePlayer) {
 
 Get-Process citra-qt -ErrorAction SilentlyContinue | Stop-Process -Force
 
-if (-not ("OpenStarboundN3dsCitraCaptureV2.NativeMethods" -as [type])) {
+if (-not ("OpenStarboundN3dsCitraCaptureV3.NativeMethods" -as [type])) {
   Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace OpenStarboundN3dsCitraCaptureV2 {
+namespace OpenStarboundN3dsCitraCaptureV3 {
   public static class NativeMethods {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -198,6 +276,12 @@ namespace OpenStarboundN3dsCitraCaptureV2 {
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    public static string WindowTitle(IntPtr hWnd) {
+      StringBuilder title = new StringBuilder(512);
+      GetWindowText(hWnd, title, title.Capacity);
+      return title.ToString();
+    }
 
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -258,35 +342,39 @@ try {
   while ((Get-Date) -lt $deadline) {
     $process.Refresh()
     if ($process.HasExited) { throw "Citra exited before a visible window was found" }
-    $window = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::FindVisibleWindowForProcess($process.Id)
+    $window = [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::FindVisibleWindowForProcess($process.Id)
     if ($window -ne [IntPtr]::Zero) { break }
     Start-Sleep -Milliseconds 250
   }
 
   if ($window -eq [IntPtr]::Zero) { throw "Timed out waiting for a visible Citra window for PID $($process.Id)" }
 
-  $rect = New-Object OpenStarboundN3dsCitraCaptureV2.NativeMethods+RECT
-  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::ShowWindow($window, 9) | Out-Null
-  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::MoveWindow($window, 10, 10, $WindowWidth, $WindowHeight, $true) | Out-Null
-  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::SetForegroundWindow($window) | Out-Null
+  $rect = New-Object OpenStarboundN3dsCitraCaptureV3.NativeMethods+RECT
+  [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::ShowWindow($window, 9) | Out-Null
+  [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::MoveWindow($window, 10, 10, $WindowWidth, $WindowHeight, $true) | Out-Null
+  [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::SetForegroundWindow($window) | Out-Null
   Start-Sleep -Seconds $CaptureDelaySeconds
 
   $process.Refresh()
   if ($process.HasExited) { throw "Citra exited before capture" }
 
-  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::ShowWindow($window, 9) | Out-Null
-  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::SetForegroundWindow($window) | Out-Null
+  $refreshedWindow = [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::FindVisibleWindowForProcess($process.Id)
+  if ($refreshedWindow -ne [IntPtr]::Zero) { $window = $refreshedWindow }
 
-  if (![OpenStarboundN3dsCitraCaptureV2.NativeMethods]::IsWindow($window)) {
-    $window = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::FindVisibleWindowForProcess($process.Id)
+  [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::ShowWindow($window, 9) | Out-Null
+  [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::SetForegroundWindow($window) | Out-Null
+
+  if (![OpenStarboundN3dsCitraCaptureV3.NativeMethods]::IsWindow($window)) {
+    $window = [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::FindVisibleWindowForProcess($process.Id)
     if ($window -eq [IntPtr]::Zero) { throw "Citra window was no longer valid for PID $($process.Id)" }
   }
 
-  if (![OpenStarboundN3dsCitraCaptureV2.NativeMethods]::GetWindowRect($window, [ref]$rect)) {
+  if (![OpenStarboundN3dsCitraCaptureV3.NativeMethods]::GetWindowRect($window, [ref]$rect)) {
     throw "Could not query Citra window bounds"
   }
   $captureWidth = [Math]::Max(1, $rect.Right - $rect.Left)
   $captureHeight = [Math]::Max(1, $rect.Bottom - $rect.Top)
+  $captureTitle = [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::WindowTitle($window)
   $bitmap = New-Object System.Drawing.Bitmap $captureWidth, $captureHeight
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
   $captureMethod = "CopyFromScreen"
@@ -299,9 +387,9 @@ try {
     $captureMethod = "PrintWindow"
     $hdc = $graphics.GetHdc()
     try {
-      $captured = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::PrintWindow($window, $hdc, 2)
+      $captured = [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::PrintWindow($window, $hdc, 2)
       if (!$captured) {
-        $captured = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::PrintWindow($window, $hdc, 0)
+        $captured = [OpenStarboundN3dsCitraCaptureV3.NativeMethods]::PrintWindow($window, $hdc, 0)
       }
     } finally {
       $graphics.ReleaseHdc($hdc)
@@ -322,6 +410,9 @@ try {
   if ($process -and !$process.HasExited -and !$KeepCitraOpen) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
   }
+  if ($citraConfigBackupBytes) {
+    [System.IO.File]::WriteAllBytes($citraConfigPath, $citraConfigBackupBytes)
+  }
 }
 
 foreach ($logRoot in @((Join-Path $env:APPDATA "Citra"), (Join-Path $env:APPDATA "Citra\log"))) {
@@ -334,6 +425,8 @@ $windowPng = Join-Path $capture "window.png"
 if (!(Test-Path $windowPng)) { throw "Capture failed: $windowPng was not created" }
 
 Write-Host "Citra window found: True"
+Write-Host "Citra window title: $captureTitle"
+Write-Host "Citra window size: ${captureWidth}x${captureHeight}"
 Write-Host "Capture: $windowPng"
 Write-Host "Capture method: $captureMethod"
 Write-Host "Capture exists: $(Test-Path $windowPng)"
