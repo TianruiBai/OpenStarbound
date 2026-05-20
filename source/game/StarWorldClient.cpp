@@ -486,6 +486,25 @@ WorldClientState& WorldClient::clientState() {
 }
 
 void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
+#ifdef STAR_PLATFORM_N3DS
+  renderData.clear();
+  if (!inWorld())
+    return;
+
+  static bool loggedCompactRender = false;
+  if (!loggedCompactRender) {
+    Logger::info("N3DS WorldClient: compact render data active");
+    loggedCompactRender = true;
+  }
+
+  renderData.geometry = m_geometry;
+  renderData.tileMinPosition = m_clientState.window().min();
+  renderData.isFullbright = true;
+  renderData.dimLevel = 0.0f;
+  renderData.dimColor = Vec3B();
+  return;
+#endif
+
   if (!m_lightingThread && m_asyncLighting)
     m_lightingThread = Thread::invoke("WorldClient::lightingMain", mem_fn(&WorldClient::lightingMain), this);
 
@@ -830,11 +849,6 @@ void WorldClient::setCollisionDebug(bool collisionDebug) {
 }
 
 void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
-  auto& root = Root::singleton();
-  auto materialDatabase = root.materialDatabase();
-  auto itemDatabase = root.itemDatabase();
-  auto entityFactory = root.entityFactory();
-
   for (auto const& packet : packets) {
     if (!inWorld() && !is<WorldStartPacket>(packet))
       Logger::error("WorldClient received packet type {} while not in world", PacketTypeNames.getRight(packet->type()));
@@ -852,6 +866,7 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
         removeEntity(entityCreate->entityId, false);
       }
 
+      auto entityFactory = Root::singleton().entityFactory();
       auto netRules = m_clientState.netCompatibilityRules();
       auto entity = entityFactory->netLoadEntity(entityCreate->entityType, entityCreate->storeData, netRules);
       entity->readNetState(entityCreate->firstNetState, 0.0f, netRules);
@@ -978,9 +993,13 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
         }
 
         if (auto placeMaterial = modification.second.ptr<PlaceMaterial>()) {
+          auto materialDatabase = Root::singleton().materialDatabase();
+          auto itemDatabase = Root::singleton().itemDatabase();
           auto stack = materialDatabase->materialItemDrop(placeMaterial->material);
           tryGiveMainPlayerItem(itemDatabase->item(stack), true);
         } else if (auto placeMod = modification.second.ptr<PlaceMod>()) {
+          auto materialDatabase = Root::singleton().materialDatabase();
+          auto itemDatabase = Root::singleton().itemDatabase();
           auto stack = materialDatabase->modItemDrop(placeMod->mod);
           tryGiveMainPlayerItem(itemDatabase->item(stack), true);
         }
@@ -992,6 +1011,7 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
         tile->liquid = liquidUpdate->liquidUpdate.liquidLevel();
 
     } else if (auto giveItem = as<GiveItemPacket>(packet)) {
+      auto itemDatabase = Root::singleton().itemDatabase();
       tryGiveMainPlayerItem(itemDatabase->item(giveItem->item));
 
     } else if (auto stepUpdate = as<StepUpdatePacket>(packet)) {
@@ -1163,6 +1183,23 @@ List<PacketPtr> WorldClient::getOutgoingPackets() {
 void WorldClient::update(float dt) {
   if (!inWorld())
     return;
+
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedCompactUpdate = false;
+  if (!loggedCompactUpdate) {
+    Logger::info("N3DS WorldClient: compact update active");
+    loggedCompactUpdate = true;
+  }
+
+  ++m_currentStep;
+  m_currentTime += dt;
+  m_interpolationTracker.update(m_currentTime);
+  m_clientState.setPlayer(m_mainPlayer->entityId());
+  m_clientState.setClientPresenceEntities(List<EntityId>());
+  centerClientWindowOnPlayer();
+  queueUpdatePackets(m_entityUpdateTimer.wrapTick(dt));
+  return;
+#endif
 
   auto assets = Root::singleton().assets();
 
@@ -1536,14 +1573,14 @@ void WorldClient::setTileProtection(DungeonId dungeonId, bool isProtected) {
 }
 
 void WorldClient::queueUpdatePackets(bool sendEntityUpdates) {
-  auto& root = Root::singleton();
-  auto assets = root.assets();
-  auto entityFactory = root.entityFactory();
-
   m_outgoingPackets.append(make_shared<StepUpdatePacket>(m_currentTime));
 
   if (m_currentStep % m_clientConfig.getInt("worldClientStateUpdateDelta") == 0)
     m_outgoingPackets.append(make_shared<WorldClientStateUpdatePacket>(m_clientState.writeDelta()));
+
+#ifdef STAR_PLATFORM_N3DS
+  return;
+#endif
 
   m_entityMap->forAllEntities([&](EntityPtr const& entity) { notifyEntityCreate(entity); });
 
@@ -1820,6 +1857,9 @@ void WorldClient::lightingMain() {
 }
 
 void WorldClient::initWorld(WorldStartPacket const& startPacket) {
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: WorldStart begin");
+#endif
   clearWorld();
   m_outgoingPackets.append(make_shared<WorldStartAcknowledgePacket>());
 
@@ -1867,20 +1907,50 @@ void WorldClient::initWorld(WorldStartPacket const& startPacket) {
   m_particles = make_shared<ParticleManager>(m_geometry, m_tileArray);
   m_particles->setUndergroundLevel(m_worldTemplate->undergroundLevel());
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: skipped force regions");
+#else
   setupForceRegions();
+#endif
 
   m_sky = make_shared<Sky>();
   m_sky->readUpdate(startPacket.skyData, m_clientState.netCompatibilityRules());
 
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: skipped weather setup");
+#else
   m_weather.setup(m_geometry, [this](Vec2I const& pos) {
       auto const& tile = m_tileArray->tile(pos);
       return !isRealMaterial(tile.background) && !isSolidColliding(tile.getCollision());
     });
   m_weather.readUpdate(startPacket.weatherData, m_clientState.netCompatibilityRules());
+#endif
 
   m_lightingCalculator.setMonochrome(Root::singleton().configuration()->get("monochromeLighting").toBool());
+#ifdef STAR_PLATFORM_N3DS
+  m_lightingCalculator.setParameters(JsonObject{
+    {"spreadPasses", 0},
+    {"spreadMaxAir", 0.0f},
+    {"spreadMaxObstacle", 0.0f},
+    {"pointMaxAir", 0.0f},
+    {"pointMaxObstacle", 0.0f},
+    {"pointObstacleBoost", 0.0f},
+    {"pointAdditive", false}
+  });
+  m_lightIntensityCalculator.setParameters(JsonObject{
+    {"spreadPasses", 0},
+    {"spreadMaxAir", 0.0f},
+    {"spreadMaxObstacle", 0.0f},
+    {"pointMaxAir", 0.0f},
+    {"pointMaxObstacle", 0.0f},
+    {"pointObstacleBoost", 0.0f},
+    {"pointAdditive", false}
+  });
+  Logger::info("N3DS WorldClient: compact lighting ready");
+#else
   m_lightingCalculator.setParameters(assets->json("/lighting.config:lighting"));
   m_lightIntensityCalculator.setParameters(assets->json("/lighting.config:intensity"));
+#endif
 
   m_inWorld = true;
   
@@ -1897,6 +1967,9 @@ void WorldClient::initWorld(WorldStartPacket const& startPacket) {
   // Auto reposition the client window on the player when the main player
   // changes position.
   centerClientWindowOnPlayer();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldClient: WorldStart complete");
+#endif
 }
 
 void WorldClient::clearWorld() {

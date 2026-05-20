@@ -1533,6 +1533,9 @@ void UniverseServer::warpPlayers() {
           // perfect, it can still become invalid in between, if we fail at
           // adding the client we need to warp them back.
           bool clientAdded = toWorld && toWorld->addClient(clientId, warpToWorld.target, !clientContext->remoteAddress(), clientContext->canBecomeAdmin(), clientContext->netRules());
+#ifdef STAR_PLATFORM_N3DS
+          Logger::info("N3DS UniverseServer: addClient to world {}", clientAdded ? "succeeded" : "failed");
+#endif
 
           locker.lock();
           if (clientAdded) {
@@ -1568,6 +1571,9 @@ void UniverseServer::warpPlayers() {
     } else {
       // If the world is not created yet, just set a new warp again to wait for
       // it to create.
+#ifdef STAR_PLATFORM_N3DS
+      Logger::info("N3DS UniverseServer: waiting for world creation before warp");
+#endif
       m_pendingPlayerWarps[clientId] = {warpAction, deploy};
     }
   }
@@ -1830,10 +1836,12 @@ void UniverseServer::shutdownInactiveWorlds() {
   // Shutdown idle and errored worlds.
   for (auto const& worldId : m_worlds.keys()) {
     if (auto world = getWorld(worldId)) {
+      bool stoppedWorld = false;
       clientsLocker.unlock();
       locker.unlock();
       if (world->serverErrorOccurred()) {
         world->stop();
+        stoppedWorld = true;
         Logger::error("UniverseServer: World {} has stopped due to an error", worldId);
         worldDiedWithError(world->worldId());
       } else if (world->noClients()) {
@@ -1848,11 +1856,16 @@ void UniverseServer::shutdownInactiveWorlds() {
         if (!anyPendingWarps && world->shouldExpire()) {
           Logger::info("UniverseServer: Stopping idle world {}", worldId);
           world->stop();
+          stoppedWorld = true;
         }
       }
       locker.lock();
       clientsLocker.lock();
+#ifdef STAR_PLATFORM_N3DS
+      if (stoppedWorld) {
+#else
       if (world->isJoined()) {
+#endif
         auto kickClients = world->clients();
         if (!kickClients.empty()) {
           Logger::info("UniverseServer: World {} shutdown, kicking {} players to their own ships", worldId, world->clients().size());
@@ -3524,7 +3537,22 @@ WorldServerThreadPtr UniverseServer::createWorld(WorldId const& worldId) {
 Maybe<WorldServerThreadPtr> UniverseServer::triggerWorldCreation(WorldId const& worldId) {
   if (!m_worlds.contains(worldId)) {
     if (auto promise = makeWorldPromise(worldId)) {
-      m_worlds.add(worldId, promise.take());
+      auto worldPromise = promise.take();
+      m_worlds.add(worldId, worldPromise);
+#ifdef STAR_PLATFORM_N3DS
+      try {
+        if (worldPromise.poll()) {
+          Logger::info("N3DS UniverseServer: world creation completed synchronously for {}", printWorldId(worldId));
+          return worldPromise.get();
+        }
+      } catch (std::exception const& e) {
+        auto& maybeWorldPromise = m_worlds.get(worldId);
+        maybeWorldPromise.reset();
+        Logger::error("UniverseServer: error during world create: {}", outputException(e, true));
+        worldDiedWithError(worldId);
+        return WorldServerThreadPtr();
+      }
+#endif
       return {};
     } else {
       return WorldServerThreadPtr();
@@ -3575,7 +3603,12 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
   return m_workerPool.addProducer<WorldServerThreadPtr>([this, clientShipWorldId, clientContext, speciesShips, celestialDatabase, universeClock]() {
     WorldServerPtr shipWorld;
 
+  #ifdef STAR_PLATFORM_N3DS
+    WorldChunks shipChunks;
+    Logger::info("N3DS UniverseServer: ignored stored ship chunks for compact ship world");
+  #else
     auto shipChunks = clientContext->shipChunks();
+  #endif
     if (!shipChunks.empty()) {
       try {
         Logger::info("UniverseServer: Loading client ship world {}", clientShipWorldId);
@@ -3588,17 +3621,38 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
 
     if (!shipWorld) {
       Logger::info("UniverseServer: Creating new client ship world {}", clientShipWorldId);
+    #ifdef STAR_PLATFORM_N3DS
+      auto species = clientContext->shipSpecies();
+      if (species.empty() || !speciesShips.contains(species)) {
+        Logger::info("N3DS UniverseServer: falling back to human ship for missing species '{}'", species);
+        species = "human";
+        clientContext->setShipSpecies(species);
+      }
+    #else
       auto& species = clientContext->shipSpecies();
+    #endif
+      ShipUpgrades currentUpgrades = clientContext->shipUpgrades();
+#ifdef STAR_PLATFORM_N3DS
+  Vec2U worldSize(32, 32);
+      Logger::info("N3DS UniverseServer: creating compact empty ship world {}", worldSize);
+      shipWorld = make_shared<WorldServer>(worldSize, File::ephemeralFile());
+  Logger::info("N3DS UniverseServer: compact empty ship world created");
+      if (currentUpgrades.maxFuel == 0)
+        currentUpgrades.maxFuel = 1000;
+      if (currentUpgrades.crewSize == 0)
+        currentUpgrades.crewSize = 2;
+      if (currentUpgrades.shipSpeed == 0)
+        currentUpgrades.shipSpeed = 1.0f;
+#else
       auto shipStructure = WorldStructure(speciesShips.get(species).first());
       Vec2U worldSize(2048, 2048);
       if (auto jWorldSize = shipStructure.configValue("worldSize"))
         worldSize = jsonToVec2U(jWorldSize);
       shipWorld = make_shared<WorldServer>(worldSize, File::ephemeralFile());
       shipStructure = shipWorld->setCentralStructure(shipStructure);
-
-      ShipUpgrades currentUpgrades = clientContext->shipUpgrades();
       currentUpgrades.apply(Root::singleton().assets()->json("/ships/shipupgrades.config"));
       currentUpgrades.apply(shipStructure.configValue("shipUpgrades"));
+#endif
       clientContext->setShipUpgrades(currentUpgrades);
 
       shipWorld->setSpawningEnabled(false);

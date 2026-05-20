@@ -1,3 +1,8 @@
+if assets.n3ds() then
+  sb.logInfo("N3DS: skipped OpenSB desktop asset postload generation")
+  return
+end
+
 -- Revert cursor frames if a mod replaced cursors.png with a SD version again
 -- Otherwise, scale down our HD cursors
 if assets.image("/cursors/cursors.png"):size()[1] == 64 then

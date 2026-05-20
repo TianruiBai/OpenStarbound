@@ -332,11 +332,18 @@ WorldChunks PlayerStorage::loadShipData(Uuid const& uuid) {
 
 void PlayerStorage::applyShipUpdates(Uuid const& uuid, WorldChunks const& updates) {
   RecursiveMutexLocker locker(m_mutex);
-  if (!m_savedPlayersCache.contains(uuid))
-    throw PlayerException(strf("No such stored player with uuid '{}'", uuid.hex()));
-
   if (updates.empty())
     return;
+
+  if (!m_savedPlayersCache.contains(uuid)) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS PlayerStorage: skipped ship updates for unsaved player {}", uuid.hex());
+    return;
+#else
+    throw PlayerException(strf("No such stored player with uuid '{}'", uuid.hex()));
+#endif
+  }
+
   String filePath = File::relativeTo(m_storageDirectory, strf("{}.shipworld", uuidFileName(uuid)));
   WorldStorage::applyWorldChunksUpdateToFile(filePath, updates);
 }

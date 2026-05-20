@@ -15,7 +15,11 @@ MaterialDatabase::MaterialDatabase() {
       {"metamod:undergroundbiome", UndergroundBiomeModId}};
 
   auto assets = Root::singleton().assets();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS MaterialDatabase: skipped mining particle database preload");
+#else
   auto pdb = Root::singleton().particleDatabase();
+#endif
 
   setMetaMaterial(EmptyMaterialId, MaterialDatabase::MetaMaterialInfo{"metamaterial:empty", EmptyMaterialId, CollisionKind::None, false});
   setMetaMaterial(NullMaterialId, MaterialDatabase::MetaMaterialInfo{"metamaterial:null", NullMaterialId, CollisionKind::Block, true});
@@ -86,8 +90,10 @@ MaterialDatabase::MaterialDatabase() {
       material.category = matConfig.getString("category");
 
       material.particleColor = jsonToColor(matConfig.get("particleColor", JsonArray{0, 0, 0, 255}));
+#ifndef STAR_PLATFORM_N3DS
       if (matConfig.contains("miningParticle"))
         material.miningParticle = pdb->config(matConfig.getString("miningParticle"));
+#endif
       if (matConfig.contains("miningSounds"))
         material.miningSounds = transform<StringList>(
             jsonToStringList(matConfig.get("miningSounds")), bind(AssetPath::relativeTo, file, _1));
@@ -163,8 +169,10 @@ MaterialDatabase::MaterialDatabase() {
       mod.descriptions = descriptions;
 
       mod.particleColor = jsonToColor(modConfig.get("particleColor", JsonArray{0, 0, 0, 255}));
+#ifndef STAR_PLATFORM_N3DS
       if (modConfig.contains("miningParticle"))
         mod.miningParticle = pdb->config(modConfig.getString("miningParticle"));
+#endif
       if (modConfig.contains("miningSounds"))
         mod.miningSounds = transform<StringList>(
             jsonToStringList(modConfig.get("miningSounds")), bind(AssetPath::relativeTo, file, _1));

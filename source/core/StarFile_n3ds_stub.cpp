@@ -156,8 +156,9 @@ String File::fullPath(String const& path) {
 }
 
 String File::temporaryFileName() {
+  makeDirectoryRecursive("sdmc:/OpenStarbound/tmp");
   auto id = ++sTempCounter;
-  return strf("/tmp/starbound.tmpfile.{}", id);
+  return strf("sdmc:/OpenStarbound/tmp/starbound.tmpfile.{}", id);
 }
 
 FilePtr File::temporaryFile() {
@@ -170,7 +171,8 @@ FilePtr File::ephemeralFile() {
 }
 
 String File::temporaryDirectory() {
-  String dirname = strf("/tmp/starbound.tmpdir.{}", ++sTempCounter);
+  makeDirectoryRecursive("sdmc:/OpenStarbound/tmp");
+  String dirname = strf("sdmc:/OpenStarbound/tmp/starbound.tmpdir.{}", ++sTempCounter);
   makeDirectory(dirname);
   return dirname;
 }
@@ -300,8 +302,25 @@ size_t File::pwrite(void* file, char const* data, size_t len, StreamOffset posit
   return bytes;
 }
 
-void File::resize(void*, StreamOffset) {
-  // STUB: file truncation/extension is not implemented in N3DS phase 1.
+void File::resize(void* file, StreamOffset size) {
+  auto f = static_cast<FILE*>(file);
+  auto current = fsize(file);
+
+  if (size > current) {
+    if (std::fseek(f, static_cast<long>(size - 1), SEEK_SET) != 0)
+      throw IOException::format("Resize seek error: {}", std::strerror(errno));
+
+    char zero = 0;
+    if (std::fwrite(&zero, 1, 1, f) != 1)
+      throw IOException::format("Resize write error: {}", std::strerror(errno));
+
+    if (std::fflush(f) != 0)
+      throw IOException::format("Resize flush error: {}", std::strerror(errno));
+  }
+
+  auto pos = std::ftell(f);
+  if (pos > static_cast<long>(size))
+    std::fseek(f, static_cast<long>(size), SEEK_SET);
 }
 
 }

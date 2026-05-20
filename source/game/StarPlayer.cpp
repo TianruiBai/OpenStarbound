@@ -450,13 +450,21 @@ void Player::init(World* world, EntityId entityId, EntityMode mode) {
   m_movementController->setIgnorePhysicsEntities({entityId});
   m_statusController->init(this, m_movementController.get());
   m_techController->init(this, m_movementController.get(), m_statusController.get());
+#ifndef STAR_PLATFORM_N3DS
   auto speciesDefinition = Root::singleton().speciesDatabase()->species(m_identity.species);
+#endif
 
   if (mode == EntityMode::Master) {
     m_scriptedAnimationParameters.clear();
     m_movementController->setRotation(0);
+#ifndef STAR_PLATFORM_N3DS
     m_statusController->setStatusProperty("ouchNoise", speciesDefinition->ouchNoise(m_identity.gender));
+#endif
     m_emoteState = HumanoidEmote::Idle;
+#ifdef STAR_PLATFORM_N3DS
+    m_missionRadioMessages.clear();
+    Logger::info("N3DS Player: compact master init complete");
+#else
     m_questManager->init(world);
     m_companions->init(this, world);
     m_deployment->init(this, world);
@@ -480,8 +488,10 @@ void Player::init(World* world, EntityId entityId, EntityMode mode) {
     }
 
     setNetArmorSecrets();
+#endif
   }
 
+#ifndef STAR_PLATFORM_N3DS
   if (world->isClient()) {
       m_scriptedAnimator.setScripts(humanoid()->animationScripts());
       m_scriptedAnimator.addCallbacks("animationConfig", LuaBindings::makeScriptedAnimatorCallbacks(humanoid()->networkedAnimator(),
@@ -491,6 +501,10 @@ void Player::init(World* world, EntityId entityId, EntityMode mode) {
       m_scriptedAnimator.addCallbacks("entity", LuaBindings::makeEntityCallbacks(this));
       m_scriptedAnimator.init(world);
   }
+#else
+  if (world->isClient())
+    Logger::info("N3DS Player: skipped client scripted animator init");
+#endif
 
   m_xAimPositionNetState.setInterpolator(world->geometry().xLerpFunction());
   refreshEquipment();
@@ -1016,16 +1030,20 @@ void Player::update(float dt, uint64_t) {
       m_teleportTimer -= dt;
       if (m_teleportTimer <= 0 && m_state == State::TeleportIn) {
         m_state = State::Idle;
+#ifndef STAR_PLATFORM_N3DS
         m_effectsAnimator->burstParticleEmitter(m_teleportAnimationType + "Burst");
+#endif
       }
     }
 
     if (!isTeleporting()) {
       processControls();
 
+#ifndef STAR_PLATFORM_N3DS
       m_questManager->update(dt);
       m_companions->update(dt);
       m_deployment->update(dt);
+#endif
 
       bool edgeTriggeredUse = take(m_edgeTriggeredUse);
 
@@ -1072,10 +1090,12 @@ void Player::update(float dt, uint64_t) {
         m_statusController->setPersistentEffects("lounging", {});
       }
 
+    #ifndef STAR_PLATFORM_N3DS
       if (!forceNude())
         m_armor->effects(*m_effectEmitter);
 
       m_tools->effects(*m_effectEmitter);
+    #endif
 
       auto aimRelative = world()->geometry().diff(m_aimPosition, position()); // dumb, but due to how things are ordered
       m_movementController->tickMaster(dt);
@@ -1083,8 +1103,10 @@ void Player::update(float dt, uint64_t) {
 
       m_techController->tickMaster(dt);
 
+#ifndef STAR_PLATFORM_N3DS
       for (auto& p : m_genericScriptContexts)
         p.second->update(p.second->updateDt(dt));
+#endif
 
       if (edgeTriggeredUse) {
         auto anchor = as<LoungeAnchor>(m_movementController->entityAnchor());
@@ -1132,6 +1154,7 @@ void Player::update(float dt, uint64_t) {
 
     m_log->addPlayTime(GlobalTimestep);
 
+#ifndef STAR_PLATFORM_N3DS
     if (m_ageItemsTimer.wrapTick(dt)) {
       auto itemDatabase = Root::singleton().itemDatabase();
       m_inventory->forEveryItem([&](InventorySlot const&, ItemPtr& item) {
@@ -1159,6 +1182,7 @@ void Player::update(float dt, uint64_t) {
     }
 
     m_interestingObjects = m_questManager->interestingObjects();
+#endif
 
   } else {
     m_netGroup.tickNetInterpolation(dt);
@@ -1196,8 +1220,10 @@ void Player::update(float dt, uint64_t) {
 
   refreshHumanoid();
 
+#ifndef STAR_PLATFORM_N3DS
   auto scale = Mat3F::scaling(Vec2F(facingDirection == Direction::Right ? 1.f : -1.f, 1.f));
   m_effectsAnimator->setTransformationGroup("flip", scale);
+#endif
 
   if (m_state == State::Walk || m_state == State::Run) {
     if ((m_footstepTimer += dt) > m_config->footstepTiming) {
@@ -1206,12 +1232,14 @@ void Player::update(float dt, uint64_t) {
     }
   }
 
+#ifndef STAR_PLATFORM_N3DS
   if (isClient) {
     m_effectsAnimator->update(dt, &m_effectsAnimatorDynamicTarget);
     m_effectsAnimatorDynamicTarget.updatePosition(position() + m_techController->parentOffset());
   } else {
     m_effectsAnimator->update(dt, nullptr);
   }
+#endif
 
   if (!isTeleporting())
     processStateChanges(dt);
@@ -1222,8 +1250,11 @@ void Player::update(float dt, uint64_t) {
     damageSource.team = getTeam();
   }
 
+#ifndef STAR_PLATFORM_N3DS
   m_songbook->update(*entityMode(), world());
+#endif
 
+#ifndef STAR_PLATFORM_N3DS
   m_effectEmitter->setSourcePosition("normal", position());
   m_effectEmitter->setSourcePosition("mouth", mouthOffset() + position());
   m_effectEmitter->setSourcePosition("feet", feetOffset() + position());
@@ -1238,6 +1269,7 @@ void Player::update(float dt, uint64_t) {
   m_effectEmitter->setDirection(facingDirection);
 
   m_effectEmitter->tick(dt, *entityMode());
+#endif
 
   if (isClient) {
     bool calculateHeadRotation = isMaster();
@@ -1270,8 +1302,10 @@ void Player::update(float dt, uint64_t) {
   }
   
   if (isMaster()) {
+#ifndef STAR_PLATFORM_N3DS
     for (auto& p : m_genericScriptContexts)
       p.second->invoke("postUpdate");
+#endif
   }
 
   m_pendingMoves.clear();
@@ -2249,7 +2283,12 @@ bool Player::isDeployed() const {
 }
 
 void Player::setBusyState(PlayerBusyState busyState) {
-  m_effectsAnimator->setState("busy", PlayerBusyStateNames.getRight(busyState));
+  auto busyStateName = PlayerBusyStateNames.getRight(busyState);
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_effectsAnimator->hasState("busy", busyStateName))
+    return;
+#endif
+  m_effectsAnimator->setState("busy", busyStateName);
 }
 
 void Player::teleportOut(String const& animationType, bool deploy) {

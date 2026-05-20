@@ -757,10 +757,32 @@ void WorldGenerator::replaceBiomeBlocks(ServerTile* tile) {
 }
 
 void WorldGenerator::prepareTiles(WorldStorage* worldStorage, ServerTileSectorArray::Sector const& sector) {
-  auto materialDatabase = Root::singleton().materialDatabase();
   auto planet = m_worldServer->worldTemplate();
-  // Generate sector.
   auto tileArray = worldStorage->tileArray();
+
+#ifdef STAR_PLATFORM_N3DS
+  if (!planet->worldLayout()) {
+    RectI sectorRegion = tileArray->sectorRegion(sector);
+    for (int x = sectorRegion.xMin(); x < sectorRegion.xMax(); ++x) {
+      for (int y = sectorRegion.yMin(); y < sectorRegion.yMax(); ++y) {
+        if (ServerTile* tile = tileArray->modifyTile({x, y})) {
+          tile->blockBiomeIndex = NullBiomeIndex;
+          tile->environmentBiomeIndex = NullBiomeIndex;
+          tile->biomeTransition = false;
+          tile->foreground = EmptyMaterialId;
+          tile->background = EmptyMaterialId;
+          tile->foregroundMod = NoModId;
+          tile->backgroundMod = NoModId;
+          tile->updateCollision(CollisionKind::None);
+        }
+      }
+    }
+    return;
+  }
+#endif
+
+  auto materialDatabase = Root::singleton().materialDatabase();
+  // Generate sector.
   RectI sectorRegion = tileArray->sectorRegion(sector);
   for (int x = sectorRegion.xMin(); x < sectorRegion.xMax(); ++x) {
     for (int y = sectorRegion.yMin(); y < sectorRegion.yMax(); ++y) {

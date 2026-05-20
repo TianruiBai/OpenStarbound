@@ -572,6 +572,23 @@ uint64_t WorldTemplate::seedFor(int x, int y) const {
 }
 
 WorldTemplate::WorldTemplate() {
+#ifdef STAR_PLATFORM_N3DS
+  m_templateConfig = JsonObject{
+    {"customTerrainBlendSize", 0.0f},
+    {"customTerrainBlendWeight", 0.0f},
+    {"blockCacheSize", 32},
+    {"defaultGravity", 80.0f},
+    {"biomeTransitionThreshold", 0.0f}
+  };
+  m_customTerrainBlendSize = 0.0f;
+  m_customTerrainBlendWeight = 0.0f;
+  m_blockCache.setMaxSize(32);
+  m_geometry = Vec2U(2048, 2048);
+  m_seed = Random::randu64();
+  Logger::info("N3DS WorldTemplate: using compact default template");
+  return;
+#endif
+
   auto assets = Root::singleton().assets();
   m_templateConfig = Root::singleton().assets()->json("/world_template.config");
   m_customTerrainBlendSize = m_templateConfig.getFloat("customTerrainBlendSize");

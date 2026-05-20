@@ -656,6 +656,42 @@ float Sky::slowdownTime() const {
 
 void Sky::skyParametersUpdated() {
   m_skyParametersUpdated = true;
+#ifdef STAR_PLATFORM_N3DS
+  m_settings = JsonObject{
+    {"stars", JsonObject{{"frames", 1}, {"list", JsonArray{}}, {"hyperlist", JsonArray{}}}},
+    {"dayTransitionTime", 0.0f},
+    {"skyLevelExponent", 1.0f},
+    {"flashTimer", 0.0f},
+    {"flyMaxVelocity", 0.0f},
+    {"starVelocityFactor", 0.0f},
+    {"speedupTime", 0.0f},
+    {"slowdownTime", 0.0f},
+    {"hyperspaceSpeedupTime", 0.0f},
+    {"hyperspaceSlowdownTime", 0.0f},
+    {"flyingTimer", 0.0f},
+    {"correctionPower", 0.0f},
+    {"enterHyperspaceAudioLeadIn", 0.0f},
+    {"exitHyperspaceAudioLeadIn", 0.0f},
+    {"engineAudio", ""},
+    {"hyperspaceAudio", ""},
+    {"enterHyperspaceAudio", ""},
+    {"exitHyperspaceAudio", ""},
+    {"arrivalAudio", ""},
+    {"disembarkPath", JsonArray{}},
+    {"spaceDisembarkPath", JsonArray{}},
+    {"arrivalPath", JsonArray{}},
+    {"spaceArrivalPath", JsonArray{}},
+    {"disembarkOrigin", JsonObject{{"offset", JsonArray{0, 0}}, {"rotation", 0}}},
+    {"spaceDisembarkOrigin", JsonObject{{"offset", JsonArray{0, 0}}, {"rotation", 0}}},
+    {"arrivalOrigin", JsonObject{{"offset", JsonArray{0, 0}}, {"rotation", 0}}},
+    {"spaceArrivalOrigin", JsonObject{{"offset", JsonArray{0, 0}}, {"rotation", 0}}}
+  };
+  m_starFrames = 1;
+  m_starList = {};
+  m_hyperStarList = {};
+  return;
+#endif
+
   m_settings = jsonMerge(Root::singleton().assets()->json("/sky.config"), m_skyParameters.settings);
   m_starFrames = m_settings.queryInt("stars.frames");
   m_starList = jsonToStringList(m_settings.query("stars.list"));

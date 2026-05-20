@@ -5,6 +5,8 @@ param(
   [string]$RomfsPath = "assets",
   [string]$ThreeDsxToolPath = "C:\devkitPro\tools\bin\3dsxtool.exe",
   [string]$ThreeDsxPath = "build\citra-repack\starbound.3dsx",
+  [string]$MakeromPath = "makerom-bin\makerom.exe",
+  [string]$CxiPath = "build\citra-repack\starbound.cxi",
   [string]$CaptureDir = "build\citra-captures\n3ds-current",
   [string]$BasePakPath = "",
   [int]$WindowWidth = 1280,
@@ -12,6 +14,7 @@ param(
   [int]$WindowTimeoutSeconds = 30,
   [int]$CaptureDelaySeconds = 15,
   [switch]$NoRepack,
+  [switch]$UseCxi,
   [switch]$AutoStartSinglePlayer,
   [switch]$KeepCitraOpen
 )
@@ -32,6 +35,8 @@ $smdh = Resolve-RepoPath $SmdhPath
 $romfs = Resolve-RepoPath $RomfsPath
 $threeDsxTool = Resolve-RepoPath $ThreeDsxToolPath
 $threeDsx = Resolve-RepoPath $ThreeDsxPath
+$makerom = Resolve-RepoPath $MakeromPath
+$cxi = Resolve-RepoPath $CxiPath
 $capture = Resolve-RepoPath $CaptureDir
 $usingDefaultAssetsRomfs = $RomfsPath -eq "assets"
 
@@ -74,7 +79,62 @@ if ($BasePakPath) {
 }
 
 if (!(Test-Path $citraExe)) { throw "Citra executable not found: $citraExe" }
-if (!$NoRepack) {
+if (!$NoRepack -and $UseCxi) {
+  if (!(Test-Path $makerom)) { throw "makerom not found: $makerom" }
+  if (!(Test-Path $elf)) { throw "N3DS ELF not found: $elf" }
+  if (!(Test-Path $romfs)) { throw "RomFS path not found: $romfs" }
+  New-Item -ItemType Directory -Path (Split-Path $cxi -Parent) -Force | Out-Null
+
+  $romfsRoot = $romfs
+  $repoPrefix = $repoRoot.Path.TrimEnd('\') + '\'
+  if ($romfsRoot.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $romfsRoot = $romfsRoot.Substring($repoPrefix.Length)
+  }
+  $romfsRoot = $romfsRoot.Replace('\', '/')
+
+  $rsfPath = Join-Path (Split-Path $cxi -Parent) "starbound-citra-capture.rsf"
+  $rsf = @"
+BasicInfo:
+  Title: OpenStarbound
+  CompanyCode: OS
+  ProductCode: CTR-P-OSB3D
+  Logo: homebrew
+
+RomFs:
+  RootPath: $romfsRoot
+
+TitleInfo:
+  Platform: ctr
+  Category: Application
+  UniqueId: 0x0F0A1
+  Version: 0
+
+Option:
+  UseOnSD: true
+
+SystemControlInfo:
+  StackSize: 0x40000
+  RemasterVersion: 0
+  SaveDataSize: 1MB
+
+AccessControlInfo:
+  CoreVersion: 2
+  Priority: 48
+  MemoryType: Application
+  SystemMode: 64MB
+  SystemModeExt: 178MB
+  CpuSpeed: 804MHz
+  EnableL2Cache: true
+  FileSystemAccess:
+    - DirectSdmc
+    - DirectSdmcWrite
+"@
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($rsfPath, $rsf, $utf8NoBom)
+
+  & $makerom -f cxi -target t -rsf $rsfPath -elf $elf -desc app:4 -o $cxi
+  if ($LASTEXITCODE -ne 0) { throw "makerom failed with exit code $LASTEXITCODE" }
+} elseif (!$NoRepack) {
   if (!(Test-Path $threeDsxTool)) { throw "3dsxtool not found: $threeDsxTool" }
   if (!(Test-Path $elf)) { throw "N3DS ELF not found: $elf" }
   if (!(Test-Path $smdh)) { throw "SMDH not found: $smdh" }
@@ -84,7 +144,13 @@ if (!$NoRepack) {
   if ($LASTEXITCODE -ne 0) { throw "3dsxtool failed with exit code $LASTEXITCODE" }
 }
 
-if (!(Test-Path $threeDsx)) { throw "3DSX not found: $threeDsx" }
+if ($UseCxi) {
+  if (!(Test-Path $cxi)) { throw "CXI not found: $cxi" }
+  $launchPath = $cxi
+} else {
+  if (!(Test-Path $threeDsx)) { throw "3DSX not found: $threeDsx" }
+  $launchPath = $threeDsx
+}
 if (Test-Path $capture) { Remove-Item -Recurse -Force $capture }
 New-Item -ItemType Directory -Path $capture -Force | Out-Null
 
@@ -100,13 +166,13 @@ if ($AutoStartSinglePlayer) {
 
 Get-Process citra-qt -ErrorAction SilentlyContinue | Stop-Process -Force
 
-if (-not ("OpenStarboundN3dsCitraCapture.NativeMethods" -as [type])) {
+if (-not ("OpenStarboundN3dsCitraCaptureV2.NativeMethods" -as [type])) {
   Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace OpenStarboundN3dsCitraCapture {
+namespace OpenStarboundN3dsCitraCaptureV2 {
   public static class NativeMethods {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -127,6 +193,9 @@ namespace OpenStarboundN3dsCitraCapture {
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hWnd);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 
@@ -142,12 +211,17 @@ namespace OpenStarboundN3dsCitraCapture {
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+
     private static int s_targetProcessId;
     private static IntPtr s_foundWindow;
+    private static int s_foundWindowArea;
 
     public static IntPtr FindVisibleWindowForProcess(int processId) {
       s_targetProcessId = processId;
       s_foundWindow = IntPtr.Zero;
+      s_foundWindowArea = 0;
       EnumWindows(EnumWindow, IntPtr.Zero);
       return s_foundWindow;
     }
@@ -156,11 +230,13 @@ namespace OpenStarboundN3dsCitraCapture {
       int processId;
       GetWindowThreadProcessId(hWnd, out processId);
       if (processId == s_targetProcessId && IsWindowVisible(hWnd)) {
-        StringBuilder title = new StringBuilder(256);
-        GetWindowText(hWnd, title, title.Capacity);
-        if (title.Length > 0) {
-          s_foundWindow = hWnd;
-          return false;
+        RECT rect;
+        if (GetWindowRect(hWnd, out rect)) {
+          int area = Math.Max(0, rect.Right - rect.Left) * Math.Max(0, rect.Bottom - rect.Top);
+          if (area > s_foundWindowArea) {
+            s_foundWindowArea = area;
+            s_foundWindow = hWnd;
+          }
         }
       }
       return true;
@@ -175,32 +251,67 @@ Add-Type -AssemblyName System.Windows.Forms
 
 $process = $null
 try {
-  $process = Start-Process -FilePath $citraExe -ArgumentList "`"$threeDsx`"" -PassThru
+  $process = Start-Process -FilePath $citraExe -ArgumentList "`"$launchPath`"" -PassThru
   $window = [IntPtr]::Zero
   $deadline = (Get-Date).AddSeconds($WindowTimeoutSeconds)
 
   while ((Get-Date) -lt $deadline) {
     $process.Refresh()
     if ($process.HasExited) { throw "Citra exited before a visible window was found" }
-    $window = [OpenStarboundN3dsCitraCapture.NativeMethods]::FindVisibleWindowForProcess($process.Id)
+    $window = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::FindVisibleWindowForProcess($process.Id)
     if ($window -ne [IntPtr]::Zero) { break }
     Start-Sleep -Milliseconds 250
   }
 
   if ($window -eq [IntPtr]::Zero) { throw "Timed out waiting for a visible Citra window for PID $($process.Id)" }
 
-  $rect = New-Object OpenStarboundN3dsCitraCapture.NativeMethods+RECT
-  [OpenStarboundN3dsCitraCapture.NativeMethods]::ShowWindow($window, 9) | Out-Null
-  [OpenStarboundN3dsCitraCapture.NativeMethods]::MoveWindow($window, 10, 10, $WindowWidth, $WindowHeight, $true) | Out-Null
-  [OpenStarboundN3dsCitraCapture.NativeMethods]::SetForegroundWindow($window) | Out-Null
+  $rect = New-Object OpenStarboundN3dsCitraCaptureV2.NativeMethods+RECT
+  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::ShowWindow($window, 9) | Out-Null
+  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::MoveWindow($window, 10, 10, $WindowWidth, $WindowHeight, $true) | Out-Null
+  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::SetForegroundWindow($window) | Out-Null
   Start-Sleep -Seconds $CaptureDelaySeconds
 
-  [OpenStarboundN3dsCitraCapture.NativeMethods]::GetWindowRect($window, [ref]$rect) | Out-Null
+  $process.Refresh()
+  if ($process.HasExited) { throw "Citra exited before capture" }
+
+  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::ShowWindow($window, 9) | Out-Null
+  [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::SetForegroundWindow($window) | Out-Null
+
+  if (![OpenStarboundN3dsCitraCaptureV2.NativeMethods]::IsWindow($window)) {
+    $window = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::FindVisibleWindowForProcess($process.Id)
+    if ($window -eq [IntPtr]::Zero) { throw "Citra window was no longer valid for PID $($process.Id)" }
+  }
+
+  if (![OpenStarboundN3dsCitraCaptureV2.NativeMethods]::GetWindowRect($window, [ref]$rect)) {
+    throw "Could not query Citra window bounds"
+  }
   $captureWidth = [Math]::Max(1, $rect.Right - $rect.Left)
   $captureHeight = [Math]::Max(1, $rect.Bottom - $rect.Top)
   $bitmap = New-Object System.Drawing.Bitmap $captureWidth, $captureHeight
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-  $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+  $captureMethod = "CopyFromScreen"
+  $captured = $false
+  try {
+    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+    $captured = $true
+  } catch {
+    Write-Warning "CopyFromScreen failed, trying PrintWindow fallback: $($_.Exception.Message)"
+    $captureMethod = "PrintWindow"
+    $hdc = $graphics.GetHdc()
+    try {
+      $captured = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::PrintWindow($window, $hdc, 2)
+      if (!$captured) {
+        $captured = [OpenStarboundN3dsCitraCaptureV2.NativeMethods]::PrintWindow($window, $hdc, 0)
+      }
+    } finally {
+      $graphics.ReleaseHdc($hdc)
+    }
+  }
+  if (!$captured) {
+    Write-Warning "Window capture failed; saving a fallback diagnostic image so logs are still collected."
+    $captureMethod = "FallbackBlank"
+    $graphics.Clear([System.Drawing.Color]::Black)
+  }
   $windowPng = Join-Path $capture "window.png"
   $bitmap.Save($windowPng, [System.Drawing.Imaging.ImageFormat]::Png)
   $graphics.Dispose()
@@ -224,5 +335,6 @@ if (!(Test-Path $windowPng)) { throw "Capture failed: $windowPng was not created
 
 Write-Host "Citra window found: True"
 Write-Host "Capture: $windowPng"
+Write-Host "Capture method: $captureMethod"
 Write-Host "Capture exists: $(Test-Path $windowPng)"
 Get-ChildItem $capture

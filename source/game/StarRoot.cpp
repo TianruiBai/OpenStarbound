@@ -323,6 +323,12 @@ void Root::loadMods(StringList modDirectories, bool _reload) {
 }
 
 void Root::fullyLoad() {
+#ifdef STAR_PLATFORM_N3DS
+  assets()->clearCache();
+  Logger::info("N3DS Root: skipped eager full database preload");
+  return;
+#endif
+
   auto workerPool = WorkerPool("Root::fullyLoad", RootLoadThreads);
   List<WorkerPoolHandle> loaders;
 

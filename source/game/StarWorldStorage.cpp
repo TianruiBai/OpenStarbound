@@ -117,18 +117,29 @@ WorldChunks WorldStorage::getWorldChunksFromFile(String const& file) {
 
 WorldStorage::WorldStorage(Vec2U const& worldSize, IODevicePtr const& device, WorldGeneratorFacadePtr const& generatorFacade)
   : WorldStorage() {
+  Logger::info("N3DS WorldStorage: constructor begin size {}", worldSize);
   m_tileArray = make_shared<ServerTileSectorArray>(worldSize);
+  Logger::info("N3DS WorldStorage: tile array ready");
   m_entityMap = make_shared<EntityMap>(worldSize, MinServerEntityId, MaxServerEntityId);
+  Logger::info("N3DS WorldStorage: entity map ready");
   m_generatorFacade = generatorFacade;
+  Logger::info("N3DS WorldStorage: generator facade ready");
   m_floatingDungeonWorld = false;
 
   // Creating a new world, clear any existing data.
+  Logger::info("N3DS WorldStorage: resize begin");
   device->resize(0);
+  Logger::info("N3DS WorldStorage: resize complete");
 
+  Logger::info("N3DS WorldStorage: open database begin");
   openDatabase(m_db, device);
+  Logger::info("N3DS WorldStorage: open database complete");
 
+  Logger::info("N3DS WorldStorage: metadata insert begin");
   m_db.insert(metadataKey(), writeWorldMetadata(WorldMetadataStore{worldSize, VersionedJson()}));
+  Logger::info("N3DS WorldStorage: metadata insert complete");
   m_db.commit();
+  Logger::info("N3DS WorldStorage: metadata commit complete");
 }
 
 WorldStorage::WorldStorage(IODevicePtr const& device, WorldGeneratorFacadePtr const& generatorFacade) : WorldStorage() {
@@ -629,7 +640,11 @@ ByteArray WorldStorage::metadataKey() {
 }
 
 WorldStorage::WorldMetadataStore WorldStorage::readWorldMetadata(ByteArray const& data) {
+#ifdef STAR_PLATFORM_N3DS
+  DataStreamBuffer ds(data);
+#else
   DataStreamBuffer ds(uncompressData(data));
+#endif
 
   WorldMetadataStore metadata;
   ds.read(metadata.worldSize);
@@ -639,7 +654,11 @@ WorldStorage::WorldMetadataStore WorldStorage::readWorldMetadata(ByteArray const
 }
 
 ByteArray WorldStorage::writeWorldMetadata(WorldMetadataStore const& metadata) {
+#ifdef STAR_PLATFORM_N3DS
+  return serializeWorldMetadata(metadata);
+#else
   return compressData(serializeWorldMetadata(metadata));
+#endif
 }
 
 ByteArray WorldStorage::serializeWorldMetadata(WorldMetadataStore const& metadata) {
@@ -660,7 +679,11 @@ ByteArray WorldStorage::entitySectorKey(Sector const& sector) {
 }
 
 WorldStorage::EntitySectorStore WorldStorage::readEntitySector(ByteArray const& data) {
+#ifdef STAR_PLATFORM_N3DS
+  DataStreamBuffer ds(data);
+#else
   DataStreamBuffer ds(uncompressData(data));
+#endif
   auto store = ds.read<EntitySectorStore>();
   for (auto& entity : store) {
     VersionedJson::readSubVersioning(ds, entity);
@@ -669,7 +692,11 @@ WorldStorage::EntitySectorStore WorldStorage::readEntitySector(ByteArray const& 
 }
 
 ByteArray WorldStorage::writeEntitySector(EntitySectorStore const& store) {
+#ifdef STAR_PLATFORM_N3DS
+  return serializeEntitySector(store);
+#else
   return compressData(serializeEntitySector(store));
+#endif
 }
 
 ByteArray WorldStorage::serializeEntitySector(EntitySectorStore const& store) {
@@ -690,6 +717,23 @@ ByteArray WorldStorage::tileSectorKey(Sector const& sector) {
 }
 
 WorldStorage::TileSectorStore WorldStorage::readTileSector(ByteArray const& data) {
+#ifdef STAR_PLATFORM_N3DS
+  DataStreamBuffer ds(data);
+  TileSectorStore store;
+  ds.vuread(store.generationLevel);
+  ds.vuread(store.tileSerializationVersion);
+
+  store.tiles.reset(new TileArray());
+  for (size_t y = 0; y < WorldSectorSize; ++y) {
+    for (size_t x = 0; x < WorldSectorSize; ++x) {
+      ServerTile tile;
+      tile.read(ds, store.tileSerializationVersion);
+      (*store.tiles)(x, y) = tile;
+    }
+  }
+
+  return store;
+#else
   auto& root = Root::singleton();
   auto matDatabase = root.materialDatabase();
   auto liqDatabase = root.liquidsDatabase();
@@ -727,10 +771,15 @@ WorldStorage::TileSectorStore WorldStorage::readTileSector(ByteArray const& data
   }
 
   return store;
+#endif
 }
 
 ByteArray WorldStorage::writeTileSector(TileSectorStore const& store) {
+#ifdef STAR_PLATFORM_N3DS
+  return serializeTileSector(store);
+#else
   return compressData(serializeTileSector(store));
+#endif
 }
 
 ByteArray WorldStorage::serializeTileSector(TileSectorStore const& store) {
@@ -753,7 +802,11 @@ ByteArray WorldStorage::uniqueIndexKey(String const& uniqueId) {
 }
 
 WorldStorage::UniqueIndexStore WorldStorage::readUniqueIndexStore(ByteArray const& data) {
+#ifdef STAR_PLATFORM_N3DS
+  return DataStreamBuffer::deserializeMapContainer<UniqueIndexStore>(data,
+#else
   return DataStreamBuffer::deserializeMapContainer<UniqueIndexStore>(uncompressData(data),
+#endif
       [](DataStream& ds, String& key, SectorAndPosition& value) {
         ds.read(key);
         ds.cread<uint16_t>(value.first[0]);
@@ -763,7 +816,11 @@ WorldStorage::UniqueIndexStore WorldStorage::readUniqueIndexStore(ByteArray cons
 }
 
 ByteArray WorldStorage::writeUniqueIndexStore(UniqueIndexStore const& store) {
+#ifdef STAR_PLATFORM_N3DS
+  return serializeUniqueIndexStore(store);
+#else
   return compressData(serializeUniqueIndexStore(store));
+#endif
 }
 
 ByteArray WorldStorage::serializeUniqueIndexStore(UniqueIndexStore const& store) {
@@ -785,11 +842,19 @@ ByteArray WorldStorage::sectorUniqueKey(Sector const& sector) {
 }
 
 WorldStorage::SectorUniqueStore WorldStorage::readSectorUniqueStore(ByteArray const& data) {
+#ifdef STAR_PLATFORM_N3DS
+  return DataStreamBuffer::deserialize<SectorUniqueStore>(data);
+#else
   return DataStreamBuffer::deserialize<SectorUniqueStore>(uncompressData(data));
+#endif
 }
 
 ByteArray WorldStorage::writeSectorUniqueStore(SectorUniqueStore const& store) {
+#ifdef STAR_PLATFORM_N3DS
+  return serializeSectorUniqueStore(store);
+#else
   return compressData(serializeSectorUniqueStore(store));
+#endif
 }
 
 ByteArray WorldStorage::serializeSectorUniqueStore(SectorUniqueStore const& store) {
@@ -797,6 +862,12 @@ ByteArray WorldStorage::serializeSectorUniqueStore(SectorUniqueStore const& stor
 }
 
 ByteArray WorldStorage::compressStorageData(ByteArray const& data) {
+#ifdef STAR_PLATFORM_N3DS
+  m_storageTimingStats.compressionCalls += 1;
+  m_storageTimingStats.compressionInputBytes += data.size();
+  m_storageTimingStats.compressionOutputBytes += data.size();
+  return data;
+#else
   auto compressionStart = Time::monotonicMicroseconds();
   auto compressed = compressData(data);
   m_storageTimingStats.compressionCalls += 1;
@@ -804,6 +875,7 @@ ByteArray WorldStorage::compressStorageData(ByteArray const& data) {
   m_storageTimingStats.compressionOutputBytes += compressed.size();
   m_storageTimingStats.compressionMicroseconds += Time::monotonicMicroseconds() - compressionStart;
   return compressed;
+#endif
 }
 
 ByteArray WorldStorage::writeWorldMetadataTracked(WorldMetadataStore const& metadata) {
@@ -965,7 +1037,12 @@ void WorldStorage::openDatabase(BTreeDatabase& db, IODevicePtr device) {
   db.setContentIdentifier("World4");
   db.setKeySize(5);
   db.setIODevice(std::move(device));
+#ifdef STAR_PLATFORM_N3DS
+  db.setBlockSize(512);
+  db.setIndexCacheSize(4);
+#else
   db.setBlockSize(2048);
+#endif
   db.setAutoCommit(false);
   db.open();
 
@@ -974,6 +1051,13 @@ void WorldStorage::openDatabase(BTreeDatabase& db, IODevicePtr device) {
 }
 
 WorldStorage::WorldStorage() {
+#ifdef STAR_PLATFORM_N3DS
+  m_sectorTimeToLive = Vec2F(1.0f, 2.0f);
+  m_generationQueueTimeToLive = 1.0f;
+  Logger::info("N3DS WorldStorage: using compact storage config");
+  return;
+#endif
+
   auto storageConfig = Root::singleton().assets()->json("/worldstorage.config");
   m_sectorTimeToLive = jsonToVec2F(storageConfig.get("sectorTimeToLive"));
   m_generationQueueTimeToLive = storageConfig.getFloat("generationQueueTimeToLive");

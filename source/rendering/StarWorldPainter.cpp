@@ -70,6 +70,56 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
 
   m_assets = Root::singleton().assets();
 
+#ifdef STAR_PLATFORM_N3DS
+  static bool loggedCompactFrame = false;
+  static bool loggedRealAsset = false;
+  static bool loggedAssetFailure = false;
+
+  Vec2F screenSize = Vec2F(m_renderer->screenSize());
+  m_renderer->render(renderFlatRect(RectF(0.0f, 0.0f, screenSize[0], screenSize[1]), Vec4B(11, 18, 30, 255), 0.0f));
+  m_renderer->render(renderFlatRect(RectF(0.0f, 0.0f, screenSize[0], 92.0f), Vec4B(24, 42, 64, 255), 0.0f));
+  m_renderer->render(renderFlatRect(RectF(0.0f, 92.0f, screenSize[0], 132.0f), Vec4B(37, 55, 62, 255), 0.0f));
+  m_renderer->render(renderFlatRect(RectF(0.0f, 132.0f, screenSize[0], 240.0f), Vec4B(28, 30, 35, 255), 0.0f));
+
+  for (float x = 0.0f; x < screenSize[0]; x += 32.0f) {
+    Vec4B tileColor = (static_cast<int>(x / 32.0f) % 2 == 0) ? Vec4B(55, 58, 66, 255) : Vec4B(47, 50, 58, 255);
+    m_renderer->render(renderFlatRect(RectF(x, 176.0f, min(x + 30.0f, screenSize[0]), 208.0f), tileColor, 0.0f));
+    m_renderer->render(renderFlatRect(RectF(x, 210.0f, min(x + 30.0f, screenSize[0]), 238.0f), Vec4B(36, 38, 44, 255), 0.0f));
+  }
+
+  m_renderer->render(renderFlatRect(RectF(54.0f, 108.0f, 346.0f, 116.0f), Vec4B(78, 86, 96, 255), 0.0f));
+  m_renderer->render(renderFlatRect(RectF(76.0f, 116.0f, 324.0f, 176.0f), Vec4B(43, 48, 58, 255), 0.0f));
+  m_renderer->render(renderFlatRect(RectF(94.0f, 130.0f, 132.0f, 160.0f), Vec4B(93, 178, 218, 255), 0.0f));
+  m_renderer->render(renderFlatRect(RectF(268.0f, 122.0f, 304.0f, 176.0f), Vec4B(24, 27, 34, 255), 0.0f));
+
+  try {
+    auto body = Drawable::makeImage("/humanoid/human/malebody.png:idle.1", 2.0f, true, {194.0f, 148.0f});
+    body.fullbright = true;
+    m_drawablePainter->drawDrawable(body);
+    auto head = Drawable::makeImage("/humanoid/human/malehead.png:normal", 2.0f, true, {194.0f, 119.0f});
+    head.fullbright = true;
+    m_drawablePainter->drawDrawable(head);
+    if (!loggedRealAsset) {
+      Logger::info("N3DS WorldPainter: drew compact world player assets");
+      loggedRealAsset = true;
+    }
+  } catch (std::exception const& e) {
+    if (!loggedAssetFailure) {
+      Logger::warn("N3DS WorldPainter: compact player asset draw failed: {}", e.what());
+      loggedAssetFailure = true;
+    }
+    auto fallback = Drawable::makeImage("/cinematics/chuckles.png:0", 0.35f, true, {194.0f, 132.0f});
+    fallback.fullbright = true;
+    m_drawablePainter->drawDrawable(fallback);
+  }
+
+  if (!loggedCompactFrame) {
+    Logger::info("N3DS WorldPainter: compact in-world frame queued");
+    loggedCompactFrame = true;
+  }
+  return;
+#endif
+
   m_tilePainter->setup(m_camera, renderData);
 
   // Stars, Debris Fields, Sky, and Orbiters

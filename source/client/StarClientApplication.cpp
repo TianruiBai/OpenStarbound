@@ -497,6 +497,18 @@ void ClientApplication::render() {
   } else if (m_state > MainAppState::Title) {
     WorldClientPtr worldClient = m_universeClient->worldClient();
     if (worldClient) {
+#ifdef STAR_PLATFORM_N3DS
+      renderer->switchEffectConfig("world");
+      worldClient->render(m_renderData, 0);
+      m_worldPainter->render(m_renderData, {});
+      static bool loggedN3dsInWorldRender = false;
+      if (!loggedN3dsInWorldRender && worldClient->inWorld()) {
+        Logger::info("N3DS ClientApplication: in-world render complete");
+        loggedN3dsInWorldRender = true;
+      }
+      return;
+#endif
+
       auto totalStart = Time::monotonicMicroseconds();
       renderer->switchEffectConfig("world");
       auto clientStart = totalStart;
@@ -529,6 +541,7 @@ void ClientApplication::render() {
     m_mainInterface->render();
     m_cinematicOverlay->render();
     LogMap::set("client_render_interface", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - start));
+
   }
 
   if (m_errorScreen && !m_errorScreen->accepted())
@@ -860,6 +873,8 @@ void ClientApplication::changeState(MainAppState newState) {
         Logger::info("N3DS game bootstrap: creating default player");
         m_player = Root::singleton().playerFactory()->create();
         Logger::info("N3DS game bootstrap: default player constructed");
+        m_player->setShipSpecies(m_player->species().empty() ? "human" : m_player->species());
+        Logger::info("N3DS game bootstrap: default player ship species set to {}", m_player->shipSpecies());
         m_player->setName("N3DS Explorer");
         Logger::info("N3DS game bootstrap: default player named");
         m_player->log()->setIntroComplete(true);
@@ -1056,6 +1071,36 @@ void ClientApplication::changeState(MainAppState newState) {
     if (auto renderer = Application::renderer()) {
       m_worldPainter->renderInit(renderer);
     }
+
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS game bootstrap: pumping world start handoff");
+    bool worldStarted = false;
+    for (unsigned i = 0; i < 24; ++i) {
+      if (m_universeServer)
+        m_universeServer->n3dsUpdate();
+      m_universeClient->update(GlobalTimestep * GlobalTimescale);
+
+      if (auto worldClient = m_universeClient->worldClient()) {
+        if (worldClient->inWorld()) {
+          worldStarted = true;
+          break;
+        }
+      }
+    }
+    Logger::info("N3DS game bootstrap: world start handoff {}", worldStarted ? "complete" : "pending");
+    if (worldStarted) {
+      if (auto renderer = Application::renderer()) {
+        if (auto worldClient = m_universeClient->worldClient()) {
+          Logger::info("N3DS game bootstrap: presenting first compact world frame");
+          renderer->switchEffectConfig("world");
+          worldClient->render(m_renderData, 0);
+          m_worldPainter->render(m_renderData, {});
+          renderer->flush(Mat3F::identity());
+          Logger::info("N3DS game bootstrap: first compact world frame presented");
+        }
+      }
+    }
+#endif
   }
 }
 

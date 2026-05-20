@@ -181,17 +181,24 @@ EnumMap<WorldServerFidelity> const WorldServerFidelityNames{
 
 WorldServer::WorldServer(WorldTemplatePtr const& worldTemplate, IODevicePtr storage)
   : m_phase6WorkerPool("WorldServerPhase6WorkerPool") {
+  Logger::info("N3DS WorldServer: constructor body begin");
   m_worldTemplate = worldTemplate;
+  Logger::info("N3DS WorldServer: template assigned");
   m_worldStorage = make_shared<WorldStorage>(m_worldTemplate->size(), storage, make_shared<WorldGenerator>(this));
+  Logger::info("N3DS WorldServer: storage ready");
   m_adjustPlayerStart = true;
   m_respawnInWorld = false;
   m_tileProtectionEnabled = true;
   m_universeSettings = make_shared<UniverseSettings>();
+  Logger::info("N3DS WorldServer: universe settings ready");
   m_worldId = worldTemplate->worldName();
   m_expiryTimer = GameTimer(0.0f);
 
+  Logger::info("N3DS WorldServer: init begin");
   init(true);
+  Logger::info("N3DS WorldServer: init complete");
   writeMetadata();
+  Logger::info("N3DS WorldServer: metadata written");
 }
 
 WorldServer::WorldServer(Vec2U const& size, IODevicePtr storage)
@@ -383,6 +390,9 @@ bool WorldServer::spawnTargetValid(SpawnTarget const& spawnTarget) const {
 }
 
 bool WorldServer::addClient(ConnectionId clientId, SpawnTarget const& spawnTarget, bool isLocal, bool isAdmin, NetCompatibilityRules netRules) {
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: addClient begin");
+#endif
   if (m_clientInfo.contains(clientId))
     return false;
 
@@ -405,8 +415,12 @@ bool WorldServer::addClient(ConnectionId clientId, SpawnTarget const& spawnTarge
     }
   }
   RectF spawnRegion = RectF(playerStart, playerStart).padded(m_serverConfig.getInt("playerStartInitialGenRadius"));
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: skipped addClient initial region generation");
+#else
   generateRegion(RectI::integral(spawnRegion));
   m_spawner.activateEmptyRegion(spawnRegion);
+#endif
 
   InterpolationTracker tracker;
   if (isLocal)
@@ -440,8 +454,15 @@ bool WorldServer::addClient(ConnectionId clientId, SpawnTarget const& spawnTarge
   worldStartPacket->clientId = clientId;
   worldStartPacket->localInterpolationMode = isLocal;
   clientInfo->outgoingPackets.append(worldStartPacket);
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: queued WorldStartPacket");
+#endif
 
+#ifndef STAR_PLATFORM_N3DS
   clientInfo->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(m_centralStructure.store()));
+#else
+  Logger::info("N3DS WorldServer: skipped central structure update packet");
+#endif
 
   for (auto& p : m_scriptContexts)
     p.second->invoke("addClient", clientId, isLocal);
@@ -513,9 +534,6 @@ List<EntityId> WorldServer::players() const {
 
 void WorldServer::handleIncomingPackets(ConnectionId clientId, List<PacketPtr> const& packets) {
   shared_ptr<ClientInfo> clientInfo = m_clientInfo.get(clientId);
-  auto& root = Root::singleton();
-  auto entityFactory = root.entityFactory();
-  auto itemDatabase = root.itemDatabase();
 
   for (auto const& packet : packets) {
     if (auto worldStartAcknowledge = as<WorldStartAcknowledgePacket>(packet)) {
@@ -561,6 +579,7 @@ void WorldServer::handleIncomingPackets(ConnectionId clientId, List<PacketPtr> c
 
     } else if (auto sepacket = as<SpawnEntityPacket>(packet)) {
       auto netRules = clientInfo->clientState.netCompatibilityRules();
+      auto entityFactory = Root::singleton().entityFactory();
       auto entity = entityFactory->netLoadEntity(sepacket->entityType, std::move(sepacket->storeData), netRules);
       entity->readNetState(std::move(sepacket->firstNetState), 0.0f, netRules);
       addEntity(std::move(entity));
@@ -614,6 +633,7 @@ void WorldServer::handleIncomingPackets(ConnectionId clientId, List<PacketPtr> c
           removeEntity(entityCreate->entityId, false);
         }
         auto netRules = clientInfo->clientState.netCompatibilityRules();
+        auto entityFactory = Root::singleton().entityFactory();
         auto entity = entityFactory->netLoadEntity(entityCreate->entityType, entityCreate->storeData, netRules);
         entity->readNetState(entityCreate->firstNetState, 0.0f, netRules);
         entity->init(this, entityCreate->entityId, EntityMode::Slave);
@@ -1387,7 +1407,7 @@ void WorldServer::update(float dt) {
   });
 
   timePhase(UpdateTimingPhase::Liquid, [&]() {
-    if (shouldRunThisStep("liquidUpdate")) {
+    if (m_liquidEngine && shouldRunThisStep("liquidUpdate")) {
       auto liquidRegionCacheStatsBefore = m_liquidEngine->noProcessingLimitRegionCacheStats();
       m_liquidEngine->setProcessingLimit(m_fidelityConfig.optUInt("liquidEngineBackgroundProcessingLimit"));
       m_liquidEngine->setNoProcessingLimitRegions(tickSnapshot.monitoringRegions);
@@ -1423,7 +1443,7 @@ void WorldServer::update(float dt) {
   });
 
   timePhase(UpdateTimingPhase::FallingBlocks, [&]() {
-    if (shouldRunThisStep("fallingBlocksUpdate")) {
+    if (m_fallingBlocksAgent && shouldRunThisStep("fallingBlocksUpdate")) {
       auto fallingBlocksStats = m_fallingBlocksAgent->update(m_phase6MutationFixedSeedSignaturesEnabled);
       if (m_phase6MutationFixedSeedSignaturesEnabled) {
         m_phase6WorldParallelismStats.fallingBlocksSignatureTicks += 1;
@@ -1482,6 +1502,10 @@ void WorldServer::update(float dt) {
     tickSnapshot.sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
     prefillSectorUpdateCache(tickSnapshot);
     for (auto const& pair : m_clientInfo) {
+#ifdef STAR_PLATFORM_N3DS
+      if (!pair.second->started)
+        continue;
+#endif
       auto const& activeSignalRegions = tickSnapshot.activeSignalRegionsByConnection.get(pair.first);
       tickSnapshot.packetPreparationStats.monitoringRegionReuses += activeSignalRegions.size();
       for (auto const& activeSignalRegion : activeSignalRegions)
@@ -1572,7 +1596,7 @@ void WorldServer::update(float dt) {
         storageTimingStats.chunkUpdateExportMicroseconds,
         storageTimingStats.chunkUpdateSyncSectors,
         storageTimingStats.chunkUpdateSyncMicroseconds));
-    LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine->activeCells());
+    LogMap::set(strf("server_{}_active_liquid", m_worldId), m_liquidEngine ? m_liquidEngine->activeCells() : 0);
     if (m_phase6MutationFixedSeedSignaturesEnabled) {
       LogMap::set(strf("server_{}_phase6_signatures", m_worldId), strf("liquid={}/{}/{}/{}, falling={}/{}/{}/{}/{}, wiring={}/{}/{}",
           m_phase6WorldParallelismStats.liquidSignatureTicks,
@@ -1754,11 +1778,13 @@ LiquidLevel WorldServer::liquidLevel(RectF const& region) const {
 }
 
 void WorldServer::activateLiquidRegion(RectI const& region) {
-  m_liquidEngine->visitRegion(region);
+  if (m_liquidEngine)
+    m_liquidEngine->visitRegion(region);
 }
 
 void WorldServer::activateLiquidLocation(Vec2I const& location) {
-  m_liquidEngine->visitLocation(location);
+  if (m_liquidEngine)
+    m_liquidEngine->visitLocation(location);
 }
 
 void WorldServer::requestGlobalBreakCheck() {
@@ -1866,8 +1892,10 @@ TileModificationList WorldServer::replaceTiles(TileModificationList const& modif
 
   for (auto pair : success) {
     checkEntityBreaks(RectF::withSize(Vec2F(pair.first), Vec2F(1, 1)));
-    m_liquidEngine->visitLocation(pair.first);
-    m_fallingBlocksAgent->visitLocation(pair.first);
+    if (m_liquidEngine)
+      m_liquidEngine->visitLocation(pair.first);
+    if (m_fallingBlocksAgent)
+      m_fallingBlocksAgent->visitLocation(pair.first);
   }
 
   return failures;
@@ -2023,7 +2051,8 @@ ItemDescriptor WorldServer::collectLiquid(List<Vec2I> const& tilePositions, Liqu
       }
 
       queueLiquidUpdates(pos);
-      m_liquidEngine->visitLocation(pos);
+      if (m_liquidEngine)
+        m_liquidEngine->visitLocation(pos);
     }
   }
 
@@ -2381,26 +2410,44 @@ void WorldServer::init(bool firstTime) {
   m_luaRoot->tuneAutoGarbageCollection(m_serverConfig.getFloat("luaGcPause"), m_serverConfig.getFloat("luaGcStepMultiplier"));
 #endif
 
+  Logger::info("N3DS WorldServer: sky begin");
   m_sky = make_shared<Sky>(m_worldTemplate->skyParameters(), false);
+  Logger::info("N3DS WorldServer: sky ready");
 
+#ifdef STAR_PLATFORM_N3DS
+  m_lightIntensityCalculator.setParameters(JsonObject{
+    {"spreadPasses", 0},
+    {"spreadMaxAir", 0.0f},
+    {"spreadMaxObstacle", 0.0f},
+    {"pointMaxAir", 0.0f},
+    {"pointMaxObstacle", 0.0f},
+    {"pointObstacleBoost", 0.0f},
+    {"pointAdditive", false}
+  });
+  Logger::info("N3DS WorldServer: compact lighting ready");
+#else
   m_lightIntensityCalculator.setParameters(assets->json("/lighting.config:intensity"));
+#endif
 
   m_entityMessageResponses = {};
+  Logger::info("N3DS WorldServer: entity responses ready");
 
   m_collisionGenerator.init([=](int x, int y) {
       return m_tileArray->tile({x, y}).getCollision();
     });
+  Logger::info("N3DS WorldServer: collision generator ready");
 
   m_entityUpdateTimer = GameTimer(m_serverConfig.query("interpolationSettings.normal").getFloat("entityUpdateDelta") / 60.f);
   m_tileEntityBreakCheckTimer = GameTimer(m_serverConfig.getFloat("tileEntityBreakCheckInterval"));
+  Logger::info("N3DS WorldServer: timers ready");
 
 #ifdef STAR_PLATFORM_N3DS
-  LiquidCellEngineParameters liquidEngineParameters{0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 1.0f, 0.01f, 0.01f, 0.001f, 0.5f};
-  m_liquidEngine = make_shared<LiquidCellEngine<LiquidId>>(liquidEngineParameters, make_shared<LiquidWorld>(this));
+  m_liquidEngine.reset();
+  Logger::info("N3DS WorldServer: skipped liquid engine");
 #else
   m_liquidEngine = make_shared<LiquidCellEngine<LiquidId>>(liquidsDatabase->liquidEngineParameters(), make_shared<LiquidWorld>(this));
 #endif
-  if (m_phase6MutationFixedSeedSignaturesEnabled)
+  if (m_phase6MutationFixedSeedSignaturesEnabled && m_liquidEngine)
     m_liquidEngine->setRandomSeed(Phase6LiquidFixedSeed);
 #ifndef STAR_PLATFORM_N3DS
   for (auto liquidSettings : liquidsDatabase->allLiquidSettings())
@@ -2409,17 +2456,32 @@ void WorldServer::init(bool firstTime) {
   Logger::info("N3DS WorldServer: skipped liquid database setup");
 #endif
 
+#ifdef STAR_PLATFORM_N3DS
+  m_fallingBlocksAgent.reset();
+  Logger::info("N3DS WorldServer: skipped falling blocks agent");
+#else
   m_fallingBlocksAgent = make_shared<FallingBlocksAgent>(make_shared<FallingBlocksWorld>(this));
-  if (m_phase6MutationFixedSeedSignaturesEnabled)
+#endif
+  if (m_phase6MutationFixedSeedSignaturesEnabled && m_fallingBlocksAgent)
     m_fallingBlocksAgent->setRandomSeed(Phase6FallingBlocksFixedSeed);
 
+  #ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: skipped force regions");
+  Logger::info("N3DS WorldServer: skipped protected zero-g tile protection");
+  #else
   setupForceRegions();
 
   setTileProtection(ProtectedZeroGDungeonId, true);
+  #endif
 
   try {
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS WorldServer: skipped spawner init");
+  #else
     m_spawner.init(make_shared<SpawnerWorld>(this));
+  #endif
 
+  #ifndef STAR_PLATFORM_N3DS
     RandomSource rnd = RandomSource(m_worldTemplate->worldSeed());
 
     if (firstTime) {
@@ -2463,23 +2525,33 @@ void WorldServer::init(bool firstTime) {
 
       m_generatingDungeon = false;
     }
+  #else
+    if (firstTime)
+      Logger::info("N3DS WorldServer: skipped dungeon placement");
+  #endif
 
 #ifdef STAR_PLATFORM_N3DS
     if (m_adjustPlayerStart) {
       m_playerStart = Vec2F(m_geometry.size()) / 2.0f;
       m_adjustPlayerStart = false;
     }
+    Logger::info("N3DS WorldServer: compact player start ready");
 #else
     if (m_adjustPlayerStart)
       m_playerStart = findPlayerStart(firstTime ? Maybe<Vec2F>() : m_playerStart);
 #endif
 
+  #ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS WorldServer: skipped initial region generation");
+    Logger::info("N3DS WorldServer: skipped weather setup");
+  #else
     generateRegion(RectI::integral(RectF(m_playerStart, m_playerStart)).padded(m_serverConfig.getInt("playerStartInitialGenRadius")));
 
     m_weather.setup(m_worldTemplate->weathers(), m_worldTemplate->undergroundLevel(), m_geometry, [this](Vec2I const& pos) {
         auto const& tile = m_tileArray->tile(pos);
         return !isRealMaterial(tile.background);
       });
+  #endif
   } catch (std::exception const& e) {
     m_worldStorage->unloadAll(true);
     throw WorldServerException("Exception encountered initializing world", e);
@@ -2555,8 +2627,10 @@ TileModificationList WorldServer::doApplyTileModifications(TileModificationList 
 
       if (updateNeighbors) {
         checkEntityBreaks(RectF::withSize(Vec2F(pos), Vec2F(1, 1)));
-        m_liquidEngine->visitLocation(pos);
-        m_fallingBlocksAgent->visitLocation(pos);
+        if (m_liquidEngine)
+          m_liquidEngine->visitLocation(pos);
+        if (m_fallingBlocksAgent)
+          m_fallingBlocksAgent->visitLocation(pos);
       }
 
       if (placeMaterial->layer == TileLayer::Foreground)
@@ -2585,7 +2659,8 @@ TileModificationList WorldServer::doApplyTileModifications(TileModificationList 
           tile->foregroundModHueShift = m_worldTemplate->biomeModHueShift(tile->blockBiomeIndex, placeMod->mod);
       }
 
-      m_liquidEngine->visitLocation(pos);
+      if (m_liquidEngine)
+        m_liquidEngine->visitLocation(pos);
       queueTileUpdates(pos);
 
     } else if (auto placeMaterialColor = modification.ptr<PlaceMaterialColor>()) {
@@ -2612,8 +2687,10 @@ TileModificationList WorldServer::doApplyTileModifications(TileModificationList 
 
     } else if (auto plpacket = modification.ptr<PlaceLiquid>()) {
       modifyLiquid(pos, plpacket->liquid, plpacket->liquidLevel, true);
-      m_liquidEngine->visitLocation(pos);
-      m_fallingBlocksAgent->visitLocation(pos);
+      if (m_liquidEngine)
+        m_liquidEngine->visitLocation(pos);
+      if (m_fallingBlocksAgent)
+        m_fallingBlocksAgent->visitLocation(pos);
     }
 
     it.remove();
@@ -2678,8 +2755,10 @@ void WorldServer::updateTileEntityTiles(TileEntityPtr const& entity, bool removi
       if (tile->updateObjectCollision(CollisionKind::None))
         updatedTile = updatedCollision = true;
       if (updatedCollision) {
-        m_liquidEngine->visitLocation(pos);
-        m_fallingBlocksAgent->visitLocation(pos);
+        if (m_liquidEngine)
+          m_liquidEngine->visitLocation(pos);
+        if (m_fallingBlocksAgent)
+          m_fallingBlocksAgent->visitLocation(pos);
         dirtyCollision(RectI::withSize(pos, { 1, 1 }));
       }
       if (updatedTile)
@@ -2710,8 +2789,10 @@ void WorldServer::updateTileEntityTiles(TileEntityPtr const& entity, bool removi
         updatedTile |= updatedCollision = tile->updateObjectCollision(materialDatabase->materialCollisionKind(materialSpace.material));
       }
       if (updatedCollision) {
-        m_liquidEngine->visitLocation(pos);
-        m_fallingBlocksAgent->visitLocation(pos);
+        if (m_liquidEngine)
+          m_liquidEngine->visitLocation(pos);
+        if (m_fallingBlocksAgent)
+          m_fallingBlocksAgent->visitLocation(pos);
         dirtyCollision(RectI::withSize(pos, { 1, 1 }));
       }
       if (updatedTile)
@@ -2796,7 +2877,8 @@ ServerTile* WorldServer::modifyServerTile(Vec2I const& position, bool withSignal
   auto tile = m_tileArray->modifyTile(position);
   if (tile) {
     dirtyCollision(RectI::withSize(position, {1, 1}));
-    m_liquidEngine->visitLocation(position);
+    if (m_liquidEngine)
+      m_liquidEngine->visitLocation(position);
     queueTileUpdates(position);
   }
   return tile;
@@ -2825,7 +2907,8 @@ void WorldServer::modifyLiquid(Vec2I const& pos, LiquidId liquid, float quantity
         quantity += tile->liquid.level;
 
       setLiquid(pos, liquid, quantity, tile->liquid.pressure);
-      m_liquidEngine->visitLocation(pos);
+      if (m_liquidEngine)
+        m_liquidEngine->visitLocation(pos);
     }
   }
 }
@@ -2908,8 +2991,10 @@ List<ItemDescriptor> WorldServer::destroyBlock(TileLayer layer, Vec2I const& pos
 
   if (updateNeighbors) {
     checkEntityBreaks(RectF::withSize(Vec2F(pos), Vec2F(1, 1)));
-    m_liquidEngine->visitLocation(pos);
-    m_fallingBlocksAgent->visitLocation(pos);
+    if (m_liquidEngine)
+      m_liquidEngine->visitLocation(pos);
+    if (m_fallingBlocksAgent)
+      m_fallingBlocksAgent->visitLocation(pos);
   }
   queueTileUpdates(pos);
   queueTileDamageUpdates(pos, layer);
@@ -2980,7 +3065,6 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
   for (auto const& monitoredRegion : monitoringRegions)
     monitoredEntities.addAll(m_entityMap->entityQuery(RectF(monitoredRegion)));
 
-  auto entityFactory = Root::singleton().entityFactory();
   auto outOfMonitoredRegionsEntities = HashSet<EntityId>::from(clientInfo->clientSlavesNetVersion.keys());
   for (auto const& monitoredEntity : monitoredEntities)
     outOfMonitoredRegionsEntities.remove(monitoredEntity->entityId());
@@ -3033,6 +3117,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
         auto i = createCache.find(entityId);
         if (i == createCache.end()) {
           snapshot.packetPreparationStats.entityStoreCacheMisses += 1;
+          auto entityFactory = Root::singleton().entityFactory();
           auto storeData = entityFactory->netStoreEntity(monitoredEntity, netRules);
           serializationStats.createStoreCalls += 1;
           serializationStats.createStoreBytes += storeData.size();
@@ -3103,6 +3188,9 @@ WorldChunks WorldServer::readChunkUpdate(WorldChunks const& oldChunks) {
 }
 
 void WorldServer::updateDamagedBlocks(float dt) {
+  if (m_damagedBlocks.empty())
+    return;
+
   auto materialDatabase = Root::singleton().materialDatabase();
 
   for (auto pos : m_damagedBlocks.values()) {

@@ -163,8 +163,14 @@ Maybe<String> UniverseClient::connect(UniverseConnection connection, bool allowA
     }
   }
   connection.packetSocket().setNetRules(compatibilityRules);
+#ifdef STAR_PLATFORM_N3DS
+  WorldChunks shipData;
+  Logger::info("N3DS UniverseClient: using empty in-memory ship data for connect");
+#else
+  auto shipData = m_playerStorage->loadShipData(m_mainPlayer->uuid());
+#endif
   auto clientConnect = make_shared<ClientConnectPacket>(Root::singleton().assets()->digest(), allowAssetsMismatch, m_mainPlayer->uuid(), m_mainPlayer->name(),
-      m_mainPlayer->shipSpecies(), m_playerStorage->loadShipData(m_mainPlayer->uuid()), m_mainPlayer->shipUpgrades(),
+      m_mainPlayer->shipSpecies(), shipData, m_mainPlayer->shipUpgrades(),
       m_mainPlayer->log()->introComplete(), account);
   clientConnect->info = JsonObject{
     {"brand", "OpenStarbound"},
@@ -340,7 +346,9 @@ void UniverseClient::update(float dt) {
 
   LogMap::set("universe_time_client", m_universeClock->time());
 
+#ifndef STAR_PLATFORM_N3DS
   m_statistics->update();
+#endif
 
   if (!m_pause) {
     m_worldClient->update(dt);
@@ -348,6 +356,11 @@ void UniverseClient::update(float dt) {
       p.second->update();
   }
   m_connection->push(m_worldClient->getOutgoingPackets());
+
+#ifdef STAR_PLATFORM_N3DS
+  m_connection->send();
+  return;
+#endif
 
   if (!m_pause)
     m_systemWorldClient->update(dt);
@@ -798,7 +811,12 @@ void UniverseClient::handlePackets(List<PacketPtr> const& packets) {
 
       if (auto clientContextUpdate = as<ClientContextUpdatePacket>(packet)) {
         m_clientContext->readUpdate(clientContextUpdate->updateData, m_clientContext->netCompatibilityRules());
+#ifdef STAR_PLATFORM_N3DS
+        if (!m_clientContext->newShipUpdates().empty())
+          Logger::info("N3DS UniverseClient: skipped ship update persistence for in-memory player");
+#else
         m_playerStorage->applyShipUpdates(m_clientContext->playerUuid(), m_clientContext->newShipUpdates());
+#endif
 
         if (playerIsOriginal()) {
           m_mainPlayer->setShipUpgrades(m_clientContext->shipUpgrades());

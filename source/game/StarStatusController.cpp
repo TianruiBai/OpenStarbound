@@ -460,10 +460,14 @@ void StatusController::init(Entity* parentEntity, ActorMovementController* movem
   m_movementController = movementController;
 
   if (m_parentEntity->isMaster()) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS StatusController: skipped primary status scripts");
+#else
     initPrimaryScript();
     for (auto& p : m_uniqueEffects.keys())
       if (auto effect = m_uniqueEffects.ptr(p))
         initUniqueEffectScript(*effect);
+#endif
   }
 
   m_environmentStatusEffectUpdateTimer.reset();
