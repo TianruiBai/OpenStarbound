@@ -1298,8 +1298,15 @@ void WorldServer::generateQueuedStorage(Maybe<size_t> sectorGenerationLevelLimit
 void WorldServer::update(float dt) {
   auto timePhase = [this](UpdateTimingPhase phase, auto&& action) {
     auto start = Time::monotonicMicroseconds();
-    action();
-    recordUpdateTiming(phase, Time::monotonicMicroseconds() - start);
+    try {
+      action();
+      recordUpdateTiming(phase, Time::monotonicMicroseconds() - start);
+    } catch (std::exception const& e) {
+#ifdef STAR_PLATFORM_N3DS
+      Logger::error("N3DS WorldServer: exception in phase {}: {}", updateTimingPhaseName(phase), outputException(e, true));
+#endif
+      throw;
+    }
   };
 
   bool doBreakChecks = false;
@@ -3161,6 +3168,25 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
     if (!m_worldStorage->sectorActive(sector))
       continue;
 
+#ifdef STAR_PLATFORM_N3DS
+    constexpr int N3dsTilePacketChunkSize = 8;
+    auto sectorTiles = m_tileArray->sectorRegion(sector);
+    for (int xMin = sectorTiles.xMin(); xMin < sectorTiles.xMax(); xMin += N3dsTilePacketChunkSize) {
+      for (int yMin = sectorTiles.yMin(); yMin < sectorTiles.yMax(); yMin += N3dsTilePacketChunkSize) {
+        int chunkWidth = min(N3dsTilePacketChunkSize, sectorTiles.xMax() - xMin);
+        int chunkHeight = min(N3dsTilePacketChunkSize, sectorTiles.yMax() - yMin);
+        auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
+        tileArrayUpdate->min = {xMin, yMin};
+        tileArrayUpdate->array.resize(Vec2S(chunkWidth, chunkHeight));
+        for (int x = 0; x < chunkWidth; ++x) {
+          for (int y = 0; y < chunkHeight; ++y)
+            writeNetTile({xMin + x, yMin + y}, tileArrayUpdate->array(x, y));
+        }
+        clientInfo->outgoingPackets.append(std::move(tileArrayUpdate));
+      }
+    }
+    snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
+#else
     auto i = snapshot.sectorUpdateCache.find(sector);
     if (i == snapshot.sectorUpdateCache.end()) {
       snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
@@ -3170,6 +3196,7 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
     }
 
     clientInfo->outgoingPackets.append(i->second);
+#endif
     clientInfo->pendingSectors.remove(sector);
   }
 

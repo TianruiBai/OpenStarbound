@@ -72,6 +72,26 @@ void TilePainter::setup(WorldCamera const& camera, WorldRenderData& renderData) 
   RectI chunkRange = RectI::integral(RectF(camera.worldTileRect().padded(1)).scaled(1.0f / RenderChunkSize));
 
   size_t chunks = chunkRange.volume();
+#ifdef STAR_PLATFORM_N3DS
+  m_n3dsRenderData = &renderData;
+  m_pendingTerrainChunks.clear();
+  m_pendingLiquidChunks.clear();
+  m_pendingN3dsTerrainChunkIndices.resize(chunks);
+
+  size_t n3dsIndex = 0;
+  for (int x = chunkRange.xMin(); x < chunkRange.xMax(); ++x) {
+    for (int y = chunkRange.yMin(); y < chunkRange.yMax(); ++y)
+      m_pendingN3dsTerrainChunkIndices[n3dsIndex++] = {x, y};
+  }
+
+  static bool loggedDeferredTerrainChunks = false;
+  if (!loggedDeferredTerrainChunks) {
+    Logger::info("N3DS TilePainter: deferring terrain chunk generation until layer render");
+    loggedDeferredTerrainChunks = true;
+  }
+  return;
+#endif
+
   m_pendingTerrainChunks.resize(chunks);
   m_pendingLiquidChunks.resize(chunks);
 
@@ -80,7 +100,7 @@ void TilePainter::setup(WorldCamera const& camera, WorldRenderData& renderData) 
     for (int y = chunkRange.yMin(); y < chunkRange.yMax(); ++y) {
       size_t index = i++;
       m_pendingTerrainChunks[index] = getTerrainChunk(renderData, {x, y});
-      m_pendingLiquidChunks [index] =  getLiquidChunk(renderData, {x, y});
+      m_pendingLiquidChunks[index] = getLiquidChunk(renderData, {x, y});
     }
   }
 }
@@ -94,6 +114,11 @@ void TilePainter::renderMidground(WorldCamera const& camera) {
 }
 
 void TilePainter::renderLiquid(WorldCamera const& camera) {
+#ifdef STAR_PLATFORM_N3DS
+  if (m_liquids.empty())
+    return;
+#endif
+
   Mat3F transformation = Mat3F::identity();
   transformation.translate(-Vec2F(camera.worldTileRect().min()));
   transformation.scale(TilePixels * camera.pixelRatio());
@@ -114,6 +139,15 @@ void TilePainter::renderForeground(WorldCamera const& camera) {
 void TilePainter::cleanup() {
   m_pendingTerrainChunks.clear();
   m_pendingLiquidChunks.clear();
+
+#ifdef STAR_PLATFORM_N3DS
+  m_pendingN3dsTerrainChunkIndices.clear();
+  m_n3dsRenderData = nullptr;
+  m_textureCache.clear();
+  m_terrainChunkCache.clear();
+  m_liquidChunkCache.clear();
+  return;
+#endif
 
   m_textureCache.cleanup();
   m_terrainChunkCache.cleanup();
@@ -157,6 +191,47 @@ TilePainter::ChunkHash TilePainter::liquidChunkHash(WorldRenderData& renderData,
 }
 
 void TilePainter::renderTerrainChunks(WorldCamera const& camera, TerrainLayer terrainLayer) {
+#ifdef STAR_PLATFORM_N3DS
+  if (m_n3dsRenderData) {
+    Map<QuadZLevel, List<RenderPrimitive>> zOrderPrimitives;
+
+    for (auto const& chunkIndex : m_pendingN3dsTerrainChunkIndices) {
+      HashMap<TerrainLayer, HashMap<QuadZLevel, List<RenderPrimitive>>> chunkPrimitives;
+
+      RectI tileRange = RectI::withSize(chunkIndex * RenderChunkSize, Vec2I::filled(RenderChunkSize));
+      for (int x = tileRange.xMin(); x < tileRange.xMax(); ++x) {
+        for (int y = tileRange.yMin(); y < tileRange.yMax(); ++y) {
+          bool occluded = this->produceTerrainPrimitives(chunkPrimitives[TerrainLayer::Foreground], TerrainLayer::Foreground, {x, y}, *m_n3dsRenderData);
+          occluded = this->produceTerrainPrimitives(chunkPrimitives[TerrainLayer::Midground], TerrainLayer::Midground, {x, y}, *m_n3dsRenderData) || occluded;
+          if (!occluded)
+            this->produceTerrainPrimitives(chunkPrimitives[TerrainLayer::Background], TerrainLayer::Background, {x, y}, *m_n3dsRenderData);
+        }
+      }
+
+      for (auto& zLevelPair : chunkPrimitives[terrainLayer])
+        zOrderPrimitives[zLevelPair.first].appendAll(std::move(zLevelPair.second));
+
+      m_textureCache.clear();
+    }
+
+    Mat3F transformation = Mat3F::identity();
+    transformation.translate(-Vec2F(camera.worldTileRect().min()));
+    transformation.scale(TilePixels * camera.pixelRatio());
+    transformation.translate(camera.tileMinScreen());
+
+    for (auto& pair : zOrderPrimitives) {
+      auto rb = m_renderer->createRenderBuffer();
+      rb->set(pair.second);
+      m_renderer->renderBuffer(rb, transformation);
+    }
+
+    m_renderer->flush();
+    m_textureCache.clear();
+    m_terrainChunkCache.clear();
+    return;
+  }
+#endif
+
   Map<QuadZLevel, List<RenderBufferPtr>> zOrderBuffers;
   for (auto const& chunk : m_pendingTerrainChunks) {
     for (auto const& pair : chunk->value(terrainLayer))
@@ -273,6 +348,16 @@ bool TilePainter::produceTerrainPrimitives(HashMap<QuadZLevel, List<RenderPrimit
     return false;
 
   auto getPieceTexture = [this, assets](MaterialId material, MaterialRenderPieceConstPtr const& piece, MaterialHue hue, Directives const* directives, bool mod) {
+#ifdef STAR_PLATFORM_N3DS
+    AssetPath texture = (hue == 0) ? piece->texture : strf("{}?hueshift={}", piece->texture, materialHueToDegrees(hue));
+
+    if (directives)
+      texture.directives += *directives;
+
+    return m_textureCache.get(AssetTextureKey(AssetPath::join(texture)), [&](auto const&) {
+        return m_textureGroup->create(*assets->image(texture));
+      });
+#else
     return m_textureCache.get(MaterialPieceTextureKey(material, piece->pieceId, hue, mod), [&](auto const&) {
         AssetPath texture = (hue == 0) ? piece->texture : strf("{}?hueshift={}", piece->texture, materialHueToDegrees(hue));
 
@@ -281,6 +366,7 @@ bool TilePainter::produceTerrainPrimitives(HashMap<QuadZLevel, List<RenderPrimit
 
         return m_textureGroup->create(*assets->image(texture));
       });
+#endif
   };
 
   auto materialRenderProfile = materialDatabase->materialRenderProfile(material);

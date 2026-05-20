@@ -653,8 +653,15 @@ void WorldServerThread::update(WorldServerFidelity fidelity) {
 
   auto timePhase = [this](ThreadTimingPhase phase, auto&& action) {
     auto start = Time::monotonicMicroseconds();
-    action();
-    recordThreadTiming(phase, Time::monotonicMicroseconds() - start);
+    try {
+      action();
+      recordThreadTiming(phase, Time::monotonicMicroseconds() - start);
+    } catch (std::exception const& e) {
+#ifdef STAR_PLATFORM_N3DS
+      Logger::error("N3DS WorldServerThread: exception in phase {}: {}", threadTimingPhaseName(phase), outputException(e, true));
+#endif
+      throw;
+    }
   };
 
   timePhase(ThreadTimingPhase::ProcessCommands, [&]() { processCommands(); });

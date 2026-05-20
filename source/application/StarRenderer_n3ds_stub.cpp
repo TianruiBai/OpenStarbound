@@ -609,7 +609,7 @@ private:
 class N3dsStubRenderBuffer : public RenderBuffer {
 public:
   void set(List<RenderPrimitive>& primitives) override {
-    m_primitives = primitives;
+    m_primitives = std::move(primitives);
   }
 
   List<RenderPrimitive> const& primitives() const {

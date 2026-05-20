@@ -278,6 +278,9 @@ List<WorldTemplate::Dungeon> WorldTemplate::dungeons() const {
 }
 
 WorldTemplate::BlockInfo WorldTemplate::blockInfo(int x, int y) const {
+  if (!m_layout)
+    return {};
+
   return getBlockInfo(m_geometry.xwrap(x), y);
 }
 
@@ -347,6 +350,9 @@ WorldTemplate::BlockInfo WorldTemplate::blockBiomeInfo(int x, int y) const {
 }
 
 bool WorldTemplate::isOutside(int x, int y) const {
+  if (!m_layout)
+    return true;
+
   return !getBlockInfo(m_geometry.xwrap(x), y).terrain;
 }
 
@@ -361,10 +367,16 @@ bool WorldTemplate::isOutside(RectI const& region) const {
 }
 
 BiomeIndex WorldTemplate::blockBiomeIndex(int x, int y) const {
+  if (!m_layout)
+    return NullBiomeIndex;
+
   return getBlockInfo(m_geometry.xwrap(x), y).blockBiomeIndex;
 }
 
 BiomeIndex WorldTemplate::environmentBiomeIndex(int x, int y) const {
+  if (!m_layout)
+    return NullBiomeIndex;
+
   return getBlockInfo(m_geometry.xwrap(x), y).environmentBiomeIndex;
 }
 

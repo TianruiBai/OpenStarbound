@@ -100,6 +100,11 @@ private:
   List<shared_ptr<TerrainChunk const>> m_pendingTerrainChunks;
   List<shared_ptr<LiquidChunk const>> m_pendingLiquidChunks;
 
+#ifdef STAR_PLATFORM_N3DS
+  List<Vec2I> m_pendingN3dsTerrainChunkIndices;
+  WorldRenderData* m_n3dsRenderData = nullptr;
+#endif
+
   Maybe<Vec2F> m_lastCameraCenter;
   Vec2F m_cameraPan;
 };

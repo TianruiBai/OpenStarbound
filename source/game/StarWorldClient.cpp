@@ -28,6 +28,13 @@ const std::string SECRET_BROADCAST_PUBLIC_KEY = "SecretBroadcastPublicKey";
 const std::string SECRET_BROADCAST_PREFIX = "\0Broadcast\0"s;
 
 const float WorldClient::DropDist = 6.0f;
+
+#ifdef STAR_PLATFORM_N3DS
+static Vec2U n3dsClientWindowSize() {
+  return {40, 28};
+}
+#endif
+
 WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
 #ifndef STAR_PLATFORM_N3DS
   auto& root = Root::singleton();
@@ -65,7 +72,11 @@ WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
 
   m_mainPlayer = mainPlayer;
 
+#ifdef STAR_PLATFORM_N3DS
+  centerClientWindowOnPlayer(n3dsClientWindowSize());
+#else
   centerClientWindowOnPlayer(Vec2U(100, 100));
+#endif
 
   m_collisionGenerator.init([this](int x, int y) {
     if (!m_predictedTiles.empty()) {
@@ -874,10 +885,20 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
     }
   }
 
-  auto functionDatabase = Root::singleton().functionDatabase();
-  for (auto& layer : renderData.parallaxLayers) {
-    if (!layer.timeOfDayCorrelation.empty())
-      layer.alpha *= clamp((float)functionDatabase->function(layer.timeOfDayCorrelation)->evaluate(m_sky->timeOfDay() / m_sky->dayLength()), 0.0f, 1.0f);
+  bool hasTimeOfDayCorrelation = false;
+  for (auto const& layer : renderData.parallaxLayers) {
+    if (!layer.timeOfDayCorrelation.empty()) {
+      hasTimeOfDayCorrelation = true;
+      break;
+    }
+  }
+
+  if (hasTimeOfDayCorrelation) {
+    auto functionDatabase = Root::singleton().functionDatabase();
+    for (auto& layer : renderData.parallaxLayers) {
+      if (!layer.timeOfDayCorrelation.empty())
+        layer.alpha *= clamp((float)functionDatabase->function(layer.timeOfDayCorrelation)->evaluate(m_sky->timeOfDay() / m_sky->dayLength()), 0.0f, 1.0f);
+    }
   }
 
   stableSort(renderData.parallaxLayers, [](ParallaxLayer const& a, ParallaxLayer const& b) {
@@ -1339,7 +1360,7 @@ void WorldClient::update(float dt) {
   m_interpolationTracker.update(m_currentTime);
   m_clientState.setPlayer(m_mainPlayer->entityId());
   m_clientState.setClientPresenceEntities(List<EntityId>());
-  centerClientWindowOnPlayer();
+  centerClientWindowOnPlayer(n3dsClientWindowSize());
   queueUpdatePackets(m_entityUpdateTimer.wrapTick(dt));
   return;
 #endif
@@ -2130,7 +2151,11 @@ void WorldClient::initWorld(WorldStartPacket const& startPacket) {
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS WorldClient: center window begin");
 #endif
+#ifdef STAR_PLATFORM_N3DS
+  centerClientWindowOnPlayer(n3dsClientWindowSize());
+#else
   centerClientWindowOnPlayer();
+#endif
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS WorldClient: WorldStart complete");
 #endif

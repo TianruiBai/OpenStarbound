@@ -51,6 +51,44 @@ extern "C" __declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 1;
 
 namespace Star {
 
+#ifdef STAR_PLATFORM_N3DS
+namespace {
+void preloadN3dsFirstFrameHumanoidAssets(AssetsConstPtr const& assets, PlayerPtr const& player) {
+  List<AssetPath> firstFrameAssets;
+  if (player) {
+    for (auto& drawable : player->humanoid()->render(false)) {
+      if (drawable.isImage())
+        firstFrameAssets.append(drawable.imagePart().image);
+    }
+  }
+
+  if (firstFrameAssets.empty()) {
+    for (auto const& image : StringList{
+             "/humanoid/human/backarm.png:idle.1",
+             "/humanoid/human/frontarm.png:idle.1",
+             "/humanoid/human/malebody.png:idle.1",
+             "/humanoid/human/malehead.png:normal",
+             "/humanoid/human/emote.png:idle.1"}) {
+      firstFrameAssets.append(AssetPath::split(image));
+    }
+  }
+
+  unsigned loaded = 0;
+  for (auto const& image : firstFrameAssets) {
+    try {
+      assets->image(image);
+      ++loaded;
+    } catch (std::exception const& e) {
+      Logger::warn("N3DS game bootstrap: first-frame humanoid preload failed for {}: {}", AssetPath::join(image), e.what());
+      break;
+    }
+  }
+
+  Logger::info("N3DS game bootstrap: preloaded first-frame humanoid assets {}/{}", loaded, firstFrameAssets.size());
+}
+}
+#endif
+
 Json const AdditionalAssetsSettings = Json::parseJson(R"JSON(
     {
       "missingImage" : "/assetmissing.png",
@@ -518,7 +556,7 @@ void ClientApplication::render() {
         n3dsRenderer->setHandheldTitleMenuState(false);
       renderer->switchEffectConfig("world");
       auto clientStart = totalStart;
-      worldClient->render(m_renderData, 0);
+      worldClient->render(m_renderData, TilePainter::BorderTileSize);
       LogMap::set("client_render_world_client", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - clientStart));
 
       auto paintStart = Time::monotonicMicroseconds();
@@ -939,6 +977,7 @@ void ClientApplication::changeState(MainAppState newState) {
     }
 
     m_root->n3dsReleasePlayerBootstrapCaches();
+  preloadN3dsFirstFrameHumanoidAssets(m_root->assets(), m_player);
 #else
     if (m_titleScreen->currentlySelectedPlayer()) {
       m_player = m_titleScreen->currentlySelectedPlayer();
@@ -1139,7 +1178,12 @@ void ClientApplication::changeState(MainAppState newState) {
         if (auto worldClient = m_universeClient->worldClient()) {
           Logger::info("N3DS game bootstrap: presenting first original world frame");
           renderer->switchEffectConfig("world");
-          worldClient->render(m_renderData, 0);
+          auto& camera = m_worldPainter->camera();
+          camera.setScreenSize(renderer->screenSize());
+          camera.setPixelRatio(m_root->configuration()->get("zoomLevel").toFloat());
+          m_worldPainter->setCameraPosition(worldClient->geometry(), m_player ? m_player->cameraPosition() : Vec2F(worldClient->clientWindow().center()));
+          worldClient->setClientWindow(camera.worldTileRect());
+          worldClient->render(m_renderData, TilePainter::BorderTileSize);
           Logger::info("N3DS game bootstrap: first frame world render returned tiles={}x{} entities={}",
               m_renderData.tiles.size(0), m_renderData.tiles.size(1), m_renderData.entityDrawables.size());
           Logger::info("N3DS game bootstrap: first frame painter begin");

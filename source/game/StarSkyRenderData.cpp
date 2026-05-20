@@ -17,8 +17,14 @@ List<SkyOrbiter> SkyRenderData::backOrbiters(Vec2F const& viewSize) const {
   if (!settings)
     return {};
 
-  float planetScale = settings.queryFloat("satellite.planetScale");
-  float moonScale = settings.queryFloat("satellite.moonScale");
+  if (!skyParameters.nearbyPlanet && skyParameters.nearbyMoons.empty())
+    return {};
+
+  if (!settings.optQuery("satellite.area"))
+    return {};
+
+  float planetScale = settings.queryFloat("satellite.planetScale", 1.0f);
+  float moonScale = settings.queryFloat("satellite.moonScale", 1.0f);
 
   List<tuple<List<pair<String, float>>, Vec2F, float>> orbitingCelestialObjects;
 
@@ -56,9 +62,9 @@ SkyWorldHorizon SkyRenderData::worldHorizon(Vec2F const& viewSize) const {
 
   SkyWorldHorizon worldHorizon;
 
-  if (type == SkyType::Orbital) {
+  if (type == SkyType::Orbital && settings.opt("planetHorizon")) {
     worldHorizon.center = Vec2F(viewSize[0] / 2, 0) - worldOffset;
-    worldHorizon.scale = settings.queryFloat("planetHorizon.scale");
+    worldHorizon.scale = settings.queryFloat("planetHorizon.scale", 1.0f);
     worldHorizon.rotation = worldRotation;
     worldHorizon.layers = skyParameters.horizonImages;
   }
@@ -78,38 +84,42 @@ List<SkyOrbiter> SkyRenderData::frontOrbiters(Vec2F const& viewSize) const {
   };
   List<HorizonCloud> horizonClouds;
 
-  if (skyParameters.horizonClouds) {
-    Vec2I cloudCountRange = jsonToVec2I(settings.query("planetHorizon.cloudCount"));
-    Vec2F cloudRadiusRange = jsonToVec2F(settings.query("planetHorizon.cloudRadius"));
-    Vec2F cloudSpeedRange = jsonToVec2F(settings.query("planetHorizon.cloudSpeed"));
-    StringList cloudList = jsonToStringList(settings.query("planetHorizon.clouds"));
+  if (skyParameters.horizonClouds && settings.opt("planetHorizon")) {
+    Vec2I cloudCountRange = jsonToVec2I(settings.query("planetHorizon.cloudCount", JsonArray{0, 0}));
+    Vec2F cloudRadiusRange = jsonToVec2F(settings.query("planetHorizon.cloudRadius", JsonArray{0, 0}));
+    Vec2F cloudSpeedRange = jsonToVec2F(settings.query("planetHorizon.cloudSpeed", JsonArray{0, 0}));
+    StringList cloudList = jsonToStringList(settings.query("planetHorizon.clouds", JsonArray{}));
 
-    int numClouds = staticRandomI32Range(cloudCountRange[0], cloudCountRange[1], "HorizonCloudCount");
-    for (int i = 0; i < numClouds; ++i) {
-      horizonClouds.append({staticRandomFloatRange(0, 2 * Constants::pi, i, "CloudStartAngle"),
-          staticRandomFrom(cloudList, i, "Cloud"),
-          staticRandomFloatRange(cloudSpeedRange[0], cloudSpeedRange[1], i, "CloudSpeed"),
-          staticRandomFloatRange(cloudRadiusRange[0], cloudRadiusRange[1], i, "CloudRadius")});
+    if (!cloudList.empty()) {
+      int numClouds = staticRandomI32Range(cloudCountRange[0], cloudCountRange[1], "HorizonCloudCount");
+      for (int i = 0; i < numClouds; ++i) {
+        horizonClouds.append({staticRandomFloatRange(0, 2 * Constants::pi, i, "CloudStartAngle"),
+            staticRandomFrom(cloudList, i, "Cloud"),
+            staticRandomFloatRange(cloudSpeedRange[0], cloudSpeedRange[1], i, "CloudSpeed"),
+            staticRandomFloatRange(cloudRadiusRange[0], cloudRadiusRange[1], i, "CloudRadius")});
+      }
     }
   }
 
   List<SkyOrbiter> orbiters;
-  if (type == SkyType::Atmospheric || type == SkyType::Atmosphereless) {
+  if ((type == SkyType::Atmospheric || type == SkyType::Atmosphereless) && settings.opt("sun")) {
     String image;
     if (settings.queryBool("sun.dynamicImage.enabled", false) && !skyParameters.sunType.empty())
-      image = settings.queryString("sun.dynamicImage.images." + skyParameters.sunType, settings.queryString("sun.image"));
+      image = settings.queryString("sun.dynamicImage.images." + skyParameters.sunType, settings.queryString("sun.image", ""));
     else
-      image = settings.queryString("sun.image");
-    orbiters.append({SkyOrbiterType::Sun,
-        settings.queryFloat("sun.scale", 1.0f),
-        0.0f,
-        image,
-        Vec2F::withAngle(orbitAngle, settings.queryFloat("sun.radius")) + viewSize / 2});
-  } else if (type == SkyType::Orbital) {
+      image = settings.queryString("sun.image", "");
+    if (!image.empty()) {
+      orbiters.append({SkyOrbiterType::Sun,
+          settings.queryFloat("sun.scale", 1.0f),
+          0.0f,
+          image,
+          Vec2F::withAngle(orbitAngle, settings.queryFloat("sun.radius", 0.0f)) + viewSize / 2});
+    }
+  } else if (type == SkyType::Orbital && settings.opt("planetHorizon")) {
     auto planetCenter = Vec2F(viewSize[0] / 2, 0)
-        - Vec2F::withAngle(worldRotation - Constants::pi / 2, settings.queryFloat("planetHorizon.yCenter")) - worldOffset;
+        - Vec2F::withAngle(worldRotation - Constants::pi / 2, settings.queryFloat("planetHorizon.yCenter", 0.0f)) - worldOffset;
 
-    float scale = settings.queryFloat("planetHorizon.scale");
+    float scale = settings.queryFloat("planetHorizon.scale", 1.0f);
 
     auto rotMatrix = Mat3F::rotation(worldRotation, planetCenter);
 
