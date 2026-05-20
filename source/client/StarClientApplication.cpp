@@ -1137,12 +1137,12 @@ void ClientApplication::changeState(MainAppState newState) {
     if (worldStarted) {
       if (auto renderer = Application::renderer()) {
         if (auto worldClient = m_universeClient->worldClient()) {
-          Logger::info("N3DS game bootstrap: presenting first compact world frame");
+          Logger::info("N3DS game bootstrap: presenting first original world frame");
           renderer->switchEffectConfig("world");
           worldClient->render(m_renderData, 0);
           m_worldPainter->render(m_renderData, {});
           renderer->flush(Mat3F::identity());
-          Logger::info("N3DS game bootstrap: first compact world frame presented");
+          Logger::info("N3DS game bootstrap: first original world frame presented");
         }
       }
     }

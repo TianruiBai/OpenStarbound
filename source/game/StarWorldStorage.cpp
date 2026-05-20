@@ -285,6 +285,29 @@ void WorldStorage::activateSector(Sector sector) {
   }
 }
 
+void WorldStorage::activateDefaultSector(Sector sector) {
+  try {
+#ifdef STAR_PLATFORM_N3DS
+    if (!m_tileArray->sectorValid(sector))
+      return;
+
+    if (!m_tileArray->sectorLoaded(sector))
+      m_tileArray->loadSector(sector, make_unique<ServerTileSectorArray::Array>());
+    auto& metadata = m_sectorMetadata[sector];
+    metadata.loadLevel = SectorLoadLevel::Loaded;
+    metadata.generationLevel = SectorGenerationLevel::Complete;
+    metadata.timeToLive = randomizedSectorTTL();
+    markSectorDirty(sector, TileDirtySectorReason | GenerationDirtySectorReason);
+#else
+    activateSector(sector);
+#endif
+  } catch (std::exception const& e) {
+    m_db.rollback();
+    m_db.close();
+    throw WorldStorageException(strf("Failed to load default sector {}", sector), e);
+  }
+}
+
 void WorldStorage::queueSectorActivation(Sector sector) {
   if (auto p = m_sectorMetadata.ptr(sector)) {
     p->timeToLive = randomizedSectorTTL();
@@ -1123,8 +1146,6 @@ void WorldStorage::loadSectorToLevel(Sector const& sector, SectorLoadLevel targe
   if (!m_tileArray->sectorValid(sector))
     return;
 
-  auto entityFactory = Root::singleton().entityFactory();
-
   auto& metadata = m_sectorMetadata[sector];
   if (metadata.loadLevel >= targetLoadLevel)
     return;
@@ -1158,6 +1179,7 @@ void WorldStorage::loadSectorToLevel(Sector const& sector, SectorLoadLevel targe
     } else if (currentLoad == SectorLoadLevel::Entities) {
       List<EntityPtr> addedEntities;
       if (auto res = m_db.find(entitySectorKey(sector))) {
+        auto entityFactory = Root::singleton().entityFactory();
         EntitySectorStore sectorStore = readEntitySector(*res);
         for (auto const& entityStore : sectorStore) {
           try {

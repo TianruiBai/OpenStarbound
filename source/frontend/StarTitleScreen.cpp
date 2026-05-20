@@ -96,12 +96,6 @@ void TitleScreen::render() {
     }
 
     Vec2F logoCenter = {screenSize[0] * 0.5f, screenSize[1] * 0.60f};
-    static bool loggedN3dsTitleLogo = false;
-    if (!loggedN3dsTitleLogo) {
-      Logger::info("N3DS TitleScreen: logo texture {}x{} fitted to {}x{} at {}x{} on {}x{}",
-          logoSourceSize[0], logoSourceSize[1], logoSize[0], logoSize[1], logoCenter[0], logoCenter[1], screenSize[0], screenSize[1]);
-      loggedN3dsTitleLogo = true;
-    }
     m_guiContext->drawQuad(logoPath, RectF::withCenter(logoCenter, logoSize), Vec4B::filled(255));
   }
 #else

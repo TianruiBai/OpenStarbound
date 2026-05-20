@@ -508,8 +508,8 @@ public:
     subTexture.height = static_cast<u16>(std::lround(top - bottom));
     subTexture.left = left / static_cast<float>(m_storageWidth);
     subTexture.right = right / static_cast<float>(m_storageWidth);
-    subTexture.bottom = bottom / static_cast<float>(m_storageHeight);
-    subTexture.top = top / static_cast<float>(m_storageHeight);
+    subTexture.bottom = 1.0f - (maxTextureY - bottom) / static_cast<float>(m_storageHeight);
+    subTexture.top = 1.0f - (maxTextureY - top) / static_cast<float>(m_storageHeight);
     image = C2D_Image{const_cast<C3D_Tex*>(&m_texture), &subTexture};
     return true;
   }
@@ -543,9 +543,9 @@ private:
     std::memset(linearUploadData, 0, textureBytes);
     auto* uploadBytes = static_cast<uint8_t*>(linearUploadData);
     for (unsigned y = 0; y < image.height(); ++y) {
-      unsigned destinationY = image.height() - y - 1;
+      unsigned textureY = image.height() - y - 1;
       for (unsigned x = 0; x < image.width(); ++x) {
-        size_t destinationOffset = (static_cast<size_t>(destinationY) * storageWidth + x) * 4;
+        size_t destinationOffset = n3dsTiledPixelIndex(x, textureY, storageWidth) * 4;
         auto pixel = image.getrgb({x, y});
         writeNativeRgba8Pixel(uploadBytes + destinationOffset, pixel.ptr());
       }
@@ -569,8 +569,8 @@ private:
     m_subTexture.height = static_cast<u16>(image.height());
     m_subTexture.left = 0.0f;
     m_subTexture.right = static_cast<float>(image.width()) / static_cast<float>(storageWidth);
-    m_subTexture.bottom = 0.0f;
-    m_subTexture.top = static_cast<float>(image.height()) / static_cast<float>(storageHeight);
+    m_subTexture.bottom = 1.0f - static_cast<float>(image.height()) / static_cast<float>(storageHeight);
+    m_subTexture.top = 1.0f;
     m_storageWidth = storageWidth;
     m_storageHeight = storageHeight;
     m_textureBytes = textureBytes;
@@ -672,16 +672,6 @@ bool drawTexturedQuad(RenderQuad const& quad) {
     float height = maxY - minY;
     if (width <= 0.0f || height <= 0.0f)
       return true;
-
-    static unsigned loggedLargeTexturedQuads = 0;
-    if (width > 250.0f && height > 80.0f && loggedLargeTexturedQuads < 12) {
-      Logger::info("N3DS textured quad {} screen [{},{}]-[{},{}] uv a{} b{} c{} d{} subtex w={} h={} l={} t={} r={} b={}",
-          loggedLargeTexturedQuads,
-          minX, minY, maxX, maxY,
-          quad.a.textureCoordinate, quad.b.textureCoordinate, quad.c.textureCoordinate, quad.d.textureCoordinate,
-          subTexture.width, subTexture.height, subTexture.left, subTexture.top, subTexture.right, subTexture.bottom);
-      ++loggedLargeTexturedQuads;
-    }
 
     params = {{minX, toTopScreenY(maxY), width, height}, {0.0f, 0.0f}, 0.0f, 0.0f};
   } else {

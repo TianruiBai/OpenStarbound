@@ -294,33 +294,136 @@ WorldStructure WorldServer::setCentralStructure(WorldStructure centralStructure)
   m_adjustPlayerStart = false;
 
   auto materialDatabase = Root::singleton().materialDatabase();
+#ifdef STAR_PLATFORM_N3DS
+  bool batchStructurePlacement = m_clientInfo.empty();
+  RectI structureDirtyRegion = m_centralStructure.region();
+  List<ServerTileSectorArray::Sector> structureSectors;
+  HashMap<MaterialId, CollisionKind> collisionKindCache;
+  size_t foregroundPlaced = 0;
+  size_t backgroundPlaced = 0;
+
+  Logger::info("N3DS WorldServer: setCentralStructure begin fg={} bg={} objects={} overlays={}",
+      m_centralStructure.foregroundBlocks().size(), m_centralStructure.backgroundBlocks().size(), m_centralStructure.objects().size(),
+      m_centralStructure.backgroundOverlays().size() + m_centralStructure.foregroundOverlays().size());
+
+  if (batchStructurePlacement) {
+    auto allStructureSectors = structureDirtyRegion.isNull() ? List<ServerTileSectorArray::Sector>() : m_worldStorage->sectorsForRegion(structureDirtyRegion);
+    size_t initialSectorBudget = 2;
+    auto appendBudgetedSector = [&](ServerTileSectorArray::Sector const& sector) {
+      if (structureSectors.size() >= initialSectorBudget)
+        return;
+      bool inStructureRegion = false;
+      for (auto const& structureSector : allStructureSectors) {
+        if (structureSector == sector) {
+          inStructureRegion = true;
+          break;
+        }
+      }
+      if (!inStructureRegion)
+        return;
+      for (auto const& selectedSector : structureSectors) {
+        if (selectedSector == sector)
+          return;
+      }
+      structureSectors.append(sector);
+    };
+
+    if (auto maybeSpawnSector = m_worldStorage->sectorForPosition(Vec2I::floor(m_playerStart))) {
+      auto spawnSector = *maybeSpawnSector;
+      appendBudgetedSector(spawnSector);
+      if (spawnSector[1] > 0)
+        appendBudgetedSector({spawnSector[0], spawnSector[1] - 1});
+      appendBudgetedSector({spawnSector[0] + 1, spawnSector[1]});
+      if (spawnSector[0] > 0)
+        appendBudgetedSector({spawnSector[0] - 1, spawnSector[1]});
+      appendBudgetedSector({spawnSector[0], spawnSector[1] + 1});
+    }
+    for (auto const& sector : allStructureSectors)
+      appendBudgetedSector(sector);
+
+    Logger::info("N3DS WorldServer: central structure sector prep region={} totalSectors={} initialSectors={} deferredSectors={} playerStart={}",
+        structureDirtyRegion, allStructureSectors.size(), structureSectors.size(), allStructureSectors.size() - structureSectors.size(), m_playerStart);
+    for (auto const& sector : structureSectors) {
+      Logger::info("N3DS WorldServer: activating central structure sector {}", sector);
+      m_worldStorage->activateDefaultSector(sector);
+    }
+    Logger::info("N3DS WorldServer: central structure default sectors active count={}", structureSectors.size());
+  }
+#endif
+
   for (auto const& foregroundBlock : m_centralStructure.foregroundBlocks()) {
+#ifdef STAR_PLATFORM_N3DS
+    if (!batchStructurePlacement) {
+      if (auto sector = m_worldStorage->sectorForPosition(foregroundBlock.position))
+        m_worldStorage->activateDefaultSector(*sector);
+    }
+#else
     generateRegion(RectI::withSize(foregroundBlock.position, {1, 1}));
+#endif
     if (auto tile = m_tileArray->modifyTile(foregroundBlock.position)) {
-      if (tile->foreground == EmptyMaterialId) {
+      if (tile->foreground == EmptyMaterialId || tile->foreground == NullMaterialId) {
         tile->foreground = foregroundBlock.materialId;
         tile->foregroundColorVariant = foregroundBlock.materialColor;
         tile->foregroundHueShift = foregroundBlock.materialHue;
         tile->foregroundMod = foregroundBlock.materialMod;
+#ifdef STAR_PLATFORM_N3DS
+        CollisionKind collisionKind;
+        if (auto cachedCollisionKind = collisionKindCache.ptr(foregroundBlock.materialId)) {
+          collisionKind = *cachedCollisionKind;
+        } else {
+          collisionKind = materialDatabase->materialCollisionKind(foregroundBlock.materialId);
+          collisionKindCache.set(foregroundBlock.materialId, collisionKind);
+        }
+        tile->updateCollision(collisionKind);
+        ++foregroundPlaced;
+        if (!batchStructurePlacement) {
+          queueTileUpdates(foregroundBlock.position);
+          dirtyCollision(RectI::withSize(foregroundBlock.position, {1, 1}));
+        }
+#else
         tile->updateCollision(materialDatabase->materialCollisionKind(foregroundBlock.materialId));
         queueTileUpdates(foregroundBlock.position);
         dirtyCollision(RectI::withSize(foregroundBlock.position, {1, 1}));
+#endif
       }
     }
   }
 
   for (auto const& backgroundBlock : m_centralStructure.backgroundBlocks()) {
+#ifdef STAR_PLATFORM_N3DS
+    if (!batchStructurePlacement) {
+      if (auto sector = m_worldStorage->sectorForPosition(backgroundBlock.position))
+        m_worldStorage->activateDefaultSector(*sector);
+    }
+#else
     generateRegion(RectI::withSize(backgroundBlock.position, {1, 1}));
+#endif
     if (auto tile = m_tileArray->modifyTile(backgroundBlock.position)) {
-      if (tile->background == EmptyMaterialId) {
+      if (tile->background == EmptyMaterialId || tile->background == NullMaterialId) {
         tile->background = backgroundBlock.materialId;
         tile->backgroundColorVariant = backgroundBlock.materialColor;
         tile->backgroundHueShift = backgroundBlock.materialHue;
         tile->backgroundMod = backgroundBlock.materialMod;
+#ifdef STAR_PLATFORM_N3DS
+        ++backgroundPlaced;
+        if (!batchStructurePlacement)
+          queueTileUpdates(backgroundBlock.position);
+#else
         queueTileUpdates(backgroundBlock.position);
+#endif
       }
     }
   }
+
+#ifdef STAR_PLATFORM_N3DS
+  if (batchStructurePlacement) {
+    for (auto const& sector : structureSectors)
+      m_worldStorage->markSectorDirty(sector, WorldStorage::TileDirtySectorReason | WorldStorage::GenerationDirtySectorReason);
+    if (!structureDirtyRegion.isNull())
+      dirtyCollision(structureDirtyRegion);
+  }
+  Logger::info("N3DS WorldServer: central structure tiles placed fg={} bg={} sectors={}", foregroundPlaced, backgroundPlaced, structureSectors.size());
+#endif
 
 #ifdef STAR_PLATFORM_N3DS
   Logger::info("N3DS WorldServer: skipped central structure objects");
@@ -458,10 +561,10 @@ bool WorldServer::addClient(ConnectionId clientId, SpawnTarget const& spawnTarge
   Logger::info("N3DS WorldServer: queued WorldStartPacket");
 #endif
 
-#ifndef STAR_PLATFORM_N3DS
   clientInfo->outgoingPackets.append(make_shared<CentralStructureUpdatePacket>(m_centralStructure.store()));
-#else
-  Logger::info("N3DS WorldServer: skipped central structure update packet");
+
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS WorldServer: queued central structure update packet");
 #endif
 
   for (auto& p : m_scriptContexts)

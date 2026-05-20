@@ -61,6 +61,14 @@ MaterialDatabase::MaterialDatabase() {
   auto& materials = assets->scanExtension("material");
   auto& mods = assets->scanExtension("matmod");
 
+#ifdef STAR_PLATFORM_N3DS
+  m_lazyMaterialFiles = materials.values();
+  m_lazyModFiles = mods.values();
+  m_defaultFootstepSound = assets->json("/client.config:defaultFootstepSound").toString();
+  Logger::info("N3DS MaterialDatabase: indexed {} material files and {} mod files for lazy loading", m_lazyMaterialFiles.size(), m_lazyModFiles.size());
+  return;
+#endif
+
   assets->queueJsons(materials);
   assets->queueJsons(mods);
 
@@ -105,11 +113,21 @@ MaterialDatabase::MaterialDatabase() {
       material.falling = matConfig.getBool("falling", false);
       material.cascading = matConfig.getBool("cascading", false);
 
+#ifdef STAR_PLATFORM_N3DS
+      if (matConfig.contains("renderTemplate")) {
+        static bool loggedDeferredMaterialProfiles = false;
+        if (!loggedDeferredMaterialProfiles) {
+          Logger::info("N3DS MaterialDatabase: deferring material render profile parsing");
+          loggedDeferredMaterialProfiles = true;
+        }
+      }
+#else
       if (matConfig.contains("renderTemplate")) {
         auto renderTemplate = assets->fetchJson(matConfig.get("renderTemplate"), file);
         auto renderParameters = matConfig.get("renderParameters");
         material.materialRenderProfile = make_shared<MaterialRenderProfile>(parseMaterialRenderProfile(jsonMerge(renderTemplate, renderParameters), file));
       }
+#endif
 
       material.damageParameters =
           TileDamageParameters(assets->fetchJson(matConfig.get("damageTable", "/tiles/defaultDamage.config")),
@@ -183,11 +201,21 @@ MaterialDatabase::MaterialDatabase() {
 
       mod.breaksWithTile = modConfig.getBool("breaksWithTile", false);
 
+#ifdef STAR_PLATFORM_N3DS
+      if (modConfig.contains("renderTemplate")) {
+        static bool loggedDeferredModProfiles = false;
+        if (!loggedDeferredModProfiles) {
+          Logger::info("N3DS MaterialDatabase: deferring mod render profile parsing");
+          loggedDeferredModProfiles = true;
+        }
+      }
+#else
       if (modConfig.contains("renderTemplate")) {
         auto renderTemplate = assets->fetchJson(modConfig.get("renderTemplate"));
         auto renderParameters = modConfig.get("renderParameters");
         mod.modRenderProfile = make_shared<MaterialRenderProfile>(parseMaterialRenderProfile(jsonMerge(renderTemplate, renderParameters), file));
       }
+#endif
 
       mod.damageParameters =
           TileDamageParameters(assets->fetchJson(modConfig.get("damageTable", "/tiles/defaultDamage.config")),
@@ -222,6 +250,196 @@ MaterialDatabase::MaterialDatabase() {
   m_defaultFootstepSound = assets->json("/client.config:defaultFootstepSound").toString();
 }
 
+bool MaterialDatabase::lazyLoadMaterialFile(String const& file, Maybe<String> const& wantedName, Maybe<MaterialId> const& wantedId) const {
+  auto assets = Root::singleton().assets();
+  auto matConfig = assets->json(file);
+  MaterialId materialId = matConfig.getInt("materialId");
+  String materialName = matConfig.getString("materialName");
+  if ((wantedName && materialName != wantedName.value()) || (wantedId && materialId != wantedId.value()))
+    return false;
+
+  if (containsMaterial(materialId) || m_materialIndex.contains(materialName))
+    return true;
+
+  MaterialInfo material;
+  material.id = materialId;
+  material.name = materialName;
+  material.path = file;
+  material.config = matConfig;
+  material.itemDrop = matConfig.getString("itemDrop", "");
+
+  JsonObject descriptions;
+  for (auto entry : matConfig.iterateObject())
+    if (entry.first.endsWith("Description"))
+      descriptions[entry.first] = entry.second;
+  descriptions["description"] = matConfig.getString("description", "");
+  descriptions["shortdescription"] = matConfig.getString("shortdescription", "");
+  material.descriptions = descriptions;
+
+  material.category = matConfig.getString("category");
+  material.particleColor = jsonToColor(matConfig.get("particleColor", JsonArray{0, 0, 0, 255}));
+  if (matConfig.contains("miningSounds"))
+    material.miningSounds = transform<StringList>(
+        jsonToStringList(matConfig.get("miningSounds")), bind(AssetPath::relativeTo, file, _1));
+  if (matConfig.contains("footstepSound"))
+    material.footstepSound = AssetPath::relativeTo(file, matConfig.getString("footstepSound"));
+
+  material.tillableMod = matConfig.getInt("tillableMod", NoModId);
+  material.soil = matConfig.getBool("soil", false);
+  material.falling = matConfig.getBool("falling", false);
+  material.cascading = matConfig.getBool("cascading", false);
+  material.damageParameters =
+      TileDamageParameters(assets->fetchJson(matConfig.get("damageTable", "/tiles/defaultDamage.config")),
+          matConfig.optFloat("health"),
+          matConfig.optUInt("requiredHarvestLevel"));
+  material.collisionKind = CollisionKindNames.getLeft(matConfig.getString("collisionKind", "block"));
+  material.foregroundOnly = matConfig.getBool("foregroundOnly", false);
+  material.supportsMods = matConfig.getBool("supportsMods", !(material.falling || material.cascading || material.collisionKind != CollisionKind::Block));
+  material.blocksLiquidFlow = matConfig.getBool("blocksLiquidFlow", isSolidColliding(material.collisionKind));
+
+  const_cast<MaterialDatabase*>(this)->setMaterial(material.id, std::move(material));
+
+  for (auto liquidInteraction : matConfig.getArray("liquidInteractions", {})) {
+    LiquidId liquidId = liquidInteraction.getUInt("liquidId");
+    LiquidMaterialInteraction interaction;
+    interaction.consumeLiquid = liquidInteraction.getFloat("consumeLiquid", 0.0f);
+    interaction.transformTo = liquidInteraction.getUInt("transformMaterialId", NullMaterialId);
+    interaction.topOnly = liquidInteraction.getBool("topOnly", false);
+    const_cast<MaterialDatabase*>(this)->m_liquidMaterialInteractions[{liquidId, materialId}] = interaction;
+  }
+
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS MaterialDatabase: lazily indexed material '{}' ({})", materialName, materialId);
+#endif
+  return true;
+}
+
+bool MaterialDatabase::lazyLoadModFile(String const& file, Maybe<String> const& wantedName, Maybe<ModId> const& wantedId) const {
+  auto assets = Root::singleton().assets();
+  auto modConfig = assets->json(file);
+  ModId modId = modConfig.getInt("modId");
+  String modName = modConfig.getString("modName");
+  if ((wantedName && modName != wantedName.value()) || (wantedId && modId != wantedId.value()))
+    return false;
+
+  if (containsMod(modId) || m_modIndex.contains(modName))
+    return true;
+
+  ModInfo mod;
+  mod.id = modId;
+  mod.name = modName;
+  mod.path = file;
+  mod.config = modConfig;
+  mod.itemDrop = modConfig.getString("itemDrop", "");
+
+  JsonObject descriptions;
+  for (auto entry : modConfig.iterateObject())
+    if (entry.first.endsWith("Description"))
+      descriptions[entry.first] = entry.second;
+  descriptions["description"] = modConfig.getString("description", "");
+  mod.descriptions = descriptions;
+
+  mod.particleColor = jsonToColor(modConfig.get("particleColor", JsonArray{0, 0, 0, 255}));
+  if (modConfig.contains("miningSounds"))
+    mod.miningSounds = transform<StringList>(
+        jsonToStringList(modConfig.get("miningSounds")), bind(AssetPath::relativeTo, file, _1));
+  if (modConfig.contains("footstepSound"))
+    mod.footstepSound = AssetPath::relativeTo(file, modConfig.getString("footstepSound"));
+
+  mod.tilled = modConfig.getBool("tilled", false);
+  mod.breaksWithTile = modConfig.getBool("breaksWithTile", false);
+  mod.damageParameters =
+      TileDamageParameters(assets->fetchJson(modConfig.get("damageTable", "/tiles/defaultDamage.config")),
+          modConfig.optFloat("health"),
+          modConfig.optUInt("harvestLevel"));
+
+  const_cast<MaterialDatabase*>(this)->setMod(mod.id, std::move(mod));
+
+  for (auto liquidInteraction : modConfig.getArray("liquidInteractions", {})) {
+    LiquidId liquidId = liquidInteraction.getUInt("liquidId");
+    LiquidModInteraction interaction;
+    interaction.consumeLiquid = liquidInteraction.getFloat("consumeLiquid", 0.0f);
+    interaction.transformTo = liquidInteraction.getUInt("transformModId", NoModId);
+    interaction.topOnly = liquidInteraction.getBool("topOnly", false);
+    const_cast<MaterialDatabase*>(this)->m_liquidModInteractions[{liquidId, modId}] = interaction;
+  }
+
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS MaterialDatabase: lazily indexed mod '{}' ({})", modName, modId);
+#endif
+  return true;
+}
+
+void MaterialDatabase::lazyLoadMaterialByName(String const& materialName) const {
+#ifdef STAR_PLATFORM_N3DS
+  String suffix = strf("/{}.material", materialName);
+  for (auto const& file : m_lazyMaterialFiles) {
+    if (file.endsWith(suffix)) {
+      try {
+        if (lazyLoadMaterialFile(file, materialName, {}))
+          return;
+      } catch (std::exception const& e) {
+        Logger::warn("N3DS MaterialDatabase: failed direct material load {}: {}", file, e.what());
+      }
+    }
+  }
+#endif
+  for (auto const& file : m_lazyMaterialFiles) {
+    try {
+      if (lazyLoadMaterialFile(file, materialName, {}))
+        return;
+    } catch (std::exception const& e) {
+      Logger::warn("N3DS MaterialDatabase: failed checking material file {}: {}", file, e.what());
+    }
+  }
+}
+
+void MaterialDatabase::lazyLoadMaterialById(MaterialId materialId) const {
+  for (auto const& file : m_lazyMaterialFiles) {
+    try {
+      if (lazyLoadMaterialFile(file, {}, materialId))
+        return;
+    } catch (std::exception const& e) {
+      Logger::warn("N3DS MaterialDatabase: failed checking material file {}: {}", file, e.what());
+    }
+  }
+}
+
+void MaterialDatabase::lazyLoadModByName(String const& modName) const {
+#ifdef STAR_PLATFORM_N3DS
+  String suffix = strf("/{}.matmod", modName);
+  for (auto const& file : m_lazyModFiles) {
+    if (file.endsWith(suffix)) {
+      try {
+        if (lazyLoadModFile(file, modName, {}))
+          return;
+      } catch (std::exception const& e) {
+        Logger::warn("N3DS MaterialDatabase: failed direct mod load {}: {}", file, e.what());
+      }
+    }
+  }
+#endif
+  for (auto const& file : m_lazyModFiles) {
+    try {
+      if (lazyLoadModFile(file, modName, {}))
+        return;
+    } catch (std::exception const& e) {
+      Logger::warn("N3DS MaterialDatabase: failed checking mod file {}: {}", file, e.what());
+    }
+  }
+}
+
+void MaterialDatabase::lazyLoadModById(ModId modId) const {
+  for (auto const& file : m_lazyModFiles) {
+    try {
+      if (lazyLoadModFile(file, {}, modId))
+        return;
+    } catch (std::exception const& e) {
+      Logger::warn("N3DS MaterialDatabase: failed checking mod file {}: {}", file, e.what());
+    }
+  }
+}
+
 StringList MaterialDatabase::materialNames() const {
   StringList names = m_materialIndex.keys();
   names.appendAll(m_metaMaterialIndex.keys());
@@ -233,21 +451,35 @@ bool MaterialDatabase::isMetaMaterialName(String const& name) const {
 }
 
 bool MaterialDatabase::isMaterialName(String const& name) const {
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_materialIndex.contains(name) && !m_metaMaterialIndex.contains(name))
+    lazyLoadMaterialByName(name);
+#endif
   return m_materialIndex.contains(name) || m_metaMaterialIndex.contains(name);
 }
 
 bool MaterialDatabase::isValidMaterialId(MaterialId material) const {
-  if (isRealMaterial(material))
+  if (isRealMaterial(material)) {
+#ifdef STAR_PLATFORM_N3DS
+    if (!containsMaterial(material))
+      lazyLoadMaterialById(material);
+#endif
     return containsMaterial(material);
-  else
+  } else {
     return containsMetaMaterial(material);
+  }
 }
 
 MaterialId MaterialDatabase::materialId(String const& matName) const {
   if (auto m = m_metaMaterialIndex.maybe(matName))
     return *m;
-  else
+  else {
+#ifdef STAR_PLATFORM_N3DS
+    if (!m_materialIndex.contains(matName))
+      lazyLoadMaterialByName(matName);
+#endif
     return m_materialIndex.get(matName);
+  }
 }
 
 String MaterialDatabase::materialName(MaterialId materialId) const {
@@ -272,23 +504,23 @@ Maybe<Json> MaterialDatabase::materialConfig(MaterialId materialId) const {
 }
 
 String MaterialDatabase::materialDescription(MaterialId materialNumber, String const& species) const {
-  auto material = m_materials[materialNumber];
+  auto material = getMaterialInfo(materialNumber);
   return material->descriptions.getString(
       strf("{}Description", species), material->descriptions.getString("description"));
 }
 
 String MaterialDatabase::materialDescription(MaterialId materialNumber) const {
-  auto material = m_materials[materialNumber];
+  auto material = getMaterialInfo(materialNumber);
   return material->descriptions.getString("description");
 }
 
 String MaterialDatabase::materialShortDescription(MaterialId materialNumber) const {
-  auto material = m_materials[materialNumber];
+  auto material = getMaterialInfo(materialNumber);
   return material->descriptions.getString("shortdescription");
 }
 
 String MaterialDatabase::materialCategory(MaterialId materialNumber) const {
-  auto material = m_materials[materialNumber];
+  auto material = getMaterialInfo(materialNumber);
   return material->category;
 }
 
@@ -299,21 +531,35 @@ StringList MaterialDatabase::modNames() const {
 }
 
 bool MaterialDatabase::isModName(String const& name) const {
+#ifdef STAR_PLATFORM_N3DS
+  if (!m_modIndex.contains(name) && !m_metaModIndex.hasLeftValue(name))
+    lazyLoadModByName(name);
+#endif
   return m_modIndex.contains(name);
 }
 
 bool MaterialDatabase::isValidModId(ModId mod) const {
-  if (isRealMod(mod))
+  if (isRealMod(mod)) {
+#ifdef STAR_PLATFORM_N3DS
+    if (!containsMod(mod))
+      lazyLoadModById(mod);
+#endif
     return mod < m_mods.size() && (bool)m_mods[mod];
-  else
+  } else {
     return m_metaModIndex.hasRightValue(mod);
+  }
 }
 
 ModId MaterialDatabase::modId(String const& modName) const {
   if (auto m = m_metaModIndex.maybeRight(modName))
     return *m;
-  else
+  else {
+#ifdef STAR_PLATFORM_N3DS
+    if (!m_modIndex.contains(modName))
+      lazyLoadModByName(modName);
+#endif
     return m_modIndex.get(modName);
+  }
 }
 
 String const& MaterialDatabase::modName(ModId mod) const {
@@ -338,17 +584,17 @@ Maybe<Json> MaterialDatabase::modConfig(ModId mod) const {
 }
 
 String MaterialDatabase::modDescription(ModId modId, String const& species) const {
-  auto mod = m_mods[modId];
+  auto mod = getModInfo(modId);
   return mod->descriptions.getString(strf("{}Description", species), mod->descriptions.getString("description"));
 }
 
 String MaterialDatabase::modDescription(ModId modId) const {
-  auto mod = m_mods[modId];
+  auto mod = getModInfo(modId);
   return mod->descriptions.getString("description");
 }
 
 String MaterialDatabase::modShortDescription(ModId modId) const {
-  auto mod = m_mods[modId];
+  auto mod = getModInfo(modId);
   return mod->descriptions.getString("shortdescription");
 }
 
@@ -411,31 +657,25 @@ ItemDescriptor MaterialDatabase::modItemDrop(ModId modId) const {
 }
 
 MaterialColorVariant MaterialDatabase::materialColorVariants(MaterialId materialId) const {
-  if (isRealMaterial(materialId)) {
-    auto const& matInfo = getMaterialInfo(materialId);
-    if (matInfo->materialRenderProfile)
-      return matInfo->materialRenderProfile->colorVariants;
-  }
+  if (isRealMaterial(materialId))
+    if (auto profile = materialRenderProfile(materialId))
+      return profile->colorVariants;
 
   return 0;
 }
 
 MaterialColorVariant MaterialDatabase::modColorVariants(ModId modId) const {
-  if (isRealMod(modId)) {
-    auto const& modInfo = getModInfo(modId);
-    if (modInfo->modRenderProfile)
-      return modInfo->modRenderProfile->colorVariants;
-  }
+  if (isRealMod(modId))
+    if (auto profile = modRenderProfile(modId))
+      return profile->colorVariants;
 
   return 0;
 }
 
 bool MaterialDatabase::isMultiColor(MaterialId materialId) const {
-  if (isRealMaterial(materialId)) {
-    auto const& matInfo = getMaterialInfo(materialId);
-    if (matInfo->materialRenderProfile)
-      return matInfo->materialRenderProfile->colorVariants > 0;
-  }
+  if (isRealMaterial(materialId))
+    if (auto profile = materialRenderProfile(materialId))
+      return profile->colorVariants > 0;
 
   return false;
 }
@@ -538,9 +778,62 @@ bool MaterialDatabase::supportsMod(MaterialId materialId, ModId modId) const {
 MaterialDatabase::MetaMaterialInfo::MetaMaterialInfo(String name, MaterialId id, CollisionKind collisionKind, bool blocksLiquidFlow)
   : name(name), id(id), collisionKind(collisionKind), blocksLiquidFlow(blocksLiquidFlow) {}
 
-MaterialDatabase::MaterialInfo::MaterialInfo() : id(NullMaterialId), tillableMod(NoModId), falling(), cascading() {}
+MaterialDatabase::MaterialInfo::MaterialInfo()
+  : id(NullMaterialId), tillableMod(NoModId), falling(), cascading(), materialRenderProfileAttempted(false) {}
 
-MaterialDatabase::ModInfo::ModInfo() : id(NoModId), tilled(), breaksWithTile() {}
+MaterialDatabase::ModInfo::ModInfo() : id(NoModId), tilled(), breaksWithTile(), modRenderProfileAttempted(false) {}
+
+MaterialRenderProfileConstPtr MaterialDatabase::materialRenderProfile(MaterialId materialId) const {
+  if (materialId < m_materials.size()) {
+    if (auto const& mat = m_materials[materialId]) {
+      if (!mat->materialRenderProfile && !mat->materialRenderProfileAttempted) {
+        mat->materialRenderProfileAttempted = true;
+        if (mat->config.contains("renderTemplate")) {
+          try {
+            auto assets = Root::singleton().assets();
+            auto renderTemplate = assets->fetchJson(mat->config.get("renderTemplate"), mat->path);
+            auto renderParameters = mat->config.get("renderParameters");
+            mat->materialRenderProfile = make_shared<MaterialRenderProfile>(parseMaterialRenderProfile(jsonMerge(renderTemplate, renderParameters), mat->path));
+#ifdef STAR_PLATFORM_N3DS
+            Logger::info("N3DS MaterialDatabase: parsed material render profile '{}'", mat->name);
+#endif
+          } catch (std::exception const& e) {
+            Logger::warn("N3DS MaterialDatabase: failed to lazily parse material render profile '{}': {}", mat->name, e.what());
+          }
+        }
+      }
+      return mat->materialRenderProfile;
+    }
+  }
+
+  return {};
+}
+
+MaterialRenderProfileConstPtr MaterialDatabase::modRenderProfile(ModId modId) const {
+  if (modId < m_mods.size()) {
+    if (auto const& mod = m_mods[modId]) {
+      if (!mod->modRenderProfile && !mod->modRenderProfileAttempted) {
+        mod->modRenderProfileAttempted = true;
+        if (mod->config.contains("renderTemplate")) {
+          try {
+            auto assets = Root::singleton().assets();
+            auto renderTemplate = assets->fetchJson(mod->config.get("renderTemplate"), mod->path);
+            auto renderParameters = mod->config.get("renderParameters");
+            mod->modRenderProfile = make_shared<MaterialRenderProfile>(parseMaterialRenderProfile(jsonMerge(renderTemplate, renderParameters), mod->path));
+#ifdef STAR_PLATFORM_N3DS
+            Logger::info("N3DS MaterialDatabase: parsed mod render profile '{}'", mod->name);
+#endif
+          } catch (std::exception const& e) {
+            Logger::warn("N3DS MaterialDatabase: failed to lazily parse mod render profile '{}': {}", mod->name, e.what());
+          }
+        }
+      }
+      return mod->modRenderProfile;
+    }
+  }
+
+  return {};
+}
 
 size_t MaterialDatabase::metaMaterialIndex(MaterialId materialId) const {
   return materialId - FirstMetaMaterialId;

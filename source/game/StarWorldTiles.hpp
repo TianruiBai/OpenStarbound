@@ -41,7 +41,11 @@ struct WorldTile {
   CollisionKind collision;
 
   bool collisionCacheDirty;
+#ifdef STAR_PLATFORM_N3DS
+  List<CollisionBlock> collisionCache;
+#else
   StaticList<CollisionBlock, CollisionGenerator::MaximumCollisionsPerSpace> collisionCache;
+#endif
 
   BiomeIndex blockBiomeIndex;
   BiomeIndex environmentBiomeIndex;

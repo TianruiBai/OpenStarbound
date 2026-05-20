@@ -536,11 +536,12 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
       m_worldDimLevel = 1.0f;
   }
 
-  List<LightSource> renderLightSources;
   m_previewTiles.clear();
 
   renderData.geometry = m_geometry;
 
+#ifndef STAR_PLATFORM_N3DS
+  List<LightSource> renderLightSources;
   ClientRenderCallback lightingRenderCallback;
   m_entityMap->forAllEntities([&](EntityPtr const& entity) {
     if (m_startupHiddenEntities.contains(entity->entityId()))
@@ -550,11 +551,13 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   });
 
   renderLightSources = std::move(lightingRenderCallback.lightSources);
+#endif
 
   RectI window = m_clientState.window();
   RectI tileRange = window.padded(bufferTiles);
   renderData.tileMinPosition = tileRange.min();
 
+#ifndef STAR_PLATFORM_N3DS
   if (!m_fullBright) {
     {
       MutexLocker m_prepLocker(m_lightMapPrepMutex);
@@ -569,13 +572,20 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
     else
       lightingCalc();
   }
+#endif
 
+#ifdef STAR_PLATFORM_N3DS
+  float pulseAmount = 0.25f;
+  float pulseRate = 1.0f;
+  float inspectionFlickerMultiplier = 1.0f;
+#else
   float pulseAmount = Root::singleton().assets()->json("/highlights.config:interactivePulseAmount").toFloat();
   float pulseRate = Root::singleton().assets()->json("/highlights.config:interactivePulseRate").toFloat();
+  float inspectionFlickerMultiplier = Random::randf(1 - Root::singleton().assets()->json("/highlights.config:inspectionFlickerAmount").toFloat(), 1);
+#endif
   float pulseLevel = 1 - pulseAmount * 0.5 * (sin(2 * Constants::pi * pulseRate * Time::monotonicMilliseconds() / 1000.0) + 1);
 
   bool inspecting = m_mainPlayer->inspecting();
-  float inspectionFlickerMultiplier = Random::randf(1 - Root::singleton().assets()->json("/highlights.config:inspectionFlickerAmount").toFloat(), 1);
 
   EntityId playerAimInteractive = NullEntityId;
   if (Root::singleton().configuration()->get("interactiveHighlight").toBool()) {
@@ -785,6 +795,24 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   renderData.foregroundOverlays = m_centralStructure.foregroundOverlays().transformed(overlayToDrawable);
 
   renderData.isFullbright = m_fullBright;
+#ifdef STAR_PLATFORM_N3DS
+  renderData.isFullbright = true;
+  static bool loggedN3dsRenderDataReady = false;
+  if (!loggedN3dsRenderDataReady) {
+    size_t visibleTileCount = 0;
+    for (size_t y = 0; y < renderData.tiles.size(1); ++y) {
+      for (size_t x = 0; x < renderData.tiles.size(0); ++x) {
+        auto const& tile = renderData.tiles(x, y);
+        if (tile.foreground != EmptyMaterialId || tile.background != EmptyMaterialId || tile.foregroundMod != NoModId || tile.backgroundMod != NoModId || tile.liquidId != EmptyLiquidId)
+          ++visibleTileCount;
+      }
+    }
+    Logger::info("N3DS WorldClient: render data ready tiles={}x{} visibleTiles={} entities={} particles={} parallax={} fullbright={}",
+        renderData.tiles.size(0), renderData.tiles.size(1), visibleTileCount, renderData.entityDrawables.size(),
+        renderData.particles ? renderData.particles->size() : 0, renderData.parallaxLayers.size(), renderData.isFullbright);
+    loggedN3dsRenderDataReady = true;
+  }
+#endif
   renderData.dimLevel = m_worldDimLevel;
   renderData.dimColor = m_worldDimColor;
 }

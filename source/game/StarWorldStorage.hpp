@@ -204,6 +204,9 @@ public:
   // Fully load, reset the TTL, and if necessary, fully generate the given
   // sector.
   void activateSector(Sector sector);
+  // Fully load an empty/default sector and mark it usable without running the
+  // world generator. Used for bounded N3DS ship structure placement.
+  void activateDefaultSector(Sector sector);
   // Queue the given sector for activation, if it is not already active.  If
   // the sector is loaded at all, also resets the TTL.
   void queueSectorActivation(Sector sector);

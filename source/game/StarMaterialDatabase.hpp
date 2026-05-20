@@ -132,7 +132,8 @@ private:
     bool cascading;
     bool blocksLiquidFlow;
 
-    shared_ptr<MaterialRenderProfile const> materialRenderProfile;
+    mutable shared_ptr<MaterialRenderProfile const> materialRenderProfile;
+    mutable bool materialRenderProfileAttempted;
 
     TileDamageParameters damageParameters;
   };
@@ -154,7 +155,8 @@ private:
     bool tilled;
     bool breaksWithTile;
 
-    shared_ptr<MaterialRenderProfile const> modRenderProfile;
+    mutable shared_ptr<MaterialRenderProfile const> modRenderProfile;
+    mutable bool modRenderProfileAttempted;
 
     TileDamageParameters damageParameters;
   };
@@ -169,6 +171,13 @@ private:
   bool containsMod(ModId modId) const;
   void setMod(ModId modId, ModInfo info);
 
+  void lazyLoadMaterialByName(String const& materialName) const;
+  void lazyLoadMaterialById(MaterialId materialId) const;
+  void lazyLoadModByName(String const& modName) const;
+  void lazyLoadModById(ModId modId) const;
+  bool lazyLoadMaterialFile(String const& file, Maybe<String> const& wantedName, Maybe<MaterialId> const& wantedId) const;
+  bool lazyLoadModFile(String const& file, Maybe<String> const& wantedName, Maybe<ModId> const& wantedId) const;
+
   shared_ptr<MetaMaterialInfo const> const& getMetaMaterialInfo(MaterialId materialId) const;
   shared_ptr<MaterialInfo const> const& getMaterialInfo(MaterialId materialId) const;
   shared_ptr<ModInfo const> const& getModInfo(ModId modId) const;
@@ -178,9 +187,11 @@ private:
 
   List<shared_ptr<MaterialInfo const>> m_materials;
   StringMap<MaterialId> m_materialIndex;
+  StringList m_lazyMaterialFiles;
 
   List<shared_ptr<ModInfo const>> m_mods;
   StringMap<ModId> m_modIndex;
+  StringList m_lazyModFiles;
   BiMap<String, ModId> m_metaModIndex;
 
   String m_defaultFootstepSound;
@@ -189,29 +200,10 @@ private:
   HashMap<pair<LiquidId, ModId>, LiquidModInteraction> m_liquidModInteractions;
 };
 
-inline MaterialRenderProfileConstPtr MaterialDatabase::materialRenderProfile(MaterialId materialId) const {
-  if (materialId < m_materials.size()) {
-    if (auto const& mat = m_materials[materialId])
-      return mat->materialRenderProfile;
-  }
-  
-  return {};
-}
-
-inline MaterialRenderProfileConstPtr MaterialDatabase::modRenderProfile(ModId modId) const {
-  if (modId < m_mods.size()) {
-    if (auto const& mod = m_mods[modId])
-      return mod->modRenderProfile;
-  }
-  
-  return {};
-}
-
 inline bool MaterialDatabase::foregroundLightTransparent(MaterialId materialId) const {
   if (isRealMaterial(materialId)) {
-    auto const& matInfo = getMaterialInfo(materialId);
-    if (matInfo->materialRenderProfile)
-      return matInfo->materialRenderProfile->foregroundLightTransparent;
+    if (auto profile = materialRenderProfile(materialId))
+      return profile->foregroundLightTransparent;
   }
 
   if (materialId == StructureMaterialId)
@@ -222,9 +214,8 @@ inline bool MaterialDatabase::foregroundLightTransparent(MaterialId materialId) 
 
 inline bool MaterialDatabase::backgroundLightTransparent(MaterialId materialId) const {
   if (isRealMaterial(materialId)) {
-    auto const& matInfo = getMaterialInfo(materialId);
-    if (matInfo->materialRenderProfile)
-      return matInfo->materialRenderProfile->backgroundLightTransparent;
+    if (auto profile = materialRenderProfile(materialId))
+      return profile->backgroundLightTransparent;
   }
 
   if (materialId == StructureMaterialId)
@@ -235,9 +226,8 @@ inline bool MaterialDatabase::backgroundLightTransparent(MaterialId materialId) 
 
 inline bool MaterialDatabase::occludesBehind(MaterialId materialId) const {
   if (isRealMaterial(materialId)) {
-    auto const& matInfo = getMaterialInfo(materialId);
-    if (matInfo->materialRenderProfile)
-      return matInfo->materialRenderProfile->occludesBehind;
+    if (auto profile = materialRenderProfile(materialId))
+      return profile->occludesBehind;
   }
 
   return false;
@@ -245,16 +235,10 @@ inline bool MaterialDatabase::occludesBehind(MaterialId materialId) const {
 
 inline Vec3F MaterialDatabase::radiantLight(MaterialId materialId, ModId modId) const {
   Vec3F radiantLight;
-  if (materialId < m_materials.size()) {
-    auto const& mat = m_materials[materialId];
-    if (mat && mat->materialRenderProfile)
-      radiantLight += mat->materialRenderProfile->radiantLight;
-  }
-  if (modId < m_mods.size()) {
-    auto const& mod = m_mods[modId];
-    if (mod && mod->modRenderProfile)
-      radiantLight += mod->modRenderProfile->radiantLight;
-  }
+  if (auto profile = materialRenderProfile(materialId))
+    radiantLight += profile->radiantLight;
+  if (auto profile = modRenderProfile(modId))
+    radiantLight += profile->radiantLight;
   return radiantLight;
 }
 

@@ -3603,12 +3603,7 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
   return m_workerPool.addProducer<WorldServerThreadPtr>([this, clientShipWorldId, clientContext, speciesShips, celestialDatabase, universeClock]() {
     WorldServerPtr shipWorld;
 
-  #ifdef STAR_PLATFORM_N3DS
-    WorldChunks shipChunks;
-    Logger::info("N3DS UniverseServer: ignored stored ship chunks for compact ship world");
-  #else
     auto shipChunks = clientContext->shipChunks();
-  #endif
     if (!shipChunks.empty()) {
       try {
         Logger::info("UniverseServer: Loading client ship world {}", clientShipWorldId);
@@ -3633,10 +3628,25 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
     #endif
       ShipUpgrades currentUpgrades = clientContext->shipUpgrades();
 #ifdef STAR_PLATFORM_N3DS
-  Vec2U worldSize(32, 32);
-      Logger::info("N3DS UniverseServer: creating compact empty ship world {}", worldSize);
+      auto shipStructure = WorldStructure(speciesShips.get(species).first());
+      auto structureRegion = shipStructure.region();
+      auto structureSize = structureRegion.isNull() ? Vec2I(32, 32) : structureRegion.size();
+      Vec2U worldSize(
+          max<unsigned>(96, (unsigned)structureSize.x() + 32),
+          max<unsigned>(64, (unsigned)structureSize.y() + 24));
+      if (auto configuredWorldSize = shipStructure.configValue("worldSize")) {
+        auto originalWorldSize = jsonToVec2U(configuredWorldSize);
+        worldSize[0] = min<unsigned>(worldSize[0], originalWorldSize[0]);
+        worldSize[1] = min<unsigned>(worldSize[1], originalWorldSize[1]);
+      }
+      Logger::info("N3DS UniverseServer: creating bounded original ship world {} from structure region {}", worldSize, structureRegion);
       shipWorld = make_shared<WorldServer>(worldSize, File::ephemeralFile());
-  Logger::info("N3DS UniverseServer: compact empty ship world created");
+      shipStructure = shipWorld->setCentralStructure(shipStructure);
+      Logger::info("N3DS UniverseServer: original ship structure placed blocks fg={} bg={} objects={} overlays={}",
+          shipStructure.foregroundBlocks().size(), shipStructure.backgroundBlocks().size(), shipStructure.objects().size(),
+          shipStructure.backgroundOverlays().size() + shipStructure.foregroundOverlays().size());
+      currentUpgrades.apply(Root::singleton().assets()->json("/ships/shipupgrades.config"));
+      currentUpgrades.apply(shipStructure.configValue("shipUpgrades"));
       if (currentUpgrades.maxFuel == 0)
         currentUpgrades.maxFuel = 1000;
       if (currentUpgrades.crewSize == 0)
