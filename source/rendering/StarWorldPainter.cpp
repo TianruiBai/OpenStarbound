@@ -72,8 +72,25 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
 
 #ifdef STAR_PLATFORM_N3DS
   static bool loggedCompactFrame = false;
+  static bool loggedHumanShipAssets = false;
+  static bool loggedHumanShipAssetFailure = false;
   static bool loggedRealAsset = false;
   static bool loggedAssetFailure = false;
+
+  auto drawPackedImage = [&](AssetPath const& image, float scale, Vec2F const& position) {
+    try {
+      auto drawable = Drawable::makeImage(image, scale, true, position);
+      drawable.fullbright = true;
+      m_drawablePainter->drawDrawable(drawable);
+      return true;
+    } catch (std::exception const& e) {
+      if (!loggedHumanShipAssetFailure) {
+        Logger::warn("N3DS WorldPainter: compact human ship asset draw failed for {}: {}", image, e.what());
+        loggedHumanShipAssetFailure = true;
+      }
+      return false;
+    }
+  };
 
   Vec2F screenSize = Vec2F(m_renderer->screenSize());
   m_renderer->render(renderFlatRect(RectF(0.0f, 0.0f, screenSize[0], screenSize[1]), Vec4B(11, 18, 30, 255), 0.0f));
@@ -91,6 +108,18 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
   m_renderer->render(renderFlatRect(RectF(76.0f, 116.0f, 324.0f, 176.0f), Vec4B(43, 48, 58, 255), 0.0f));
   m_renderer->render(renderFlatRect(RectF(94.0f, 130.0f, 132.0f, 160.0f), Vec4B(93, 178, 218, 255), 0.0f));
   m_renderer->render(renderFlatRect(RectF(268.0f, 122.0f, 304.0f, 176.0f), Vec4B(24, 27, 34, 255), 0.0f));
+
+  bool drewHumanShipAsset = false;
+  drewHumanShipAsset |= drawPackedImage("/objects/ship/humanshiplockerTier0/humanshiplockerTier0.png", 1.0f, {78.0f, 132.0f});
+  drewHumanShipAsset |= drawPackedImage("/objects/ship/humancaptainschair/humancaptainschair.png", 1.0f, {110.0f, 144.0f});
+  drewHumanShipAsset |= drawPackedImage("/objects/ship/humantechstationTier0/humantechstationTier0.png", 1.0f, {132.0f, 138.0f});
+  drewHumanShipAsset |= drawPackedImage("/objects/ship/humanfuelhatch/humanfuelhatchlit.png", 1.0f, {242.0f, 134.0f});
+  drewHumanShipAsset |= drawPackedImage("/objects/ship/humanteleporterTier0/humanteleporterTier0.png", 1.0f, {294.0f, 138.0f});
+  drewHumanShipAsset |= drawPackedImage("/objects/ship/humanshipdoor/humanshipdoor.png", 1.0f, {350.0f, 130.0f});
+  if (drewHumanShipAsset && !loggedHumanShipAssets) {
+    Logger::info("N3DS WorldPainter: drew compact human ship assets");
+    loggedHumanShipAssets = true;
+  }
 
   try {
     auto body = Drawable::makeImage("/humanoid/human/malebody.png:idle.1", 2.0f, true, {194.0f, 148.0f});

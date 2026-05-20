@@ -1477,11 +1477,26 @@ void WorldServer::update(float dt) {
   });
 
   timePhase(UpdateTimingPhase::StorageTick, [&]() {
+#ifdef STAR_PLATFORM_N3DS
+    static bool loggedSkippedStorageTick = false;
+    if (!loggedSkippedStorageTick) {
+      Logger::info("N3DS WorldServer: skipped periodic storage tick");
+      loggedSkippedStorageTick = true;
+    }
+#else
     if (auto delta = shouldRunThisStep("worldStorageTick"))
       m_worldStorage->tick(*delta * GlobalTimestep, &m_worldId);
+#endif
   });
 
   timePhase(UpdateTimingPhase::StorageGenerate, [&]() {
+#ifdef STAR_PLATFORM_N3DS
+    static bool loggedSkippedStorageGenerate = false;
+    if (!loggedSkippedStorageGenerate) {
+      Logger::info("N3DS WorldServer: skipped periodic storage generation");
+      loggedSkippedStorageGenerate = true;
+    }
+#else
     if (auto delta = shouldRunThisStep("worldStorageGenerate")) {
       List<Vec2F> playerPositions;
       for (auto const& pair : m_clientInfo) {
@@ -1491,6 +1506,7 @@ void WorldServer::update(float dt) {
 
       generateQueuedStorage(m_fidelityConfig.optUInt("worldStorageGenerationLevelLimit"), playerPositions);
     }
+#endif
   });
 
   timePhase(UpdateTimingPhase::RemoveEntities, [&]() {
