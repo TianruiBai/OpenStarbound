@@ -60,13 +60,18 @@ private:
   void drawOrbiter(float pixelRatio, Vec2F const& screenSize, SkyRenderData const& sky, SkyOrbiter const& orbiter);
 
   uint64_t starsHash(SkyRenderData const& sky, Vec2F const& viewSize) const;
+  bool ensureTextureGroup();
+  bool ensureRayPerlin();
+  float rayNoise(float value);
   void setupStars(SkyRenderData const& sky);
 
   RendererPtr m_renderer;
   AssetTextureGroupPtr m_textureGroup;
 
   double m_timer;
-  PerlinF m_rayPerlin;
+  unique_ptr<PerlinF> m_rayPerlin;
+  uint64_t m_raySeed{};
+  bool m_rayPerlinUnavailable{};
 
   uint64_t m_starsHash{};
   List<TexturePtr> m_starTextures;

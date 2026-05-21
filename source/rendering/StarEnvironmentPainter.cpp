@@ -27,9 +27,15 @@ Vec3B const EnvironmentPainter::RayColor = Vec3B(255, 255, 200);
 
 EnvironmentPainter::EnvironmentPainter(RendererPtr renderer) {
   m_renderer = std::move(renderer);
+  m_raySeed = Random::randu64();
+#ifdef STAR_PLATFORM_N3DS
+  Logger::info("N3DS EnvironmentPainter: deferring texture group allocation");
+  Logger::info("N3DS EnvironmentPainter: deferring sun ray noise allocation");
+#else
   m_textureGroup = make_shared<AssetTextureGroup>(m_renderer->createTextureGroup(TextureGroupSize::Large));
+  m_rayPerlin = make_unique<PerlinF>(1, RayPerlinFrequency, RayPerlinAmplitude, 0, 2.0f, 2.0f, m_raySeed);
+#endif
   m_timer = 0;
-  m_rayPerlin = PerlinF(1, RayPerlinFrequency, RayPerlinAmplitude, 0, 2.0f, 2.0f, Random::randu64());
 }
 
 void EnvironmentPainter::update(float dt) {
@@ -40,6 +46,9 @@ void EnvironmentPainter::update(float dt) {
 
 void EnvironmentPainter::renderStars(float pixelRatio, Vec2F const& screenSize, SkyRenderData const& sky) {
   if (!sky.settings || !sky.settings.opt("stars") || sky.starFrames == 0 || sky.starTypes().empty())
+    return;
+
+  if (!ensureTextureGroup())
     return;
 
   float nightSkyAlpha = 1.0f - min(sky.dayLevel, sky.skyAlpha);
@@ -99,6 +108,10 @@ void EnvironmentPainter::renderStars(float pixelRatio, Vec2F const& screenSize, 
 void EnvironmentPainter::renderDebrisFields(float pixelRatio, Vec2F const& screenSize, SkyRenderData const& sky) {  
   if (!sky.settings || !sky.settings.opt("spaceDebrisFields"))  
     return;  
+
+  if (!ensureTextureGroup())
+    return;
+
   if (m_debrisGenerators.empty())
     setupStars(sky);
   if (m_debrisGenerators.empty())
@@ -164,6 +177,9 @@ void EnvironmentPainter::renderDebrisFields(float pixelRatio, Vec2F const& scree
 }
 
 void EnvironmentPainter::renderBackOrbiters(float pixelRatio, Vec2F const& screenSize, SkyRenderData const& sky) {
+  if (!ensureTextureGroup())
+    return;
+
   for (auto const& orbiter : sky.backOrbiters(screenSize / pixelRatio))
     drawOrbiter(pixelRatio, screenSize, sky, orbiter);
 
@@ -173,6 +189,9 @@ void EnvironmentPainter::renderBackOrbiters(float pixelRatio, Vec2F const& scree
 void EnvironmentPainter::renderPlanetHorizon(float pixelRatio, Vec2F const& screenSize, SkyRenderData const& sky) {
   auto planetHorizon = sky.worldHorizon(screenSize / pixelRatio);
   if (planetHorizon.empty())
+    return;
+
+  if (!ensureTextureGroup())
     return;
 
   // Can't bail sooner, need to queue all textures
@@ -223,6 +242,9 @@ void EnvironmentPainter::renderPlanetHorizon(float pixelRatio, Vec2F const& scre
 }
 
 void EnvironmentPainter::renderFrontOrbiters(float pixelRatio, Vec2F const& screenSize, SkyRenderData const& sky) {
+  if (!ensureTextureGroup())
+    return;
+
   for (auto const& orbiter : sky.frontOrbiters(screenSize / pixelRatio))
     drawOrbiter(pixelRatio, screenSize, sky, orbiter);
 
@@ -247,6 +269,9 @@ void EnvironmentPainter::renderSky(Vec2F const& screenSize, SkyRenderData const&
 // TODO: Fix this to work with decimal zoom levels. Currently, the clouds shake rapidly when interpolating between zoom levels.
 void EnvironmentPainter::renderParallaxLayers(
     Vec2F parallaxWorldPosition, WorldCamera const& camera, ParallaxLayers const& layers, SkyRenderData const& sky) {
+
+  if (!ensureTextureGroup())
+    return;
 
   // Note: the "parallax space" referenced below is a grid where the scale of each cell is the size of the parallax image
 
@@ -363,7 +388,8 @@ void EnvironmentPainter::renderParallaxLayers(
 }
 
 void EnvironmentPainter::cleanup(int64_t textureTimeout) {
-  m_textureGroup->cleanup(textureTimeout);
+  if (m_textureGroup)
+    m_textureGroup->cleanup(textureTimeout);
 }
 
 void EnvironmentPainter::drawRays(
@@ -377,9 +403,9 @@ void EnvironmentPainter::drawRays(
     drawRay(pixelRatio,
         sky,
         start,
-        sectorWidth * (std::abs(m_rayPerlin.get(i * 25)) * RayWidthVariance + RayMinWidth),
+        sectorWidth * (std::abs(rayNoise(i * 25)) * RayWidthVariance + RayMinWidth),
         length,
-        i * sectorWidth + m_rayPerlin.get(i * 314) * RayAngleVariance,
+        i * sectorWidth + rayNoise(i * 314) * RayAngleVariance,
         time,
         color,
         alpha);
@@ -417,13 +443,13 @@ void EnvironmentPainter::drawRay(float pixelRatio,
       RenderVertex{start + Vec2F(std::cos(angle + width), std::sin(angle + width)) * SunRadius * sunScale * pixelRatio,
           {},
           Vec4B(rayColor,
-              (int)(RayMinUnscaledAlpha + std::abs(m_rayPerlin.get(angle * 896 + time * 30) * RayUnscaledAlphaVariance))
+              (int)(RayMinUnscaledAlpha + std::abs(rayNoise(angle * 896 + time * 30) * RayUnscaledAlphaVariance))
                   * sum
                   * alpha), 0.0f},
       RenderVertex{start + Vec2F(std::cos(angle), std::sin(angle)) * SunRadius * sunScale * pixelRatio,
           {},
           Vec4B(rayColor,
-              (int)(RayMinUnscaledAlpha + std::abs(m_rayPerlin.get(angle * 626 + time * 30) * RayUnscaledAlphaVariance))
+              (int)(RayMinUnscaledAlpha + std::abs(rayNoise(angle * 626 + time * 30) * RayUnscaledAlphaVariance))
                   * sum
                   * alpha), 0.0f},
       RenderVertex{start + Vec2F(std::cos(angle), std::sin(angle)) * length, {}, Vec4B(rayColor, 0), 0.0f});
@@ -477,8 +503,75 @@ uint64_t EnvironmentPainter::starsHash(SkyRenderData const& sky, Vec2F const& vi
   return hasher.digest();
 }
 
+bool EnvironmentPainter::ensureTextureGroup() {
+  if (m_textureGroup)
+    return true;
+
+  try {
+#ifdef STAR_PLATFORM_N3DS
+    m_textureGroup = make_shared<AssetTextureGroup>(m_renderer->createTextureGroup(TextureGroupSize::Small));
+    Logger::info("N3DS EnvironmentPainter: texture group allocated lazily");
+#else
+    m_textureGroup = make_shared<AssetTextureGroup>(m_renderer->createTextureGroup(TextureGroupSize::Large));
+#endif
+    return true;
+  } catch (std::exception const& e) {
+#ifdef STAR_PLATFORM_N3DS
+    static bool loggedTextureGroupFailure = false;
+    if (!loggedTextureGroupFailure) {
+      Logger::warn("N3DS EnvironmentPainter: deferred texture group allocation failed: {}", e.what());
+      loggedTextureGroupFailure = true;
+    }
+#else
+    throw;
+#endif
+  }
+
+  return false;
+}
+
+bool EnvironmentPainter::ensureRayPerlin() {
+  if (m_rayPerlin)
+    return true;
+
+  if (m_rayPerlinUnavailable)
+    return false;
+
+  try {
+    m_rayPerlin = make_unique<PerlinF>(1, RayPerlinFrequency, RayPerlinAmplitude, 0, 2.0f, 2.0f, m_raySeed);
+#ifdef STAR_PLATFORM_N3DS
+    Logger::info("N3DS EnvironmentPainter: sun ray noise allocated lazily");
+#endif
+    return true;
+  } catch (std::exception const& e) {
+    m_rayPerlinUnavailable = true;
+#ifdef STAR_PLATFORM_N3DS
+    Logger::warn("N3DS EnvironmentPainter: using lightweight sun ray noise fallback: {}", e.what());
+#else
+    throw;
+#endif
+  }
+
+  return false;
+}
+
+float EnvironmentPainter::rayNoise(float value) {
+  if (ensureRayPerlin())
+    return m_rayPerlin->get(value);
+
+  double seedPhase = (double)(m_raySeed & 0xffff) * 0.00009587379924285;
+  double phase = value * RayPerlinFrequency;
+  double signal = std::sin(phase * 17.0 + seedPhase)
+      + 0.5 * std::sin(phase * 43.0 + seedPhase * 1.61803398875)
+      + 0.25 * std::cos(phase * 97.0 + seedPhase * 0.70710678118);
+  return (float)(signal / 1.75 * RayPerlinAmplitude);
+}
+
 void EnvironmentPainter::setupStars(SkyRenderData const& sky) {
   if (!sky.settings)
+    return;
+
+  if (!ensureTextureGroup())
     return;
 
   StringList const& starTypes = sky.starTypes();

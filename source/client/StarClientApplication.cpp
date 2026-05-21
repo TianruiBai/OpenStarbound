@@ -295,7 +295,7 @@ void ClientApplication::applicationInit(ApplicationControllerPtr appController) 
   m_mainMixer->setVolume(0.5);
 
 #ifdef STAR_PLATFORM_N3DS
-  m_renderData.tiles.setSize({40, 28});
+  m_renderData.tiles.setSize({24, 18});
   m_renderData.clear();
   Logger::info("N3DS render data tile buffer prewarmed");
 #endif
