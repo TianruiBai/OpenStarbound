@@ -48,13 +48,15 @@ Vec2U n3dsScaledFrameSize(Vec2U frameSize) {
   };
 }
 
-Vec2U n3dsScaledImageSize(Vec2U imageSize) {
-  constexpr unsigned N3dsMaxDecodedImageExtent = 128;
+Vec2U n3dsScaledImageSize(String const& assetPath, Vec2U imageSize) {
+  unsigned maxDecodedImageExtent = 128;
+  if (assetPath.beginsWith("/interface/title/") && imageSize[0] > 512)
+    maxDecodedImageExtent = 512;
   unsigned maxExtent = std::max(imageSize[0], imageSize[1]);
-  if (maxExtent <= N3dsMaxDecodedImageExtent)
+  if (maxExtent <= maxDecodedImageExtent)
     return imageSize;
 
-  float scale = static_cast<float>(N3dsMaxDecodedImageExtent) / static_cast<float>(maxExtent);
+  float scale = static_cast<float>(maxDecodedImageExtent) / static_cast<float>(maxExtent);
   return {
       std::max(1u, static_cast<unsigned>(std::lround(imageSize[0] * scale))),
       std::max(1u, static_cast<unsigned>(std::lround(imageSize[1] * scale)))
@@ -1541,7 +1543,7 @@ shared_ptr<Assets::AssetData> Assets::loadImage(AssetPath const& path) const {
 
       imageData->image = unlockDuring([&]() {
         auto imageSize = get<0>(Image::readPngMetadata(source->open(sourceName)));
-        Vec2U scaledImageSize = n3dsScaledImageSize(imageSize);
+        Vec2U scaledImageSize = n3dsScaledImageSize(basePath, imageSize);
         if (scaledImageSize == imageSize)
           return make_shared<Image>(Image::readPng(source->open(sourceName)));
 

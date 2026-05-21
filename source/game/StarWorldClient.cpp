@@ -33,6 +33,16 @@ const float WorldClient::DropDist = 6.0f;
 static Vec2U n3dsClientWindowSize() {
   return {40, 28};
 }
+
+static Vec3F n3dsClampLight(Vec3F light) {
+  for (size_t i = 0; i < 3; ++i)
+    light[i] = clamp(light[i], 0.06f, 1.35f);
+  return light;
+}
+
+static bool n3dsValidMaterial(MaterialId material) {
+  return material != EmptyMaterialId && material != NullMaterialId;
+}
 #endif
 
 WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
@@ -746,9 +756,16 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
     Logger::info("N3DS WorldClient: render before tile gather");
     loggedRenderBeforeTiles = true;
   }
+
+    auto n3dsMaterialDatabase = Root::singleton().materialDatabase();
+    auto n3dsLiquidsDatabase = Root::singleton().liquidsDatabase();
+    Vec3F n3dsEnvironmentLight = m_sky ? m_sky->environmentLight().toRgbF() : Vec3F::filled(0.8f);
+    n3dsEnvironmentLight = n3dsClampLight(n3dsEnvironmentLight);
+    renderData.lightMinPosition = tileRange.min();
+    renderData.lightMap = Lightmap((unsigned)tileRange.width(), (unsigned)tileRange.height());
 #endif
 
-  m_tileArray->tileEachTo(renderData.tiles, tileRange, [&](RenderTile& renderTile, Vec2I const&, ClientTile const& clientTile) {
+    m_tileArray->tileEachTo(renderData.tiles, tileRange, [&](RenderTile& renderTile, Vec2I const& tilePosition, ClientTile const& clientTile) {
       renderTile.foreground = clientTile.foreground;
       renderTile.foregroundMod = clientTile.foregroundMod;
 
@@ -769,6 +786,23 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
 
       renderTile.liquidId = clientTile.liquid.liquid;
       renderTile.liquidLevel = floatToByte(clientTile.liquid.level);
+
+#ifdef STAR_PLATFORM_N3DS
+      float environmentFactor = clientTile.foregroundLightTransparent ? (clientTile.backgroundLightTransparent ? 1.0f : 0.72f) : 0.46f;
+      Vec3F light = n3dsEnvironmentLight * environmentFactor;
+
+      if (n3dsValidMaterial(clientTile.foreground) || clientTile.foregroundMod != NoModId)
+        light += n3dsMaterialDatabase->radiantLight(clientTile.foreground, clientTile.foregroundMod);
+
+      if (clientTile.foregroundLightTransparent && (n3dsValidMaterial(clientTile.background) || clientTile.backgroundMod != NoModId))
+        light += n3dsMaterialDatabase->radiantLight(clientTile.background, clientTile.backgroundMod) * 0.65f;
+
+      if (clientTile.liquid.liquid != EmptyLiquidId && clientTile.liquid.level > 0.0f)
+        light += n3dsLiquidsDatabase->radiantLight(clientTile.liquid) * clamp(clientTile.liquid.level, 0.0f, 1.0f);
+
+      Vec2I lightPosition = tilePosition - renderData.lightMinPosition;
+      renderData.lightMap.set((unsigned)lightPosition[0], (unsigned)lightPosition[1], n3dsClampLight(light));
+#endif
     });
 
 #ifdef STAR_PLATFORM_N3DS
@@ -924,7 +958,7 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
 
   renderData.isFullbright = m_fullBright;
 #ifdef STAR_PLATFORM_N3DS
-  renderData.isFullbright = true;
+  renderData.isFullbright = renderData.lightMap.empty();
   static bool loggedN3dsRenderDataReady = false;
   if (!loggedN3dsRenderDataReady) {
     size_t visibleTileCount = 0;
@@ -1935,7 +1969,7 @@ void WorldClient::lightingTileGather() {
 
   // Each column in tileEvalColumns is guaranteed to be no larger than the sector size.
 
-  m_tileArray->tileEvalColumnsParallel(m_lightingCalculator.calculationRegion(), [&](Vec2I const& pos, ClientTile const* column, size_t ySize) {
+  auto evalLightingColumn = [&](Vec2I const& pos, ClientTile const* column, size_t ySize) {
     size_t baseIndex = m_lightingCalculator.baseIndexFor(pos);
     for (size_t y = 0; y < ySize; ++y) {
       auto& tile = column[y];
@@ -1953,7 +1987,12 @@ void WorldClient::lightingTileGather() {
       }
       m_lightingCalculator.setCellIndex(baseIndex + y, light, !tile.foregroundLightTransparent);
     }
-  });
+  };
+#ifdef STAR_PLATFORM_N3DS
+  m_tileArray->tileEvalColumns(m_lightingCalculator.calculationRegion(), evalLightingColumn);
+#else
+  m_tileArray->tileEvalColumnsParallel(m_lightingCalculator.calculationRegion(), evalLightingColumn);
+#endif
   LogMap::set("client_render_world_async_light_gather", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - start));
 }
 

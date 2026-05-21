@@ -205,6 +205,8 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
   m_renderer->flush();
 
   bool lightMapUpdated = lightWaiter ? lightWaiter() : false;
+  if (!lightMapUpdated && !renderData.isFullbright && !renderData.lightMap.empty())
+    lightMapUpdated = true;
 
   m_renderer->setEffectParameter("lightMapEnabled", !renderData.isFullbright);
   if (renderData.isFullbright) {

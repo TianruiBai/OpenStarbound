@@ -38,6 +38,13 @@ constexpr float N3dsBottomHotbarY = 206.0f;
 constexpr float N3dsBottomHotbarSlotSize = 28.0f;
 constexpr float N3dsBottomHotbarSlotGap = 2.0f;
 constexpr unsigned N3dsBottomHotbarSlotCount = 10;
+constexpr unsigned N3dsAudioSampleRate = 32000;
+constexpr unsigned N3dsAudioChannels = 2;
+constexpr unsigned N3dsAudioBufferFrames = 1024;
+constexpr unsigned N3dsAudioBufferCount = 3;
+constexpr size_t N3dsAudioBufferBytes = N3dsAudioBufferFrames * N3dsAudioChannels * sizeof(int16_t);
+constexpr unsigned N3dsCsndLeftChannel = 0x8;
+constexpr unsigned N3dsCsndRightChannel = 0x9;
 constexpr bool N3dsExplicitSdmcMount = false;
 
 enum N3dsStartupDiagnostic : u32 {
@@ -546,6 +553,189 @@ Star::List<Star::InputEvent> n3dsProcessInputEvents(N3dsInputState& state) {
   return events;
 }
 
+class N3dsAudioOutput {
+public:
+  Star::AudioFormat enable() {
+    if (m_backend != Backend::None)
+      return {N3dsAudioSampleRate, N3dsAudioChannels};
+
+    Result result = ndspInit();
+    if (R_SUCCEEDED(result)) {
+      m_backend = Backend::Ndsp;
+      ndspSetOutputMode(NDSP_OUTPUT_STEREO);
+      ndspChnReset(0);
+      ndspChnSetInterp(0, NDSP_INTERP_POLYPHASE);
+      ndspChnSetRate(0, N3dsAudioSampleRate);
+      ndspChnSetFormat(0, NDSP_FORMAT_STEREO_PCM16);
+
+      float mix[12] = {};
+      mix[0] = 0.8f;
+      mix[1] = 0.8f;
+      ndspChnSetMix(0, mix);
+
+      for (unsigned i = 0; i < N3dsAudioBufferCount; ++i) {
+        m_buffers[i] = static_cast<int16_t*>(linearAlloc(N3dsAudioBufferBytes));
+        if (!m_buffers[i]) {
+          Star::Logger::warn("N3DS audio: failed to allocate {} byte ndsp buffer {}", N3dsAudioBufferBytes, i);
+          disable();
+          return {N3dsAudioSampleRate, N3dsAudioChannels};
+        }
+
+        std::memset(&m_waveBuffers[i], 0, sizeof(ndspWaveBuf));
+        m_waveBuffers[i].data_vaddr = m_buffers[i];
+        m_waveBuffers[i].nsamples = N3dsAudioBufferFrames;
+        m_waveBuffers[i].status = NDSP_WBUF_DONE;
+      }
+
+      Star::Logger::info("N3DS audio: ndsp output active rate={} channels={} buffers={} frames={}",
+          N3dsAudioSampleRate, N3dsAudioChannels, N3dsAudioBufferCount, N3dsAudioBufferFrames);
+      return {N3dsAudioSampleRate, N3dsAudioChannels};
+    }
+
+    Star::Logger::warn("N3DS audio: ndspInit failed: {}", (unsigned)result);
+    result = csndInit();
+    if (R_FAILED(result)) {
+      Star::Logger::warn("N3DS audio: csndInit failed: {}", (unsigned)result);
+      return {N3dsAudioSampleRate, N3dsAudioChannels};
+    }
+
+    m_backend = Backend::Csnd;
+    for (unsigned i = 0; i < N3dsAudioBufferCount; ++i) {
+      m_buffers[i] = static_cast<int16_t*>(linearAlloc(N3dsAudioBufferBytes));
+      m_leftBuffers[i] = static_cast<int16_t*>(linearAlloc(N3dsAudioBufferFrames * sizeof(int16_t)));
+      m_rightBuffers[i] = static_cast<int16_t*>(linearAlloc(N3dsAudioBufferFrames * sizeof(int16_t)));
+      if (!m_buffers[i] || !m_leftBuffers[i] || !m_rightBuffers[i]) {
+        Star::Logger::warn("N3DS audio: failed to allocate csnd buffer {}", i);
+        disable();
+        return {N3dsAudioSampleRate, N3dsAudioChannels};
+      }
+    }
+
+    Star::Logger::info("N3DS audio: csnd fallback active rate={} channels={} buffers={} frames={}",
+        N3dsAudioSampleRate, N3dsAudioChannels, N3dsAudioBufferCount, N3dsAudioBufferFrames);
+    return {N3dsAudioSampleRate, N3dsAudioChannels};
+  }
+
+  void disable() {
+    if (m_backend == Backend::Ndsp) {
+      ndspChnWaveBufClear(0);
+      ndspChnReset(0);
+    } else if (m_backend == Backend::Csnd) {
+      CSND_SetPlayState(N3dsCsndLeftChannel, 0);
+      CSND_SetPlayState(N3dsCsndRightChannel, 0);
+      CSND_UpdateInfo(false);
+    }
+
+    for (unsigned i = 0; i < N3dsAudioBufferCount; ++i) {
+      if (m_buffers[i]) {
+        linearFree(m_buffers[i]);
+        m_buffers[i] = nullptr;
+      }
+      if (m_leftBuffers[i]) {
+        linearFree(m_leftBuffers[i]);
+        m_leftBuffers[i] = nullptr;
+      }
+      if (m_rightBuffers[i]) {
+        linearFree(m_rightBuffers[i]);
+        m_rightBuffers[i] = nullptr;
+      }
+      std::memset(&m_waveBuffers[i], 0, sizeof(ndspWaveBuf));
+    }
+
+    if (m_backend == Backend::Ndsp) {
+      ndspExit();
+      Star::Logger::info("N3DS audio: ndsp output stopped");
+    } else if (m_backend == Backend::Csnd) {
+      csndExit();
+      Star::Logger::info("N3DS audio: csnd fallback stopped");
+    }
+
+    m_backend = Backend::None;
+    m_loggedFirstBuffer = false;
+    m_csndBufferIndex = 0;
+  }
+
+  bool csndChannelsPlaying() {
+    u8 leftPlaying = 0;
+    u8 rightPlaying = 0;
+    csndIsPlaying(N3dsCsndLeftChannel, &leftPlaying);
+    csndIsPlaying(N3dsCsndRightChannel, &rightPlaying);
+    return leftPlaying || rightPlaying;
+  }
+
+  void pumpCsnd(Star::Application* application) {
+    if (csndChannelsPlaying())
+      return;
+
+    unsigned bufferIndex = m_csndBufferIndex++ % N3dsAudioBufferCount;
+    application->getAudioData(m_buffers[bufferIndex], N3dsAudioBufferFrames);
+    for (unsigned frame = 0; frame < N3dsAudioBufferFrames; ++frame) {
+      m_leftBuffers[bufferIndex][frame] = m_buffers[bufferIndex][frame * 2];
+      m_rightBuffers[bufferIndex][frame] = m_buffers[bufferIndex][frame * 2 + 1];
+    }
+
+    size_t monoBufferBytes = N3dsAudioBufferFrames * sizeof(int16_t);
+    CSND_FlushDataCache(m_leftBuffers[bufferIndex], monoBufferBytes);
+    CSND_FlushDataCache(m_rightBuffers[bufferIndex], monoBufferBytes);
+    csndPlaySound(N3dsCsndLeftChannel, SOUND_ONE_SHOT | SOUND_FORMAT_16BIT, N3dsAudioSampleRate, 0.8f, -1.0f,
+        m_leftBuffers[bufferIndex], m_leftBuffers[bufferIndex], monoBufferBytes);
+    csndPlaySound(N3dsCsndRightChannel, SOUND_ONE_SHOT | SOUND_FORMAT_16BIT, N3dsAudioSampleRate, 0.8f, 1.0f,
+        m_rightBuffers[bufferIndex], m_rightBuffers[bufferIndex], monoBufferBytes);
+    CSND_UpdateInfo(false);
+
+    if (!m_loggedFirstBuffer) {
+      Star::Logger::info("N3DS audio: first mixer buffer queued via csnd");
+      m_loggedFirstBuffer = true;
+    }
+  }
+
+  void pump(Star::Application* application) {
+    if (m_backend == Backend::None || !application)
+      return;
+
+    if (m_backend == Backend::Csnd) {
+      pumpCsnd(application);
+      return;
+    }
+
+    for (unsigned i = 0; i < N3dsAudioBufferCount; ++i) {
+      if (m_waveBuffers[i].status == NDSP_WBUF_QUEUED || m_waveBuffers[i].status == NDSP_WBUF_PLAYING)
+        continue;
+
+      application->getAudioData(m_buffers[i], N3dsAudioBufferFrames);
+      DSP_FlushDataCache(m_buffers[i], N3dsAudioBufferBytes);
+      ndspChnWaveBufAdd(0, &m_waveBuffers[i]);
+
+      if (!m_loggedFirstBuffer) {
+        Star::Logger::info("N3DS audio: first mixer buffer queued");
+        m_loggedFirstBuffer = true;
+      }
+    }
+  }
+
+private:
+  enum class Backend { None, Ndsp, Csnd };
+
+  Backend m_backend = Backend::None;
+  bool m_loggedFirstBuffer = false;
+  unsigned m_csndBufferIndex = 0;
+  ndspWaveBuf m_waveBuffers[N3dsAudioBufferCount]{};
+  int16_t* m_buffers[N3dsAudioBufferCount]{};
+  int16_t* m_leftBuffers[N3dsAudioBufferCount]{};
+  int16_t* m_rightBuffers[N3dsAudioBufferCount]{};
+};
+
+}
+#endif
+
+#ifndef STAR_PLATFORM_N3DS
+namespace {
+class N3dsAudioOutput {
+public:
+  Star::AudioFormat enable() { return {44100, 2}; }
+  void disable() {}
+  void pump(Star::Application*) {}
+};
 }
 #endif
 
@@ -561,6 +751,10 @@ public:
     m_statisticsService   = makePlaceholderStatisticsService();
     m_ugcService          = makePlaceholderUserGeneratedContentService();
     m_desktopService      = makePlaceholderDesktopService();
+  }
+
+  ~N3dsApplicationController() override {
+    disableAudio();
   }
 
   // Timing controls: stored and consumed by the N3DS scheduler.
@@ -583,9 +777,8 @@ public:
   void setAcceptingTextInput(bool) override {}
   void setTextArea(Maybe<pair<RectI, int>>) override {}
 
-  // Audio: STUB, not wired to N3DS DSP yet.
-  AudioFormat enableAudio() override { return AudioFormat{44100, 2}; } // STUB
-  void disableAudio() override {}                                       // STUB
+  AudioFormat enableAudio() override { return m_audioOutput.enable(); }
+  void disableAudio() override { m_audioOutput.disable(); }
   bool openAudioInputDevice(uint32_t, int, int, AudioCallback) override { return false; } // STUB
   bool closeAudioInputDevice() override { return false; }               // STUB
   bool supportsAudioInput() const override { return false; }            // STUB
@@ -628,6 +821,10 @@ public:
     return m_maxFrameSkip;
   }
 
+  void pumpAudio(Application* application) {
+    m_audioOutput.pump(application);
+  }
+
 private:
   float m_targetUpdateRate = 60.0f;
   Maybe<float> m_targetRenderRate;
@@ -638,6 +835,7 @@ private:
   StatisticsServicePtr m_statisticsService;
   UserGeneratedContentServicePtr m_ugcService;
   DesktopServicePtr m_desktopService;
+  N3dsAudioOutput m_audioOutput;
 };
 
 // ---------------------------------------------------------------------------
@@ -755,6 +953,8 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
       if (updateAccumulator >= updateStep)
         updateAccumulator = std::fmod(updateAccumulator, updateStep);
 
+      appController->pumpAudio(application.get());
+
       if (!targetRenderRate || renderAccumulator >= renderStep) {
         application->render();
         renderer->flush(Mat3F::identity());
@@ -774,6 +974,7 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
 
     // application->shutdown();
     Logger::info("N3dsMainApplication: shutdown"); // PLACEHOLDER
+    appController->disableAudio();
 
 #ifdef STAR_PLATFORM_N3DS
     hidExit();

@@ -21,6 +21,7 @@
 #include "StarAssets.hpp"
 #include "StarCelestialDatabase.hpp"
 #include "StarEnvironmentPainter.hpp"
+#include "StarLogging.hpp"
 
 namespace Star {
 
@@ -83,21 +84,6 @@ void TitleScreen::render() {
 #ifdef STAR_PLATFORM_N3DS
   auto skyBackdropDarken = jsonToColor(assets->json("/interface/windowconfig/title.config:skyBackdropDarken"));
   m_renderer->render(renderFlatRect(RectF(0, 0, windowWidth(), windowHeight()), skyBackdropDarken.toRgba(), 0.0f));
-
-  if (m_titleState == TitleState::Main) {
-    AssetPath logoPath = "/interface/title/starbound.png";
-    Vec2F logoSourceSize = Vec2F(m_guiContext->textureSize(logoPath));
-    float logoAspect = logoSourceSize[1] > 0.0f ? logoSourceSize[0] / logoSourceSize[1] : 4.0f;
-    Vec2F logoSize = {min(screenSize[0] * 0.82f, 330.0f), 0.0f};
-    logoSize[1] = logoSize[0] / logoAspect;
-    if (logoSize[1] > screenSize[1] * 0.46f) {
-      logoSize[1] = screenSize[1] * 0.46f;
-      logoSize[0] = logoSize[1] * logoAspect;
-    }
-
-    Vec2F logoCenter = {screenSize[0] * 0.5f, screenSize[1] * 0.60f};
-    m_guiContext->drawQuad(logoPath, RectF::withCenter(logoCenter, logoSize), Vec4B::filled(255));
-  }
 #else
   auto skyRenderData = m_skyBackdrop->renderData();
 
@@ -120,25 +106,18 @@ void TitleScreen::render() {
   m_renderer->flush();
 #endif
 
-  bool renderScriptBackdrop = true;
-#ifdef STAR_PLATFORM_N3DS
-  renderScriptBackdrop = m_titleState != TitleState::Main;
-#endif
-  if (renderScriptBackdrop) {
-    if (auto canvas = m_backgroundMenu->findChild("canvas")) {
-      canvas->setPosition(Vec2I());
-      canvas->setSize(Vec2I(m_guiContext->windowInterfaceSize()));
-    }
-    m_scriptComponent->invoke("render", JsonObject{{"interfaceScale", interfaceScale()}
-    });
+  if (auto canvas = m_backgroundMenu->findChild("canvas")) {
+    canvas->setPosition(Vec2I());
+    canvas->setSize(Vec2I(m_guiContext->windowInterfaceSize()));
   }
+  m_scriptComponent->invoke("render", JsonObject{{"interfaceScale", interfaceScale()}
+  });
 
 #ifndef STAR_PLATFORM_N3DS
   m_renderer->flush();
 #endif
 #ifdef STAR_PLATFORM_N3DS
-  if (m_titleState != TitleState::Main)
-    m_backgroundMenu->render(RectI(Vec2I(), Vec2I(m_guiContext->windowInterfaceSize())));
+  m_backgroundMenu->render(RectI(Vec2I(), Vec2I(m_guiContext->windowInterfaceSize())));
   if (m_titleState != TitleState::Main)
     m_paneManager.render();
 #else
@@ -235,8 +214,8 @@ void TitleScreen::update(float dt) {
   m_mainMenu->determineSizeFromChildren();
   m_backgroundMenu->determineSizeFromChildren();
 
-#ifndef STAR_PLATFORM_N3DS
   m_skyBackdrop->update(dt);
+#ifndef STAR_PLATFORM_N3DS
   m_environmentPainter->update(dt);
 #endif
 
@@ -244,16 +223,21 @@ void TitleScreen::update(float dt) {
   m_paneManager.update(dt);
 
   m_scriptComponent->update(dt);
-#ifndef STAR_PLATFORM_N3DS
   if (!finishedState()) {
     if (auto audioSample = m_musicTrackManager.updateAmbient(m_musicTrack, m_skyBackdrop->isDayTime())) {
       m_currentMusicTrack = audioSample;
       audioSample->setMixerGroup(MixerGroup::Music);
       audioSample->setLoops(0);
       m_mixer->play(audioSample);
+#ifdef STAR_PLATFORM_N3DS
+      static bool loggedTitleMusic = false;
+      if (!loggedTitleMusic) {
+        Logger::info("N3DS TitleScreen: title music playback queued");
+        loggedTitleMusic = true;
+      }
+#endif
     }
   }
-#endif
 }
 
 bool TitleScreen::textInputActive() const {

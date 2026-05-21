@@ -14,12 +14,15 @@
 #include <citro2d.h>
 #include <citro3d.h>
 #endif
+#include <vector>
+
 
 namespace Star {
 
 namespace {
 bool sN3dsTitleMenuInputActive = false;
 }
+
 
 void setN3dsTitleMenuInputActive(bool active) {
   sN3dsTitleMenuInputActive = active;
@@ -28,6 +31,7 @@ void setN3dsTitleMenuInputActive(bool active) {
 bool n3dsTitleMenuInputActive() {
   return sN3dsTitleMenuInputActive;
 }
+
 
 // ---- Stub Texture -------------------------------------------------------
 
@@ -51,8 +55,60 @@ constexpr unsigned N3dsMaxTextureExtent = 1024;
 constexpr size_t N3dsTextureUploadBudget = 6 * 1024 * 1024;
 constexpr bool N3dsDrawTopDiagnostics = false;
 
+struct N3dsLightState {
+  bool enabled = false;
+  Vec2U size;
+  std::vector<Vec3F> values;
+  Vec2F scale = {16.0f, 16.0f};
+  Vec2F offset;
+  float multiplier = 1.0f;
+};
+
+N3dsLightState sN3dsLightState;
+
 u32 toC2dColor(Vec4B const& color) {
   return C2D_Color32(color[0], color[1], color[2], color[3]);
+}
+
+Vec3F sampleN3dsLight(Vec2F const& screenCoordinate) {
+  if (!sN3dsLightState.enabled || sN3dsLightState.values.empty() || sN3dsLightState.scale[0] == 0.0f || sN3dsLightState.scale[1] == 0.0f)
+    return Vec3F::filled(1.0f);
+
+  Vec2F lightCoordinate = Vec2F(
+      (screenCoordinate[0] - sN3dsLightState.offset[0]) / sN3dsLightState.scale[0],
+      (screenCoordinate[1] - sN3dsLightState.offset[1]) / sN3dsLightState.scale[1]);
+  int x = static_cast<int>(std::floor(lightCoordinate[0]));
+  int y = static_cast<int>(std::floor(lightCoordinate[1]));
+  if (x < 0 || y < 0 || x >= static_cast<int>(sN3dsLightState.size[0]) || y >= static_cast<int>(sN3dsLightState.size[1]))
+    return Vec3F::filled(1.0f);
+
+  return sN3dsLightState.values[static_cast<size_t>(y) * sN3dsLightState.size[0] + x];
+}
+
+Vec4B applyN3dsLighting(RenderVertex const& vertex) {
+  float amount = std::clamp(vertex.param1, 0.0f, 1.0f);
+  if (amount <= 0.0f || !sN3dsLightState.enabled)
+    return vertex.color;
+
+  Vec3F light = sampleN3dsLight(vertex.screenCoordinate) * sN3dsLightState.multiplier;
+  Vec4B color = vertex.color;
+  for (size_t i = 0; i < 3; ++i) {
+    float factor = 1.0f - amount + amount * light[i];
+    color[i] = static_cast<uint8_t>(std::clamp(std::round(color[i] * factor), 0.0f, 255.0f));
+  }
+  return color;
+}
+
+Vec4B averageN3dsLitQuadColor(RenderQuad const& quad) {
+  Vec4B a = applyN3dsLighting(quad.a);
+  Vec4B b = applyN3dsLighting(quad.b);
+  Vec4B c = applyN3dsLighting(quad.c);
+  Vec4B d = applyN3dsLighting(quad.d);
+  return Vec4B(
+      static_cast<uint8_t>((static_cast<unsigned>(a[0]) + b[0] + c[0] + d[0]) / 4),
+      static_cast<uint8_t>((static_cast<unsigned>(a[1]) + b[1] + c[1] + d[1]) / 4),
+      static_cast<uint8_t>((static_cast<unsigned>(a[2]) + b[2] + c[2] + d[2]) / 4),
+      static_cast<uint8_t>((static_cast<unsigned>(a[3]) + b[3] + c[3] + d[3]) / 4));
 }
 
 inline float toTopScreenY(float yBottomOrigin) {
@@ -641,9 +697,9 @@ bool isOpaqueWhite(Vec4B const& color) {
 
 void drawUntexturedTriangle(RenderVertex const& a, RenderVertex const& b, RenderVertex const& c) {
   C2D_DrawTriangle(
-      a.screenCoordinate[0], toTopScreenY(a.screenCoordinate[1]), toC2dColor(a.color),
-      b.screenCoordinate[0], toTopScreenY(b.screenCoordinate[1]), toC2dColor(b.color),
-      c.screenCoordinate[0], toTopScreenY(c.screenCoordinate[1]), toC2dColor(c.color),
+  a.screenCoordinate[0], toTopScreenY(a.screenCoordinate[1]), toC2dColor(applyN3dsLighting(a)),
+  b.screenCoordinate[0], toTopScreenY(b.screenCoordinate[1]), toC2dColor(applyN3dsLighting(b)),
+  c.screenCoordinate[0], toTopScreenY(c.screenCoordinate[1]), toC2dColor(applyN3dsLighting(c)),
       0.0f);
 }
 
@@ -688,10 +744,11 @@ bool drawTexturedQuad(RenderQuad const& quad) {
     params = {{topLeft[0], topLeft[1], width, height}, {0.0f, 0.0f}, 0.0f, std::atan2(widthVector[1], widthVector[0])};
   }
 
-  if (isOpaqueWhite(quad.a.color))
+  Vec4B quadColor = averageN3dsLitQuadColor(quad);
+  if (isOpaqueWhite(quadColor))
     return C2D_DrawImage(image, &params, nullptr);
 
-  C2D_PlainImageTint(&tint, toC2dColor(quad.a.color), 1.0f);
+  C2D_PlainImageTint(&tint, toC2dColor(quadColor), 1.0f);
   C2D_SetTintMode(C2D_TintMult);
   bool drawn = C2D_DrawImage(image, &params, &tint);
   C2D_SetTintMode(C2D_TintSolid);
@@ -766,7 +823,26 @@ Vec2U N3dsStubRenderer::screenSize() const {
 
 void N3dsStubRenderer::loadConfig(Json const&) {}                          // STUB
 void N3dsStubRenderer::loadEffectConfig(String const&, Json const&, StringMap<String> const&) {} // STUB
-void N3dsStubRenderer::setEffectParameter(String const&, RenderEffectParameter const&) {}       // STUB
+void N3dsStubRenderer::setEffectParameter(String const& parameterName, RenderEffectParameter const& parameter) {
+#ifdef STAR_PLATFORM_N3DS
+  if (parameterName == "lightMapEnabled") {
+    if (auto value = parameter.ptr<bool>())
+      sN3dsLightState.enabled = *value;
+  } else if (parameterName == "lightMapScale") {
+    if (auto value = parameter.ptr<Vec2F>())
+      sN3dsLightState.scale = *value;
+  } else if (parameterName == "lightMapOffset") {
+    if (auto value = parameter.ptr<Vec2F>())
+      sN3dsLightState.offset = *value;
+  } else if (parameterName == "lightMapMultiplier") {
+    if (auto value = parameter.ptr<float>())
+      sN3dsLightState.multiplier = *value;
+  }
+#else
+  (void)parameterName;
+  (void)parameter;
+#endif
+}
 void N3dsStubRenderer::setEffectScriptableParameter(String const&, String const&, RenderEffectParameter const&) {} // STUB
 
 Maybe<RenderEffectParameter> N3dsStubRenderer::getEffectScriptableParameter(String const&, String const&) {
@@ -777,7 +853,38 @@ Maybe<VariantTypeIndex> N3dsStubRenderer::getEffectScriptableParameterType(Strin
   return {}; // STUB
 }
 
-void N3dsStubRenderer::setEffectTexture(String const&, ImageView const&) {} // STUB
+void N3dsStubRenderer::setEffectTexture(String const& textureName, ImageView const& image) {
+#ifdef STAR_PLATFORM_N3DS
+  if (textureName != "lightMap")
+    return;
+
+  sN3dsLightState.size = image.size;
+  sN3dsLightState.values.clear();
+  if (image.empty() || !image.data)
+    return;
+
+  size_t pixelCount = static_cast<size_t>(image.size[0]) * image.size[1];
+  sN3dsLightState.values.resize(pixelCount, Vec3F::filled(1.0f));
+  if (image.format == PixelFormat::RGB_F || image.format == PixelFormat::RGBA_F) {
+    size_t floatsPerPixel = image.format == PixelFormat::RGB_F ? 3 : 4;
+    auto source = reinterpret_cast<float const*>(image.data);
+    for (size_t i = 0; i < pixelCount; ++i)
+      sN3dsLightState.values[i] = Vec3F(source[i * floatsPerPixel + 0], source[i * floatsPerPixel + 1], source[i * floatsPerPixel + 2]);
+  } else {
+    size_t bytesPerPixelValue = bytesPerPixel(image.format);
+    for (size_t i = 0; i < pixelCount; ++i) {
+      auto source = image.data + i * bytesPerPixelValue;
+      if (image.format == PixelFormat::BGR24 || image.format == PixelFormat::BGRA32)
+        sN3dsLightState.values[i] = Vec3F(source[2], source[1], source[0]) / 255.0f;
+      else
+        sN3dsLightState.values[i] = Vec3F(source[0], source[1], source[2]) / 255.0f;
+    }
+  }
+#else
+  (void)textureName;
+  (void)image;
+#endif
+}
 bool N3dsStubRenderer::switchEffectConfig(String const&) { return false; }  // STUB
 void N3dsStubRenderer::setScissorRect(Maybe<RectI> const& scissorRect) {
   if (scissorRect == m_scissorRect)
