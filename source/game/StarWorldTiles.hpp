@@ -94,6 +94,73 @@ struct ServerTile : public WorldTile {
 typedef TileSectorArray<ServerTile, WorldSectorSize> ServerTileSectorArray;
 typedef shared_ptr<ServerTileSectorArray> ServerTileSectorArrayPtr;
 
+#ifdef STAR_PLATFORM_N3DS
+struct ClientTileDamageStatus {
+  ClientTileDamageStatus();
+
+  ClientTileDamageStatus& operator=(TileDamageStatus const& damageStatus);
+
+  float damagePercentage() const;
+  float damageEffectPercentage() const;
+  Vec2F sourcePosition() const;
+  TileDamageType damageType() const;
+
+  void reset();
+  bool healthy() const;
+  bool damaged() const;
+  bool damageProtected() const;
+  bool dead() const;
+  bool harvested() const;
+
+private:
+  uint8_t m_damagePercentage;
+  uint8_t m_damageEffectPercentage;
+  uint8_t m_harvested;
+  TileDamageType m_damageType;
+};
+
+struct ClientTile {
+  ClientTile();
+
+  ClientTile(ClientTile const& clientTile);
+  ClientTile& operator=(ClientTile const& clientTile);
+
+  MaterialId material(TileLayer layer) const;
+  ModId mod(TileLayer layer) const;
+  MaterialColorVariant materialColor(TileLayer layer) const;
+  CollisionKind getCollision() const;
+  tuple<MaterialId, MaterialHue, MaterialColorVariant> materialAndColor(TileLayer layer) const;
+  bool isConnectable(TileLayer layer, bool materialOnly) const;
+  bool isColliding(CollisionSet const& collisionSet) const;
+
+  MaterialId foreground;
+  MaterialHue foregroundHueShift;
+  ModId foregroundMod;
+  MaterialHue foregroundModHueShift;
+  MaterialColorVariant foregroundColorVariant;
+
+  MaterialId background;
+  MaterialHue backgroundHueShift;
+  ModId backgroundMod;
+  MaterialHue backgroundModHueShift;
+  MaterialColorVariant backgroundColorVariant;
+
+  CollisionKind collision;
+
+  BiomeIndex blockBiomeIndex;
+  BiomeIndex environmentBiomeIndex;
+
+  ClientTileDamageStatus foregroundDamage;
+  ClientTileDamageStatus backgroundDamage;
+
+  DungeonId dungeonId;
+
+  bool backgroundLightTransparent;
+  bool foregroundLightTransparent;
+
+  LiquidLevel liquid;
+};
+#else
 struct ClientTile : public WorldTile {
   ClientTile();
 
@@ -107,7 +174,14 @@ struct ClientTile : public WorldTile {
 
   float gravity;
 };
-typedef TileSectorArray<ClientTile, WorldSectorSize> ClientTileSectorArray;
+#endif
+
+#ifdef STAR_PLATFORM_N3DS
+size_t const ClientWorldSectorSize = 8;
+#else
+size_t const ClientWorldSectorSize = WorldSectorSize;
+#endif
+typedef TileSectorArray<ClientTile, ClientWorldSectorSize> ClientTileSectorArray;
 typedef shared_ptr<ClientTileSectorArray> ClientTileSectorArrayPtr;
 
 // Tile structure to transfer all data from client to server
@@ -283,6 +357,7 @@ inline tuple<MaterialId, MaterialHue, MaterialColorVariant> WorldTile::materialA
         background, backgroundHueShift, backgroundColorVariant};
 }
 
+#ifndef STAR_PLATFORM_N3DS
 inline ClientTile::ClientTile() : backgroundLightTransparent(true), foregroundLightTransparent(true), gravity() {}
 
 inline ClientTile::ClientTile(ClientTile const& clientTile) : WorldTile() {
@@ -299,6 +374,143 @@ inline ClientTile& ClientTile::operator=(ClientTile const& clientTile) {
 
   return *this;
 }
+#endif
+
+#ifdef STAR_PLATFORM_N3DS
+inline ClientTileDamageStatus::ClientTileDamageStatus() {
+  reset();
+}
+
+inline ClientTileDamageStatus& ClientTileDamageStatus::operator=(TileDamageStatus const& damageStatus) {
+  m_damagePercentage = floatToByte(damageStatus.damagePercentage(), true);
+  m_damageEffectPercentage = floatToByte(damageStatus.damageEffectPercentage(), true);
+  m_harvested = damageStatus.harvested();
+  m_damageType = damageStatus.damageType();
+  return *this;
+}
+
+inline float ClientTileDamageStatus::damagePercentage() const {
+  return byteToFloat(m_damagePercentage);
+}
+
+inline float ClientTileDamageStatus::damageEffectPercentage() const {
+  return byteToFloat(m_damageEffectPercentage);
+}
+
+inline Vec2F ClientTileDamageStatus::sourcePosition() const {
+  return {};
+}
+
+inline TileDamageType ClientTileDamageStatus::damageType() const {
+  return m_damageType;
+}
+
+inline void ClientTileDamageStatus::reset() {
+  m_damagePercentage = 0;
+  m_damageEffectPercentage = 0;
+  m_harvested = false;
+  m_damageType = TileDamageType::Protected;
+}
+
+inline bool ClientTileDamageStatus::healthy() const {
+  return m_damagePercentage == 0;
+}
+
+inline bool ClientTileDamageStatus::damaged() const {
+  return m_damagePercentage != 0 && m_damagePercentage < 255;
+}
+
+inline bool ClientTileDamageStatus::damageProtected() const {
+  return m_damageType == TileDamageType::Protected;
+}
+
+inline bool ClientTileDamageStatus::dead() const {
+  return m_damagePercentage == 255;
+}
+
+inline bool ClientTileDamageStatus::harvested() const {
+  return m_harvested;
+}
+
+inline ClientTile::ClientTile()
+  : foreground(NullMaterialId),
+    foregroundHueShift(),
+    foregroundMod(NoModId),
+    foregroundModHueShift(),
+    foregroundColorVariant(DefaultMaterialColorVariant),
+    background(NullMaterialId),
+    backgroundHueShift(),
+    backgroundMod(NoModId),
+    backgroundModHueShift(),
+    backgroundColorVariant(DefaultMaterialColorVariant),
+    collision(CollisionKind::Null),
+    blockBiomeIndex(),
+    environmentBiomeIndex(),
+    dungeonId(NoDungeonId),
+    backgroundLightTransparent(true),
+    foregroundLightTransparent(true) {}
+
+inline ClientTile::ClientTile(ClientTile const& clientTile) {
+  *this = clientTile;
+}
+
+inline ClientTile& ClientTile::operator=(ClientTile const& clientTile) = default;
+
+inline MaterialId ClientTile::material(TileLayer layer) const {
+  if (layer == TileLayer::Foreground)
+    return foreground;
+  else
+    return background;
+}
+
+inline ModId ClientTile::mod(TileLayer layer) const {
+  if (layer == TileLayer::Foreground)
+    return foregroundMod;
+  else
+    return backgroundMod;
+}
+
+inline MaterialColorVariant ClientTile::materialColor(TileLayer layer) const {
+  if (layer == TileLayer::Foreground)
+    return foregroundColorVariant;
+  else
+    return backgroundColorVariant;
+}
+
+inline CollisionKind ClientTile::getCollision() const {
+  return collision;
+}
+
+inline tuple<MaterialId, MaterialHue, MaterialColorVariant> ClientTile::materialAndColor(TileLayer layer) const {
+  if (layer == TileLayer::Foreground)
+    return std::tuple<MaterialId, MaterialHue, MaterialColorVariant>{
+        foreground, foregroundHueShift, foregroundColorVariant};
+  else
+    return std::tuple<MaterialId, MaterialHue, MaterialColorVariant>{
+        background, backgroundHueShift, backgroundColorVariant};
+}
+
+inline bool ClientTile::isConnectable(TileLayer layer, bool materialOnly) const {
+  if (layer == TileLayer::Foreground) {
+    if (isConnectableMaterial(foreground))
+      return true;
+  } else {
+    if (isConnectableMaterial(background))
+      return true;
+  }
+  if (materialOnly)
+    return false;
+
+  if (layer == TileLayer::Foreground)
+    return collision == CollisionKind::Block || collision == CollisionKind::Platform;
+  else
+    return false;
+}
+
+inline bool ClientTile::isColliding(CollisionSet const& collisionSet) const {
+  return Star::isColliding(collision, collisionSet);
+}
+#endif
 
 inline NetTile::NetTile()
   : background(NullMaterialId),

@@ -6,10 +6,15 @@
 namespace Star {
 
 WorldClientState::WorldClientState() {
+#ifdef STAR_PLATFORM_N3DS
+  m_windowMonitoringBorder = 4;
+  m_presenceEntityMonitoringBorder = 4;
+#else
   auto clientConfig = Root::singleton().assets()->json("/client.config");
 
   m_windowMonitoringBorder = clientConfig.getInt("windowMonitoringBorder");
   m_presenceEntityMonitoringBorder = clientConfig.getInt("presenceEntityMonitoringBorder");
+#endif
 
   m_playerId.set(NullEntityId);
 

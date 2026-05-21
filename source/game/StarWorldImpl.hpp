@@ -223,7 +223,8 @@ namespace WorldImpl {
     return res;
   }
 
-  inline TileDamageParameters tileDamageParameters(WorldTile* tile, TileLayer layer, TileDamage const& tileDamage) {
+  template <typename Tile>
+  inline TileDamageParameters tileDamageParameters(Tile* tile, TileLayer layer, TileDamage const& tileDamage) {
     bool foreground = layer == TileLayer::Foreground;
     auto materialDatabase = Root::singleton().materialDatabase();
     auto target = foreground ? tile->foreground : tile->background;

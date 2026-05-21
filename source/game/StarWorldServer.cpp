@@ -131,6 +131,9 @@ Json n3dsCentralStructureBootstrapStore(WorldStructure const& structure) {
       {"objects", JsonArray()},
       {"flaggedBlocks", JsonObject()}};
 }
+
+    constexpr unsigned N3dsMaxTileChunkPacketsPerTick = 1;
+    constexpr int N3dsTilePacketChunkSize = 8;
 #endif
 
 void recordPhase6Signature(uint64_t& accumulator, uint64_t signature) {
@@ -1647,7 +1650,9 @@ void WorldServer::update(float dt) {
 
   timePhase(UpdateTimingPhase::PacketPreparation, [&]() {
     tickSnapshot.sendRemoteUpdates = m_entityUpdateTimer.wrapTick(dt);
+#ifndef STAR_PLATFORM_N3DS
     prefillSectorUpdateCache(tickSnapshot);
+#endif
     for (auto const& pair : m_clientInfo) {
 #ifdef STAR_PLATFORM_N3DS
       if (!pair.second->started)
@@ -1655,8 +1660,10 @@ void WorldServer::update(float dt) {
 #endif
       auto const& activeSignalRegions = tickSnapshot.activeSignalRegionsByConnection.get(pair.first);
       tickSnapshot.packetPreparationStats.monitoringRegionReuses += activeSignalRegions.size();
+#ifndef STAR_PLATFORM_N3DS
       for (auto const& activeSignalRegion : activeSignalRegions)
         signalRegion(activeSignalRegion);
+#endif
       queueUpdatePackets(pair.first, tickSnapshot);
     }
     m_netStateCache.clear();
@@ -3164,29 +3171,96 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
       clientInfo->outgoingPackets.append(make_shared<EnvironmentUpdatePacket>(std::move(skyDelta), std::move(weatherDelta)));
   }
 
+#ifdef STAR_PLATFORM_N3DS
+  unsigned n3dsTileChunksQueued = 0;
+  while (n3dsTileChunksQueued < N3dsMaxTileChunkPacketsPerTick) {
+    if (!clientInfo->n3dsPendingSectorTileUpdate) {
+      while (!clientInfo->pendingSectors.empty()) {
+        auto sector = clientInfo->pendingSectors.takeFirst();
+        if (m_worldStorage->sectorActive(sector)) {
+          clientInfo->n3dsPendingSectorTileUpdate.set(sector);
+          clientInfo->n3dsPendingSectorTileChunk = 0;
+          clientInfo->n3dsPendingSectorTileStartChunk = 0;
+          clientInfo->n3dsPendingSectorTileChunksSent = 0;
+          break;
+        }
+      }
+    }
+
+    if (!clientInfo->n3dsPendingSectorTileUpdate)
+      break;
+
+    auto sector = clientInfo->n3dsPendingSectorTileUpdate.get();
+    if (!m_worldStorage->sectorActive(sector)) {
+      clientInfo->n3dsPendingSectorTileUpdate.reset();
+      clientInfo->n3dsPendingSectorTileChunk = 0;
+      clientInfo->n3dsPendingSectorTileStartChunk = 0;
+      clientInfo->n3dsPendingSectorTileChunksSent = 0;
+      continue;
+    }
+
+    auto sectorTiles = m_tileArray->sectorRegion(sector);
+    int sectorTileWidth = sectorTiles.xMax() - sectorTiles.xMin();
+    int sectorTileHeight = sectorTiles.yMax() - sectorTiles.yMin();
+    unsigned chunksX = (sectorTileWidth + N3dsTilePacketChunkSize - 1) / N3dsTilePacketChunkSize;
+    unsigned chunksY = (sectorTileHeight + N3dsTilePacketChunkSize - 1) / N3dsTilePacketChunkSize;
+    unsigned totalChunks = chunksX * chunksY;
+    if (clientInfo->n3dsPendingSectorTileChunksSent == 0) {
+      Vec2I focus = Vec2I::floor(clientInfo->clientState.windowCenter());
+      int focusChunkX = max(0, min(static_cast<int>(chunksX) - 1, (focus[0] - sectorTiles.xMin()) / N3dsTilePacketChunkSize));
+      int focusChunkY = max(0, min(static_cast<int>(chunksY) - 1, (focus[1] - sectorTiles.yMin()) / N3dsTilePacketChunkSize));
+      clientInfo->n3dsPendingSectorTileStartChunk = static_cast<unsigned>(focusChunkX) * chunksY + static_cast<unsigned>(focusChunkY);
+    }
+
+    if (clientInfo->n3dsPendingSectorTileChunksSent >= totalChunks) {
+      clientInfo->n3dsPendingSectorTileUpdate.reset();
+      clientInfo->n3dsPendingSectorTileChunk = 0;
+      clientInfo->n3dsPendingSectorTileStartChunk = 0;
+      clientInfo->n3dsPendingSectorTileChunksSent = 0;
+      continue;
+    }
+
+    unsigned chunkIndex = (clientInfo->n3dsPendingSectorTileStartChunk + clientInfo->n3dsPendingSectorTileChunksSent) % totalChunks;
+    clientInfo->n3dsPendingSectorTileChunk = chunkIndex;
+
+    unsigned chunkX = chunkIndex / chunksY;
+    unsigned chunkY = chunkIndex % chunksY;
+    int xMin = sectorTiles.xMin() + static_cast<int>(chunkX) * N3dsTilePacketChunkSize;
+    int yMin = sectorTiles.yMin() + static_cast<int>(chunkY) * N3dsTilePacketChunkSize;
+    int chunkWidth = min(N3dsTilePacketChunkSize, sectorTiles.xMax() - xMin);
+    int chunkHeight = min(N3dsTilePacketChunkSize, sectorTiles.yMax() - yMin);
+    auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
+    tileArrayUpdate->min = {xMin, yMin};
+    tileArrayUpdate->array.resize(Vec2S(chunkWidth, chunkHeight));
+    for (int x = 0; x < chunkWidth; ++x) {
+      for (int y = 0; y < chunkHeight; ++y)
+        writeNetTile({xMin + x, yMin + y}, tileArrayUpdate->array(x, y));
+    }
+    clientInfo->outgoingPackets.append(std::move(tileArrayUpdate));
+    ++clientInfo->n3dsPendingSectorTileChunksSent;
+    if (clientInfo->n3dsPendingSectorTileChunksSent >= totalChunks) {
+      clientInfo->n3dsPendingSectorTileUpdate.reset();
+      clientInfo->n3dsPendingSectorTileChunk = 0;
+      clientInfo->n3dsPendingSectorTileStartChunk = 0;
+      clientInfo->n3dsPendingSectorTileChunksSent = 0;
+    }
+
+    snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
+    ++n3dsTileChunksQueued;
+    static unsigned sN3dsSectorPacketLogCount = 0;
+    if (sN3dsSectorPacketLogCount < 32) {
+      Logger::info("N3DS WorldServer: queued sector tile chunk sector={} chunk={}/{} actual={} start={} min={} size={} focus={} remainingSectors={}",
+          sector, clientInfo->n3dsPendingSectorTileChunksSent, totalChunks, chunkIndex + 1,
+          clientInfo->n3dsPendingSectorTileStartChunk + 1, Vec2I(xMin, yMin), Vec2I(chunkWidth, chunkHeight),
+          Vec2I::floor(clientInfo->clientState.windowCenter()), clientInfo->pendingSectors.size());
+      ++sN3dsSectorPacketLogCount;
+    }
+  }
+#else
   for (auto sector : clientInfo->pendingSectors.values()) {
     if (!m_worldStorage->sectorActive(sector))
       continue;
 
-#ifdef STAR_PLATFORM_N3DS
-    constexpr int N3dsTilePacketChunkSize = 8;
-    auto sectorTiles = m_tileArray->sectorRegion(sector);
-    for (int xMin = sectorTiles.xMin(); xMin < sectorTiles.xMax(); xMin += N3dsTilePacketChunkSize) {
-      for (int yMin = sectorTiles.yMin(); yMin < sectorTiles.yMax(); yMin += N3dsTilePacketChunkSize) {
-        int chunkWidth = min(N3dsTilePacketChunkSize, sectorTiles.xMax() - xMin);
-        int chunkHeight = min(N3dsTilePacketChunkSize, sectorTiles.yMax() - yMin);
-        auto tileArrayUpdate = make_shared<TileArrayUpdatePacket>();
-        tileArrayUpdate->min = {xMin, yMin};
-        tileArrayUpdate->array.resize(Vec2S(chunkWidth, chunkHeight));
-        for (int x = 0; x < chunkWidth; ++x) {
-          for (int y = 0; y < chunkHeight; ++y)
-            writeNetTile({xMin + x, yMin + y}, tileArrayUpdate->array(x, y));
-        }
-        clientInfo->outgoingPackets.append(std::move(tileArrayUpdate));
-      }
-    }
-    snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
-#else
     auto i = snapshot.sectorUpdateCache.find(sector);
     if (i == snapshot.sectorUpdateCache.end()) {
       snapshot.packetPreparationStats.sectorPacketCacheMisses += 1;
@@ -3196,9 +3270,9 @@ void WorldServer::queueUpdatePackets(ConnectionId clientId, WorldTickSnapshot& s
     }
 
     clientInfo->outgoingPackets.append(i->second);
-#endif
     clientInfo->pendingSectors.remove(sector);
   }
+#endif
 
   for (auto pos : clientInfo->pendingTileUpdates) {
     auto tileUpdate = make_shared<TileUpdatePacket>();

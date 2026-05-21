@@ -945,7 +945,18 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
       unsigned updates = 0;
       unsigned maxUpdates = std::max(1u, appController->maxFrameSkip() + 1);
       while (updateAccumulator >= updateStep && updates < maxUpdates) {
+#ifdef STAR_PLATFORM_N3DS
+        static unsigned sN3dsMainUpdateLogCount = 0;
+        bool n3dsLogMainUpdate = sN3dsMainUpdateLogCount < 160;
+        unsigned n3dsMainUpdateIndex = sN3dsMainUpdateLogCount++;
+        if (n3dsLogMainUpdate)
+          Logger::info("N3dsMainApplication: update begin {}", n3dsMainUpdateIndex);
+#endif
         application->update();
+#ifdef STAR_PLATFORM_N3DS
+        if (n3dsLogMainUpdate)
+          Logger::info("N3dsMainApplication: update end {}", n3dsMainUpdateIndex);
+#endif
         updateAccumulator -= updateStep;
         ++updates;
       }
@@ -956,8 +967,23 @@ int runMainApplication(ApplicationUPtr application, StringList cmdLineArgs) {
       appController->pumpAudio(application.get());
 
       if (!targetRenderRate || renderAccumulator >= renderStep) {
+#ifdef STAR_PLATFORM_N3DS
+        static unsigned sN3dsMainRenderLogCount = 0;
+        bool n3dsLogMainRender = sN3dsMainRenderLogCount < 80;
+        unsigned n3dsMainRenderIndex = sN3dsMainRenderLogCount++;
+        if (n3dsLogMainRender)
+          Logger::info("N3dsMainApplication: render begin {}", n3dsMainRenderIndex);
+#endif
         application->render();
+#ifdef STAR_PLATFORM_N3DS
+        if (n3dsLogMainRender)
+          Logger::info("N3dsMainApplication: render app end {}", n3dsMainRenderIndex);
+#endif
         renderer->flush(Mat3F::identity());
+#ifdef STAR_PLATFORM_N3DS
+        if (n3dsLogMainRender)
+          Logger::info("N3dsMainApplication: render flush end {}", n3dsMainRenderIndex);
+#endif
         if (targetRenderRate)
           renderAccumulator = std::fmod(renderAccumulator, renderStep);
       }

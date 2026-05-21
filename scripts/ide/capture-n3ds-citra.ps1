@@ -333,6 +333,19 @@ namespace OpenStarboundN3dsCitraCaptureV3 {
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
+function Copy-N3dsCaptureLogs() {
+  foreach ($logRoot in @((Join-Path $env:APPDATA "Citra"), (Join-Path $env:APPDATA "Citra\log"))) {
+    if (Test-Path $logRoot) {
+      Get-ChildItem -Path $logRoot -Filter "citra_log*.txt" -File -ErrorAction SilentlyContinue | Copy-Item -Destination $capture -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  $sdmcOpenStarbound = Join-Path $env:APPDATA "Citra\sdmc\OpenStarbound"
+  if (Test-Path $sdmcOpenStarbound) {
+    Get-ChildItem -Path $sdmcOpenStarbound -Filter "starbound_n3ds*.log" -File -ErrorAction SilentlyContinue | Copy-Item -Destination $capture -Force -ErrorAction SilentlyContinue
+  }
+}
+
 $process = $null
 try {
   $process = Start-Process -FilePath $citraExe -ArgumentList "`"$launchPath`"" -PassThru
@@ -413,13 +426,10 @@ try {
   if ($citraConfigBackupBytes) {
     [System.IO.File]::WriteAllBytes($citraConfigPath, $citraConfigBackupBytes)
   }
+  Copy-N3dsCaptureLogs
 }
 
-foreach ($logRoot in @((Join-Path $env:APPDATA "Citra"), (Join-Path $env:APPDATA "Citra\log"))) {
-  if (Test-Path $logRoot) {
-    Get-ChildItem -Path $logRoot -Filter "citra_log*.txt" -File -ErrorAction SilentlyContinue | Copy-Item -Destination $capture -Force
-  }
-}
+Copy-N3dsCaptureLogs
 
 $windowPng = Join-Path $capture "window.png"
 if (!(Test-Path $windowPng)) { throw "Capture failed: $windowPng was not created" }

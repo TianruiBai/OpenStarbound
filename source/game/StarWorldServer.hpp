@@ -517,6 +517,12 @@ private:
     HashSet<pair<Vec2I, TileLayer>> pendingTileDamageUpdates;
     HashSet<ServerTileSectorArray::Sector> pendingSectors;
     HashSet<ServerTileSectorArray::Sector> activeSectors;
+  #ifdef STAR_PLATFORM_N3DS
+    Maybe<ServerTileSectorArray::Sector> n3dsPendingSectorTileUpdate;
+    unsigned n3dsPendingSectorTileChunk = 0;
+    unsigned n3dsPendingSectorTileStartChunk = 0;
+    unsigned n3dsPendingSectorTileChunksSent = 0;
+  #endif
 
     InterpolationTracker interpolationTracker;
   };

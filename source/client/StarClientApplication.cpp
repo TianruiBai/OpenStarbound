@@ -86,6 +86,10 @@ void preloadN3dsFirstFrameHumanoidAssets(AssetsConstPtr const& assets, PlayerPtr
 
   Logger::info("N3DS game bootstrap: preloaded first-frame humanoid assets {}/{}", loaded, firstFrameAssets.size());
 }
+
+unsigned n3dsWorldRenderBorderTiles() {
+  return MaterialRenderProfileMaxNeighborDistance;
+}
 }
 #endif
 
@@ -556,7 +560,7 @@ void ClientApplication::render() {
         n3dsRenderer->setHandheldTitleMenuState(false);
       renderer->switchEffectConfig("world");
       auto clientStart = totalStart;
-      worldClient->render(m_renderData, TilePainter::BorderTileSize);
+      worldClient->render(m_renderData, n3dsWorldRenderBorderTiles());
       LogMap::set("client_render_world_client", strf(u8"{:05d}\u00b5s", Time::monotonicMicroseconds() - clientStart));
 
       auto paintStart = Time::monotonicMicroseconds();
@@ -1183,7 +1187,7 @@ void ClientApplication::changeState(MainAppState newState) {
           camera.setPixelRatio(m_root->configuration()->get("zoomLevel").toFloat());
           m_worldPainter->setCameraPosition(worldClient->geometry(), m_player ? m_player->cameraPosition() : Vec2F(worldClient->clientWindow().center()));
           worldClient->setClientWindow(camera.worldTileRect());
-          worldClient->render(m_renderData, TilePainter::BorderTileSize);
+          worldClient->render(m_renderData, n3dsWorldRenderBorderTiles());
           Logger::info("N3DS game bootstrap: first frame world render returned tiles={}x{} entities={}",
               m_renderData.tiles.size(0), m_renderData.tiles.size(1), m_renderData.entityDrawables.size());
           Logger::info("N3DS game bootstrap: first frame painter begin");
@@ -1470,6 +1474,13 @@ void ClientApplication::updateRunning(float dt) {
     bool clientIPJoinable = m_root->configuration()->get("clientIPJoinable").toBool();
     bool clientP2PJoinable = m_root->configuration()->get("clientP2PJoinable").toBool();
     Maybe<pair<uint16_t, uint16_t>> party = make_pair(m_universeClient->players(), m_universeClient->maxPlayers());
+#ifdef STAR_PLATFORM_N3DS
+    static unsigned sN3dsUpdateRunningLogCount = 0;
+    bool n3dsLogUpdateRunning = sN3dsUpdateRunningLogCount < 96;
+    unsigned n3dsUpdateRunningIndex = sN3dsUpdateRunningLogCount++;
+    if (n3dsLogUpdateRunning)
+      Logger::info("N3DS ClientApplication: updateRunning begin {}", n3dsUpdateRunningIndex);
+#endif
 
     if (m_state == MainAppState::MultiPlayer) {
       if (p2pNetworkingService) {
@@ -1481,8 +1492,13 @@ void ClientApplication::updateRunning(float dt) {
       }
     } else {
 #ifdef STAR_PLATFORM_N3DS
-      if (m_universeServer)
+      if (m_universeServer) {
+        if (n3dsLogUpdateRunning)
+          Logger::info("N3DS ClientApplication: before universe server update {}", n3dsUpdateRunningIndex);
         m_universeServer->n3dsUpdate();
+        if (n3dsLogUpdateRunning)
+          Logger::info("N3DS ClientApplication: after universe server update {}", n3dsUpdateRunningIndex);
+      }
 #endif
       m_universeServer->setListeningTcp(clientIPJoinable);
       if (p2pNetworkingService) {
@@ -1652,13 +1668,29 @@ void ClientApplication::updateRunning(float dt) {
       return;
 
     m_mainInterface->preUpdate(dt);
+#ifdef STAR_PLATFORM_N3DS
+    if (n3dsLogUpdateRunning)
+      Logger::info("N3DS ClientApplication: before universe client update {}", n3dsUpdateRunningIndex);
+#endif
     m_universeClient->update(dt);
+#ifdef STAR_PLATFORM_N3DS
+    if (n3dsLogUpdateRunning)
+      Logger::info("N3DS ClientApplication: after universe client update {}", n3dsUpdateRunningIndex);
+#endif
 
     if (checkDisconnection())
       return;
 
     if (worldClient) {
+#ifdef STAR_PLATFORM_N3DS
+      if (n3dsLogUpdateRunning)
+        Logger::info("N3DS ClientApplication: before world painter update {}", n3dsUpdateRunningIndex);
+#endif
       m_worldPainter->update(dt);
+#ifdef STAR_PLATFORM_N3DS
+      if (n3dsLogUpdateRunning)
+        Logger::info("N3DS ClientApplication: after world painter update {}", n3dsUpdateRunningIndex);
+#endif
       auto& broadcastCallback = worldClient->broadcastCallback();
       if (!broadcastCallback) {
         broadcastCallback = [&](PlayerPtr player, StringView broadcast) -> bool {
@@ -1697,7 +1729,15 @@ void ClientApplication::updateRunning(float dt) {
 
     m_cinematicOverlay->update(dt);
     m_mainInterface->update(dt);
+#ifdef STAR_PLATFORM_N3DS
+    if (n3dsLogUpdateRunning)
+      Logger::info("N3DS ClientApplication: before mixer update {}", n3dsUpdateRunningIndex);
+#endif
     m_mainMixer->update(dt, m_cinematicOverlay->muteSfx(), m_cinematicOverlay->muteMusic());
+#ifdef STAR_PLATFORM_N3DS
+    if (n3dsLogUpdateRunning)
+      Logger::info("N3DS ClientApplication: after mixer update {}", n3dsUpdateRunningIndex);
+#endif
     m_mainMixer->setSpeed(GlobalTimescale);
 
     bool inputActive = m_mainInterface->textInputActive();
@@ -1746,7 +1786,12 @@ void ClientApplication::updateRunning(float dt) {
       changeState(MainAppState::Title);
 
   } catch (std::exception& e) {
+#ifdef STAR_PLATFORM_N3DS
+    Logger::error("N3DS ClientApplication: exception in updateRunning: {}", e.what());
+    throw;
+#else
     setError("Exception caught in client main-loop", e);
+#endif
   }
 }
 

@@ -22,6 +22,10 @@
 #include "StarInspectableEntity.hpp"
 #include "StarCurve25519.hpp"
 
+#ifdef STAR_PLATFORM_N3DS
+#include <malloc.h>
+#endif
+
 namespace Star {
 
 const std::string SECRET_BROADCAST_PUBLIC_KEY = "SecretBroadcastPublicKey";
@@ -34,6 +38,16 @@ static Vec2U n3dsClientWindowSize() {
   return {40, 28};
 }
 
+static void n3dsLogWorldClientHeap(String const& label) {
+  auto info = mallinfo();
+  Logger::info("N3DS WorldClient memory {}: heapArena={} heapUsed={} heapFree={} heapKeep={}",
+      label,
+      info.arena,
+      info.uordblks,
+      info.fordblks,
+      info.keepcost);
+}
+
 static Vec3F n3dsClampLight(Vec3F light) {
   for (size_t i = 0; i < 3; ++i)
     light[i] = clamp(light[i], 0.06f, 1.35f);
@@ -44,21 +58,70 @@ static bool n3dsValidMaterial(MaterialId material) {
   return material != EmptyMaterialId && material != NullMaterialId;
 }
 
+static Vec3F n3dsLightFromBytes(float red, float green, float blue) {
+  return Vec3F(red, green, blue) / 255.0f;
+}
+
+static Vec3F n3dsMaterialRadiantLight(MaterialId material, ModId mod) {
+  Vec3F radiantLight;
+  switch (material) {
+    case 48:
+      radiantLight += n3dsLightFromBytes(25.0f, 110.0f, 30.0f);
+      break;
+    case 990:
+      radiantLight += n3dsLightFromBytes(66.0f, 107.0f, 95.0f);
+      break;
+    case 1293:
+      radiantLight += n3dsLightFromBytes(128.0f, 0.0f, 128.0f);
+      break;
+    case 1430:
+      radiantLight += n3dsLightFromBytes(85.0f, 55.0f, 30.0f);
+      break;
+    case 1431:
+      radiantLight += n3dsLightFromBytes(25.0f, 50.0f, 75.0f);
+      break;
+    default:
+      break;
+  }
+
+  switch (mod) {
+    case 15:
+      radiantLight += n3dsLightFromBytes(115.0f, 44.0f, 0.0f);
+      break;
+    case 28:
+      radiantLight += n3dsLightFromBytes(90.0f, 20.0f, 90.0f);
+      break;
+    case 336:
+      radiantLight += n3dsLightFromBytes(60.0f, 120.0f, 25.0f);
+      break;
+    default:
+      break;
+  }
+
+  return radiantLight;
+}
+
 static Vec3F n3dsLiquidRadiantLight(LiquidLevel liquidLevel) {
   if (liquidLevel.liquid == EmptyLiquidId || liquidLevel.level <= 0.0f)
     return Vec3F();
 
   Vec3F radiantLight;
   switch (liquidLevel.liquid) {
+    case 2:
+      radiantLight = n3dsLightFromBytes(189.0f, 26.0f, 0.0f);
+      break;
+    case 3:
+      radiantLight = n3dsLightFromBytes(15.0f, 22.0f, 5.0f);
+      break;
     case 6:
-      radiantLight = Vec3F(47.0f, 117.0f, 96.0f) / 255.0f;
+      radiantLight = n3dsLightFromBytes(47.0f, 117.0f, 96.0f);
       break;
     case 8:
     case 17:
-      radiantLight = Vec3F(189.0f, 26.0f, 0.0f) / 255.0f;
+      radiantLight = n3dsLightFromBytes(189.0f, 26.0f, 0.0f);
       break;
     case 11:
-      radiantLight = Vec3F(60.0f, 0.0f, 60.0f) / 255.0f;
+      radiantLight = n3dsLightFromBytes(60.0f, 0.0f, 60.0f);
       break;
     default:
       return Vec3F();
@@ -348,6 +411,14 @@ void WorldClient::forEachCollisionBlock(RectI const& region, function<void(Colli
   if (!inWorld())
     return;
 
+#ifdef STAR_PLATFORM_N3DS
+  m_tileArray->tileEach(region, [iterator](Vec2I const& pos, ClientTile const& tile) {
+      if (tile.getCollision() == CollisionKind::Null)
+        iterator(CollisionBlock::nullBlock(pos));
+    });
+  for (auto const& block : m_collisionGenerator.getBlocks(region))
+    iterator(block);
+#else
   const_cast<WorldClient*>(this)->freshenCollision(region);
   m_tileArray->tileEach(region, [iterator](Vec2I const& pos, ClientTile const& tile) {
       if (tile.getCollision() == CollisionKind::Null) {
@@ -358,6 +429,7 @@ void WorldClient::forEachCollisionBlock(RectI const& region, function<void(Colli
           iterator(block);
       }
     });
+#endif
 }
 
 bool WorldClient::isTileConnectable(Vec2I const& pos, TileLayer layer, bool tilesOnly) const {
@@ -780,7 +852,6 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
     loggedRenderBeforeTiles = true;
   }
 
-    auto n3dsMaterialDatabase = Root::singleton().materialDatabase();
     Vec3F n3dsEnvironmentLight = m_sky ? m_sky->environmentLight().toRgbF() : Vec3F::filled(0.8f);
     n3dsEnvironmentLight = n3dsClampLight(n3dsEnvironmentLight);
     renderData.lightMinPosition = tileRange.min();
@@ -814,10 +885,10 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
       Vec3F light = n3dsEnvironmentLight * environmentFactor;
 
       if (n3dsValidMaterial(clientTile.foreground) || clientTile.foregroundMod != NoModId)
-        light += n3dsMaterialDatabase->radiantLight(clientTile.foreground, clientTile.foregroundMod);
+        light += n3dsMaterialRadiantLight(clientTile.foreground, clientTile.foregroundMod);
 
       if (clientTile.foregroundLightTransparent && (n3dsValidMaterial(clientTile.background) || clientTile.backgroundMod != NoModId))
-        light += n3dsMaterialDatabase->radiantLight(clientTile.background, clientTile.backgroundMod) * 0.65f;
+        light += n3dsMaterialRadiantLight(clientTile.background, clientTile.backgroundMod) * 0.65f;
 
       if (clientTile.liquid.liquid != EmptyLiquidId && clientTile.liquid.level > 0.0f)
         light += n3dsLiquidRadiantLight(clientTile.liquid);
@@ -1141,19 +1212,63 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
 
     } else if (auto tileArrayUpdate = as<TileArrayUpdatePacket>(packet)) {
       RectI tileRegion = RectI::withSize(tileArrayUpdate->min, Vec2I(tileArrayUpdate->array.size()));
+#ifdef STAR_PLATFORM_N3DS
+      static unsigned sN3dsTileArrayLogCount = 0;
+      bool n3dsLogTileArray = sN3dsTileArrayLogCount < 32;
+      if (n3dsLogTileArray)
+        Logger::info("N3DS WorldClient: applying tile chunk min={} size={}", tileArrayUpdate->min, Vec2I(tileArrayUpdate->array.size()));
+      if (n3dsLogTileArray) {
+        Logger::info("N3DS WorldClient: client tile bytes tile={} sectorArray={}", sizeof(ClientTile), sizeof(ClientTileSectorArray::Array));
+        n3dsLogWorldClientHeap("before tile chunk sectors");
+      }
+#endif
 
       // NOTE: We're creating client side sectors on tileArrayUpdate here, and
       // at no other time, and this is sort of a big assumption that
       // tileArrayUpdate happens for all valid client side sectors first before
       // any other tile updates.
-      for (auto const& sector : m_tileArray->validSectorsFor(tileRegion))
+      for (auto const& sector : m_tileArray->validSectorsFor(tileRegion)) {
+#ifdef STAR_PLATFORM_N3DS
+        if (m_tileArray->sectorLoaded(sector)) {
+          if (n3dsLogTileArray)
+            Logger::info("N3DS WorldClient: tile chunk sector already loaded {}", sector);
+          continue;
+        }
+        if (n3dsLogTileArray)
+          Logger::info("N3DS WorldClient: loading tile chunk sector {}", sector);
+#endif
         m_tileArray->loadDefaultSector(sector);
-
-      for (int x = tileRegion.xMin(); x < tileRegion.xMax(); ++x) {
-        for (int y = tileRegion.yMin(); y < tileRegion.yMax(); ++y)
-          readNetTile({x, y}, tileArrayUpdate->array(x - tileRegion.xMin(), y - tileRegion.yMin()), false);
+#ifdef STAR_PLATFORM_N3DS
+        if (n3dsLogTileArray) {
+          Logger::info("N3DS WorldClient: loaded tile chunk sector {} loadedCount={}", sector, m_tileArray->loadedSectorCount());
+          n3dsLogWorldClientHeap("after tile chunk sector load");
+        }
+#endif
       }
+
+      unsigned n3dsTilesRead = 0;
+      for (int x = tileRegion.xMin(); x < tileRegion.xMax(); ++x) {
+        for (int y = tileRegion.yMin(); y < tileRegion.yMax(); ++y) {
+          readNetTile({x, y}, tileArrayUpdate->array(x - tileRegion.xMin(), y - tileRegion.yMin()), false);
+#ifdef STAR_PLATFORM_N3DS
+          ++n3dsTilesRead;
+#endif
+        }
+      }
+#ifdef STAR_PLATFORM_N3DS
+      if (n3dsLogTileArray) {
+        Logger::info("N3DS WorldClient: tile chunk tiles copied count={}", n3dsTilesRead);
+        n3dsLogWorldClientHeap("after tile chunk copy");
+      }
+#endif
       dirtyCollision(tileRegion);
+#ifdef STAR_PLATFORM_N3DS
+      if (n3dsLogTileArray) {
+        n3dsLogWorldClientHeap("after tile chunk dirty collision");
+        Logger::info("N3DS WorldClient: applied tile chunk min={} size={}", tileArrayUpdate->min, Vec2I(tileArrayUpdate->array.size()));
+        ++sN3dsTileArrayLogCount;
+      }
+#endif
 
     } else if (auto tileUpdate = as<TileUpdatePacket>(packet)) {
       readNetTile(tileUpdate->position, tileUpdate->tile);
@@ -1417,7 +1532,15 @@ void WorldClient::update(float dt) {
   m_clientState.setPlayer(m_mainPlayer->entityId());
   m_clientState.setClientPresenceEntities(List<EntityId>());
   centerClientWindowOnPlayer(n3dsClientWindowSize());
+  static unsigned sN3dsCompactUpdateLogCount = 0;
+  bool n3dsLogCompactUpdate = sN3dsCompactUpdateLogCount < 64;
+  if (n3dsLogCompactUpdate)
+    Logger::info("N3DS WorldClient: compact update before queue step={} time={}", m_currentStep, m_currentTime);
   queueUpdatePackets(m_entityUpdateTimer.wrapTick(dt));
+  if (n3dsLogCompactUpdate) {
+    Logger::info("N3DS WorldClient: compact update after queue outgoing={} sectors={}", m_outgoingPackets.size(), m_tileArray->loadedSectorCount());
+    ++sN3dsCompactUpdateLogCount;
+  }
   return;
 #endif
 
@@ -1593,8 +1716,13 @@ void WorldClient::update(float dt) {
         return RectI::integral(entity->metaBoundBox().translated(entity->position()));
       return {};
     });
-  for (auto monitoredRegion : monitoredRegions)
+  for (auto monitoredRegion : monitoredRegions) {
+#ifdef STAR_PLATFORM_N3DS
+    neededSectors.addAll(m_tileArray->validSectorsFor(monitoredRegion.padded(ClientWorldSectorSize)));
+#else
     neededSectors.addAll(m_tileArray->validSectorsFor(monitoredRegion.padded(WorldSectorSize)));
+#endif
+  }
 
   auto loadedSectors = m_tileArray->loadedSectors();
   for (auto sector : loadedSectors) {
@@ -2414,10 +2542,15 @@ bool WorldClient::readNetTile(Vec2I const& pos, NetTile const& netTile, bool upd
   tile->liquid = netTile.liquid.liquidLevel();
   tile->dungeonId = netTile.dungeonId;
 
+#ifdef STAR_PLATFORM_N3DS
+  tile->backgroundLightTransparent = tile->background == EmptyMaterialId;
+  tile->foregroundLightTransparent = tile->foreground == EmptyMaterialId && tile->collision != CollisionKind::Dynamic;
+#else
   auto materialDatabase = Root::singleton().materialDatabase();
   tile->backgroundLightTransparent = materialDatabase->backgroundLightTransparent(tile->background);
   tile->foregroundLightTransparent =
       materialDatabase->foregroundLightTransparent(tile->foreground) && tile->collision != CollisionKind::Dynamic;
+#endif
 
   if (updateCollision)
     dirtyCollision(RectI::withSize(pos, {1, 1}));
@@ -2429,6 +2562,9 @@ void WorldClient::dirtyCollision(RectI const& region) {
   if (!inWorld())
     return;
 
+#ifdef STAR_PLATFORM_N3DS
+  (void)region;
+#else
   auto dirtyRegion = region.padded(CollisionGenerator::BlockInfluenceRadius);
   for (int x = dirtyRegion.xMin(); x < dirtyRegion.xMax(); ++x) {
     for (int y = dirtyRegion.yMin(); y < dirtyRegion.yMax(); ++y) {
@@ -2436,12 +2572,16 @@ void WorldClient::dirtyCollision(RectI const& region) {
         tile->collisionCacheDirty = true;
     }
   }
+#endif
 }
 
 void WorldClient::freshenCollision(RectI const& region) {
   if (!inWorld())
     return;
 
+#ifdef STAR_PLATFORM_N3DS
+  (void)region;
+#else
   RectI freshenRegion = RectI::null();
   for (int x = region.xMin(); x < region.xMax(); ++x) {
     for (int y = region.yMin(); y < region.yMax(); ++y) {
@@ -2467,6 +2607,7 @@ void WorldClient::freshenCollision(RectI const& region) {
         tile->collisionCache.append(std::move(collisionBlock));
     }
   }
+#endif
 }
 
 float WorldClient::lightLevel(Vec2F const& pos) const {

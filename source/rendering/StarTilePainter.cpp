@@ -193,25 +193,65 @@ TilePainter::ChunkHash TilePainter::liquidChunkHash(WorldRenderData& renderData,
 void TilePainter::renderTerrainChunks(WorldCamera const& camera, TerrainLayer terrainLayer) {
 #ifdef STAR_PLATFORM_N3DS
   if (m_n3dsRenderData) {
-    Map<QuadZLevel, List<RenderPrimitive>> zOrderPrimitives;
+    HashMap<QuadZLevel, List<RenderPrimitive>> layerPrimitives;
+    auto terrainLayerName = [](TerrainLayer layer) -> char const* {
+      switch (layer) {
+        case TerrainLayer::Background:
+          return "background";
+        case TerrainLayer::Midground:
+          return "midground";
+        case TerrainLayer::Foreground:
+          return "foreground";
+      }
+      return "unknown";
+    };
+
+    auto layerOccludesBehind = [&](TerrainLayer layer, Vec2I const& pos) -> bool {
+      auto materialDatabase = Root::singleton().materialDatabase();
+      RenderTile const& tile = getRenderTile(*m_n3dsRenderData, pos);
+      MaterialId material = layer == TerrainLayer::Background ? tile.background : tile.foreground;
+      if (material == EmptyMaterialId || material == NullMaterialId)
+        return false;
+      if (layer == TerrainLayer::Midground && !BlockCollisionSet.contains(materialDatabase->materialCollisionKind(material)))
+        return false;
+      if (layer == TerrainLayer::Foreground && BlockCollisionSet.contains(materialDatabase->materialCollisionKind(material)))
+        return false;
+      if (auto renderProfile = materialDatabase->materialRenderProfile(material))
+        return renderProfile->occludesBehind;
+      return false;
+    };
+
+    static unsigned sN3dsTerrainLayerLogCount = 0;
+    bool n3dsLogTerrainLayer = sN3dsTerrainLayerLogCount < 48;
+    if (n3dsLogTerrainLayer)
+      Logger::info("N3DS TilePainter: render {} layer chunks={}", terrainLayerName(terrainLayer), m_pendingN3dsTerrainChunkIndices.size());
 
     for (auto const& chunkIndex : m_pendingN3dsTerrainChunkIndices) {
-      HashMap<TerrainLayer, HashMap<QuadZLevel, List<RenderPrimitive>>> chunkPrimitives;
-
       RectI tileRange = RectI::withSize(chunkIndex * RenderChunkSize, Vec2I::filled(RenderChunkSize));
       for (int x = tileRange.xMin(); x < tileRange.xMax(); ++x) {
         for (int y = tileRange.yMin(); y < tileRange.yMax(); ++y) {
-          bool occluded = this->produceTerrainPrimitives(chunkPrimitives[TerrainLayer::Foreground], TerrainLayer::Foreground, {x, y}, *m_n3dsRenderData);
-          occluded = this->produceTerrainPrimitives(chunkPrimitives[TerrainLayer::Midground], TerrainLayer::Midground, {x, y}, *m_n3dsRenderData) || occluded;
-          if (!occluded)
-            this->produceTerrainPrimitives(chunkPrimitives[TerrainLayer::Background], TerrainLayer::Background, {x, y}, *m_n3dsRenderData);
+          Vec2I position{x, y};
+          if (terrainLayer == TerrainLayer::Background) {
+            if (layerOccludesBehind(TerrainLayer::Foreground, position) || layerOccludesBehind(TerrainLayer::Midground, position))
+              continue;
+          }
+          this->produceTerrainPrimitives(layerPrimitives, terrainLayer, position, *m_n3dsRenderData);
         }
       }
 
-      for (auto& zLevelPair : chunkPrimitives[terrainLayer])
-        zOrderPrimitives[zLevelPair.first].appendAll(std::move(zLevelPair.second));
-
       m_textureCache.clear();
+    }
+
+    Map<QuadZLevel, List<RenderPrimitive>> zOrderPrimitives;
+    for (auto& pair : layerPrimitives)
+      zOrderPrimitives[pair.first].appendAll(std::move(pair.second));
+
+    if (n3dsLogTerrainLayer) {
+      size_t primitiveCount = 0;
+      for (auto const& pair : zOrderPrimitives)
+        primitiveCount += pair.second.size();
+      Logger::info("N3DS TilePainter: render {} layer primitives={} zLevels={}", terrainLayerName(terrainLayer), primitiveCount, zOrderPrimitives.size());
+      ++sN3dsTerrainLayerLogCount;
     }
 
     Mat3F transformation = Mat3F::identity();
