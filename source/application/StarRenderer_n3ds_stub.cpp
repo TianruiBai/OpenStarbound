@@ -55,12 +55,14 @@ constexpr int N3dsBottomScreenHeight = 240;
 constexpr unsigned N3dsMaxTextureExtent = 1024;
 constexpr size_t N3dsTextureUploadBudget = 6 * 1024 * 1024;
 constexpr size_t N3dsMaxFrameSubTextures = N3dsMaxQueuedPrimitives + 64;
+constexpr size_t N3dsMaxLightMapPixels = 64 * 64;
 constexpr bool N3dsDrawTopDiagnostics = false;
 
 struct N3dsLightState {
   bool enabled = false;
   Vec2U size;
-  std::vector<Vec3F> values;
+  std::array<Vec3F, N3dsMaxLightMapPixels> values;
+  size_t valueCount = 0;
   Vec2F scale = {16.0f, 16.0f};
   Vec2F offset;
   float multiplier = 1.0f;
@@ -83,7 +85,7 @@ u32 toC2dColor(Vec4B const& color) {
 }
 
 Vec3F sampleN3dsLight(Vec2F const& screenCoordinate) {
-  if (!sN3dsLightState.enabled || sN3dsLightState.values.empty() || sN3dsLightState.scale[0] == 0.0f || sN3dsLightState.scale[1] == 0.0f)
+  if (!sN3dsLightState.enabled || sN3dsLightState.valueCount == 0 || sN3dsLightState.scale[0] == 0.0f || sN3dsLightState.scale[1] == 0.0f)
     return Vec3F::filled(1.0f);
 
   Vec2F lightCoordinate = Vec2F(
@@ -94,7 +96,11 @@ Vec3F sampleN3dsLight(Vec2F const& screenCoordinate) {
   if (x < 0 || y < 0 || x >= static_cast<int>(sN3dsLightState.size[0]) || y >= static_cast<int>(sN3dsLightState.size[1]))
     return Vec3F::filled(1.0f);
 
-  return sN3dsLightState.values[static_cast<size_t>(y) * sN3dsLightState.size[0] + x];
+  size_t index = static_cast<size_t>(y) * sN3dsLightState.size[0] + x;
+  if (index >= sN3dsLightState.valueCount)
+    return Vec3F::filled(1.0f);
+
+  return sN3dsLightState.values[index];
 }
 
 Vec4B applyN3dsLighting(RenderVertex const& vertex) {
@@ -879,12 +885,13 @@ void N3dsStubRenderer::setEffectTexture(String const& textureName, ImageView con
     return;
 
   sN3dsLightState.size = image.size;
-  sN3dsLightState.values.clear();
+  sN3dsLightState.valueCount = 0;
   if (image.empty() || !image.data)
     return;
 
   size_t pixelCount = static_cast<size_t>(image.size[0]) * image.size[1];
-  sN3dsLightState.values.resize(pixelCount, Vec3F::filled(1.0f));
+  pixelCount = std::min(pixelCount, sN3dsLightState.values.size());
+  sN3dsLightState.valueCount = pixelCount;
   if (image.format == PixelFormat::RGB_F || image.format == PixelFormat::RGBA_F) {
     size_t floatsPerPixel = image.format == PixelFormat::RGB_F ? 3 : 4;
     auto source = reinterpret_cast<float const*>(image.data);

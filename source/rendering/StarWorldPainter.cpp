@@ -8,6 +8,44 @@
 
 namespace Star {
 
+#ifdef STAR_PLATFORM_N3DS
+namespace {
+constexpr size_t N3dsLightMapMaxWidth = 64;
+constexpr size_t N3dsLightMapMaxHeight = 64;
+
+ImageView n3dsWhiteLightMapView() {
+  static uint8_t whiteLight[] = {255, 255, 255};
+  ImageView image;
+  image.size = {1, 1};
+  image.data = whiteLight;
+  image.format = PixelFormat::RGB24;
+  return image;
+}
+
+ImageView n3dsTileLightMapView(WorldRenderData const& renderData) {
+  static uint8_t lightPixels[N3dsLightMapMaxWidth * N3dsLightMapMaxHeight * 3];
+
+  size_t width = min(renderData.tiles.size(0), N3dsLightMapMaxWidth);
+  size_t height = min(renderData.tiles.size(1), N3dsLightMapMaxHeight);
+  for (size_t y = 0; y < height; ++y) {
+    for (size_t x = 0; x < width; ++x) {
+      auto const& tile = renderData.tiles(x, y);
+      size_t index = (y * width + x) * 3;
+      lightPixels[index + 0] = tile.n3dsLightRed;
+      lightPixels[index + 1] = tile.n3dsLightGreen;
+      lightPixels[index + 2] = tile.n3dsLightBlue;
+    }
+  }
+
+  ImageView image;
+  image.size = Vec2U((unsigned)width, (unsigned)height);
+  image.data = lightPixels;
+  image.format = PixelFormat::RGB24;
+  return image;
+}
+}
+#endif
+
 WorldPainter::WorldPainter() {
   m_assets = Root::singleton().assets();
 
@@ -204,6 +242,21 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
 
   m_renderer->flush();
 
+#ifdef STAR_PLATFORM_N3DS
+  ImageView n3dsLightMap = renderData.isFullbright ? n3dsWhiteLightMapView() : n3dsTileLightMapView(renderData);
+  bool n3dsLightMapEnabled = !renderData.isFullbright && !n3dsLightMap.empty();
+  m_renderer->setEffectParameter("lightMapEnabled", n3dsLightMapEnabled);
+  m_renderer->setEffectTexture("lightMap", n3dsLightMapEnabled ? n3dsLightMap : n3dsWhiteLightMapView());
+  m_renderer->setEffectParameter("lightMapMultiplier", n3dsLightMapEnabled ? m_assets->json("/rendering.config:lightMapMultiplier").toFloat() : 1.0f);
+  m_renderer->setEffectParameter("lightMapScale", Vec2F::filled(TilePixels * m_camera.pixelRatio()));
+  m_renderer->setEffectParameter("lightMapOffset", m_camera.worldToScreen(Vec2F(renderData.lightMinPosition)));
+
+  static bool loggedN3dsCompactLighting = false;
+  if (!loggedN3dsCompactLighting) {
+    Logger::info("N3DS WorldPainter: compact tile light map enabled={} size={}x{}", n3dsLightMapEnabled, n3dsLightMap.size[0], n3dsLightMap.size[1]);
+    loggedN3dsCompactLighting = true;
+  }
+#else
   bool lightMapUpdated = lightWaiter ? lightWaiter() : false;
   if (!lightMapUpdated && !renderData.isFullbright && !renderData.lightMap.empty())
     lightMapUpdated = true;
@@ -221,6 +274,7 @@ void WorldPainter::render(WorldRenderData& renderData, function<bool()> lightWai
     m_renderer->setEffectParameter("lightMapScale", Vec2F::filled(TilePixels * m_camera.pixelRatio()));
     m_renderer->setEffectParameter("lightMapOffset", m_camera.worldToScreen(Vec2F(renderData.lightMinPosition)));
   }
+#endif
 
   // Parallax layers
 

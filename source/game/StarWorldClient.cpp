@@ -54,6 +54,13 @@ static Vec3F n3dsClampLight(Vec3F light) {
   return light;
 }
 
+static void n3dsStoreRenderTileLight(RenderTile& renderTile, Vec3F light) {
+  light = n3dsClampLight(light);
+  renderTile.n3dsLightRed = floatToByte(min(light[0], 1.0f), true);
+  renderTile.n3dsLightGreen = floatToByte(min(light[1], 1.0f), true);
+  renderTile.n3dsLightBlue = floatToByte(min(light[2], 1.0f), true);
+}
+
 static bool n3dsValidMaterial(MaterialId material) {
   return material != EmptyMaterialId && material != NullMaterialId;
 }
@@ -855,7 +862,6 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
     Vec3F n3dsEnvironmentLight = m_sky ? m_sky->environmentLight().toRgbF() : Vec3F::filled(0.8f);
     n3dsEnvironmentLight = n3dsClampLight(n3dsEnvironmentLight);
     renderData.lightMinPosition = tileRange.min();
-    renderData.lightMap = Lightmap((unsigned)tileRange.width(), (unsigned)tileRange.height());
 #endif
 
     m_tileArray->tileEachTo(renderData.tiles, tileRange, [&](RenderTile& renderTile, Vec2I const& tilePosition, ClientTile const& clientTile) {
@@ -893,8 +899,7 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
       if (clientTile.liquid.liquid != EmptyLiquidId && clientTile.liquid.level > 0.0f)
         light += n3dsLiquidRadiantLight(clientTile.liquid);
 
-      Vec2I lightPosition = tilePosition - renderData.lightMinPosition;
-      renderData.lightMap.set((unsigned)lightPosition[0], (unsigned)lightPosition[1], n3dsClampLight(light));
+      n3dsStoreRenderTileLight(renderTile, light);
 #endif
     });
 
@@ -1051,7 +1056,7 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
 
   renderData.isFullbright = m_fullBright;
 #ifdef STAR_PLATFORM_N3DS
-  renderData.isFullbright = renderData.lightMap.empty();
+  renderData.isFullbright = renderData.tiles.size(0) == 0 || renderData.tiles.size(1) == 0;
   static bool loggedN3dsRenderDataReady = false;
   if (!loggedN3dsRenderDataReady) {
     size_t visibleTileCount = 0;

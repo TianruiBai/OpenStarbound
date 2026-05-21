@@ -293,6 +293,12 @@ void ClientApplication::applicationInit(ApplicationControllerPtr appController) 
   AudioFormat audioFormat = appController->enableAudio();
   m_mainMixer = make_shared<MainMixer>(audioFormat.sampleRate, audioFormat.channels);
   m_mainMixer->setVolume(0.5);
+
+#ifdef STAR_PLATFORM_N3DS
+  m_renderData.tiles.setSize({40, 28});
+  m_renderData.clear();
+  Logger::info("N3DS render data tile buffer prewarmed");
+#endif
   
   m_worldPainter = make_shared<WorldPainter>();
   m_guiContext = make_shared<GuiContext>(m_mainMixer->mixer(), appController);

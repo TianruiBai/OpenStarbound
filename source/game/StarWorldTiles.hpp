@@ -263,6 +263,12 @@ struct RenderTile {
   LiquidId liquidId;
   uint8_t liquidLevel;
 
+#ifdef STAR_PLATFORM_N3DS
+  uint8_t n3dsLightRed;
+  uint8_t n3dsLightGreen;
+  uint8_t n3dsLightBlue;
+#endif
+
   template <typename Hasher>
   void hashPushTerrain(Hasher& hasher) const;
 

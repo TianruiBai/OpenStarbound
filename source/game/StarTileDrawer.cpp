@@ -26,6 +26,11 @@ RenderTile TileDrawer::DefaultRenderTile{
     0,
     EmptyLiquidId,
     0
+  #ifdef STAR_PLATFORM_N3DS
+    ,255,
+    255,
+    255
+  #endif
 };
 
 TileDrawer* TileDrawer::s_singleton;
