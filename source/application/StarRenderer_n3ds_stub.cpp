@@ -5,6 +5,7 @@
 #include "StarRenderer_n3ds_stub.hpp"
 #include "StarLogging.hpp"
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -53,6 +54,7 @@ constexpr int N3dsBottomScreenWidth = 320;
 constexpr int N3dsBottomScreenHeight = 240;
 constexpr unsigned N3dsMaxTextureExtent = 1024;
 constexpr size_t N3dsTextureUploadBudget = 6 * 1024 * 1024;
+constexpr size_t N3dsMaxFrameSubTextures = N3dsMaxQueuedPrimitives + 64;
 constexpr bool N3dsDrawTopDiagnostics = false;
 
 struct N3dsLightState {
@@ -65,6 +67,16 @@ struct N3dsLightState {
 };
 
 N3dsLightState sN3dsLightState;
+std::array<Tex3DS_SubTexture, N3dsMaxFrameSubTextures> sN3dsFrameSubTextures;
+size_t sN3dsFrameSubTextureCount = 0;
+
+Tex3DS_SubTexture const* retainN3dsFrameSubTexture(Tex3DS_SubTexture const& subTexture) {
+  if (sN3dsFrameSubTextureCount >= sN3dsFrameSubTextures.size())
+    return nullptr;
+
+  sN3dsFrameSubTextures[sN3dsFrameSubTextureCount] = subTexture;
+  return &sN3dsFrameSubTextures[sN3dsFrameSubTextureCount++];
+}
 
 u32 toC2dColor(Vec4B const& color) {
   return C2D_Color32(color[0], color[1], color[2], color[3]);
@@ -459,7 +471,7 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
 }
 
 void applyScissorRect(Maybe<RectI> const& scissorRect) {
-  if (!scissorRect) {
+  if (!scissorRect || (scissorRect->xMin() <= 0 && scissorRect->yMin() <= 0 && scissorRect->xMax() >= N3dsTopScreenWidth && scissorRect->yMax() >= N3dsTopScreenHeight)) {
     C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
     return;
   }
@@ -564,8 +576,8 @@ public:
     subTexture.height = static_cast<u16>(std::lround(top - bottom));
     subTexture.left = left / static_cast<float>(m_storageWidth);
     subTexture.right = right / static_cast<float>(m_storageWidth);
-    subTexture.bottom = 1.0f - (maxTextureY - bottom) / static_cast<float>(m_storageHeight);
-    subTexture.top = 1.0f - (maxTextureY - top) / static_cast<float>(m_storageHeight);
+    subTexture.bottom = 1.0f - (static_cast<float>(m_size[1]) - bottom) / static_cast<float>(m_storageHeight);
+    subTexture.top = 1.0f - (static_cast<float>(m_size[1]) - top) / static_cast<float>(m_storageHeight);
     image = C2D_Image{const_cast<C3D_Tex*>(&m_texture), &subTexture};
     return true;
   }
@@ -625,8 +637,8 @@ private:
     m_subTexture.height = static_cast<u16>(image.height());
     m_subTexture.left = 0.0f;
     m_subTexture.right = static_cast<float>(image.width()) / static_cast<float>(storageWidth);
-    m_subTexture.bottom = 1.0f - static_cast<float>(image.height()) / static_cast<float>(storageHeight);
     m_subTexture.top = 1.0f;
+    m_subTexture.bottom = 1.0f - static_cast<float>(image.height()) / static_cast<float>(storageHeight);
     m_storageWidth = storageWidth;
     m_storageHeight = storageHeight;
     m_textureBytes = textureBytes;
@@ -717,6 +729,11 @@ bool drawTexturedQuad(RenderQuad const& quad) {
   if (!texture->imageForQuad(quad, image, subTexture))
     return false;
 
+  auto retainedSubTexture = retainN3dsFrameSubTexture(subTexture);
+  if (!retainedSubTexture)
+    return false;
+  image.subtex = retainedSubTexture;
+
   C2D_DrawParams params{};
   if (isAxisAlignedQuad(quad)) {
     float minX = std::min(std::min(quad.a.screenCoordinate[0], quad.b.screenCoordinate[0]), std::min(quad.c.screenCoordinate[0], quad.d.screenCoordinate[0]));
@@ -766,6 +783,9 @@ void drawPrimitive(RenderPrimitive const& primitive, C3D_RenderTarget* target, F
       ++stats.texturedQuads;
       return;
     }
+
+    if (quad->texture)
+      return;
 
     drawUntexturedTriangle(quad->a, quad->b, quad->c);
     drawUntexturedTriangle(quad->a, quad->c, quad->d);
@@ -978,6 +998,7 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     auto* topTarget = static_cast<C3D_RenderTarget*>(m_topTarget);
     auto* bottomTarget = static_cast<C3D_RenderTarget*>(m_bottomTarget);
 
+    sN3dsFrameSubTextureCount = 0;
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
     FrameReplayStats frameStats;
     frameStats.batchCount = m_primitiveBatches.size();
@@ -1013,6 +1034,7 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     }
 
     C3D_FrameEnd(0);
+    sN3dsFrameSubTextureCount = 0;
     ++m_frameCounter;
   }
 #endif

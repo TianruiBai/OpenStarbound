@@ -1306,8 +1306,30 @@ void ClientApplication::updateModsWarning(float) {
 
 void ClientApplication::updateSplash(float dt) {
   m_cinematicOverlay->update(dt);
+#ifdef STAR_PLATFORM_N3DS
+  static float n3dsSplashReadyTimer = 0.0f;
+  if (m_rootLoader.isRunning()) {
+    n3dsSplashReadyTimer = 0.0f;
+    return;
+  }
+
+  bool cinematicReady = m_cinematicOverlay->completable() || m_cinematicOverlay->completed();
+  if (!cinematicReady)
+    n3dsSplashReadyTimer += dt;
+
+  constexpr float N3dsSplashReadyTimeout = 12.0f;
+  if (cinematicReady || n3dsSplashReadyTimer >= N3dsSplashReadyTimeout) {
+    if (!cinematicReady) {
+      Logger::warn("N3DS Splash: advancing after {:.2f}s without cinematic completion marker", n3dsSplashReadyTimer);
+      m_cinematicOverlay->stop();
+    }
+    n3dsSplashReadyTimer = 0.0f;
+    changeState(MainAppState::Title);
+  }
+#else
   if (!m_rootLoader.isRunning() && (m_cinematicOverlay->completable() || m_cinematicOverlay->completed()))
     changeState(MainAppState::Title);
+#endif
 }
 
 void ClientApplication::updateError(float) {

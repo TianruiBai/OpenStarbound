@@ -49,9 +49,7 @@ Vec2U n3dsScaledFrameSize(Vec2U frameSize) {
 }
 
 Vec2U n3dsScaledImageSize(String const& assetPath, Vec2U imageSize) {
-  unsigned maxDecodedImageExtent = 128;
-  if (assetPath.beginsWith("/interface/title/") && imageSize[0] > 512)
-    maxDecodedImageExtent = 512;
+  unsigned maxDecodedImageExtent = assetPath.beginsWith("/interface/title/") ? 256 : 128;
   unsigned maxExtent = std::max(imageSize[0], imageSize[1]);
   if (maxExtent <= maxDecodedImageExtent)
     return imageSize;

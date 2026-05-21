@@ -18,12 +18,20 @@ local logoScaleDirection = 1
 local logoScaleSpeed = 1
 local terry = false
 
+local function n3dsDecodedImageSize(image)
+  local sourceSize = root.imageSize(image)
+  if sourceSize[1] > 256 then
+    local scale = 256 / sourceSize[1]
+    return {256, math.max(1, math.floor(sourceSize[2] * scale + 0.5))}
+  end
+  return sourceSize
+end
+
 local function fittedBackdropScale(image, scale, window)
   local sourceSize = root.imageSize(image)
-  if assets and assets.n3ds and assets.n3ds() then
+  if (assets and assets.n3ds and assets.n3ds()) or window[1] <= 480 or window[2] <= 300 then
+    sourceSize = n3dsDecodedImageSize(image)
     scale = math.min((window[1] * 0.82) / sourceSize[1], (window[2] * 0.46) / sourceSize[2])
-  elseif window[1] <= 480 or window[2] <= 300 then
-    scale = math.min(scale, (window[1] * 0.82) / sourceSize[1], (window[2] * 0.46) / sourceSize[2])
   end
 
   return scale, vec2.mul(sourceSize, scale)
@@ -59,7 +67,7 @@ end
 function render(data)
   canvas:clear()
   local window = canvas:size()
-  local n3ds = assets and assets.n3ds and assets.n3ds()
+  local n3ds = (assets and assets.n3ds and assets.n3ds()) or window[1] <= 480 or window[2] <= 300
   for i, v in pairs(backdropImages) do
     local offset, image, scale, origin, misc = table.unpack(v)
     origin = origin or {0.5, 1.0}

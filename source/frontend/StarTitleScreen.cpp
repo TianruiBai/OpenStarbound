@@ -106,9 +106,17 @@ void TitleScreen::render() {
   m_renderer->flush();
 #endif
 
+  #ifdef STAR_PLATFORM_N3DS
+  m_backgroundMenu->setPosition(Vec2I());
+  m_backgroundMenu->setSize(Vec2I(m_guiContext->windowInterfaceSize()));
+  m_backgroundMenu->disableScissoring();
+  #endif
   if (auto canvas = m_backgroundMenu->findChild("canvas")) {
     canvas->setPosition(Vec2I());
     canvas->setSize(Vec2I(m_guiContext->windowInterfaceSize()));
+  #ifdef STAR_PLATFORM_N3DS
+    canvas->disableScissoring();
+  #endif
   }
   m_scriptComponent->invoke("render", JsonObject{{"interfaceScale", interfaceScale()}
   });

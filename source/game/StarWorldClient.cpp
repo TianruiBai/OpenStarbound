@@ -43,6 +43,29 @@ static Vec3F n3dsClampLight(Vec3F light) {
 static bool n3dsValidMaterial(MaterialId material) {
   return material != EmptyMaterialId && material != NullMaterialId;
 }
+
+static Vec3F n3dsLiquidRadiantLight(LiquidLevel liquidLevel) {
+  if (liquidLevel.liquid == EmptyLiquidId || liquidLevel.level <= 0.0f)
+    return Vec3F();
+
+  Vec3F radiantLight;
+  switch (liquidLevel.liquid) {
+    case 6:
+      radiantLight = Vec3F(47.0f, 117.0f, 96.0f) / 255.0f;
+      break;
+    case 8:
+    case 17:
+      radiantLight = Vec3F(189.0f, 26.0f, 0.0f) / 255.0f;
+      break;
+    case 11:
+      radiantLight = Vec3F(60.0f, 0.0f, 60.0f) / 255.0f;
+      break;
+    default:
+      return Vec3F();
+  }
+
+  return radiantLight * clamp(liquidLevel.level, 0.0f, 1.0f);
+}
 #endif
 
 WorldClient::WorldClient(PlayerPtr mainPlayer, LuaRootPtr luaRoot) {
@@ -758,7 +781,6 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
   }
 
     auto n3dsMaterialDatabase = Root::singleton().materialDatabase();
-    auto n3dsLiquidsDatabase = Root::singleton().liquidsDatabase();
     Vec3F n3dsEnvironmentLight = m_sky ? m_sky->environmentLight().toRgbF() : Vec3F::filled(0.8f);
     n3dsEnvironmentLight = n3dsClampLight(n3dsEnvironmentLight);
     renderData.lightMinPosition = tileRange.min();
@@ -798,7 +820,7 @@ void WorldClient::render(WorldRenderData& renderData, unsigned bufferTiles) {
         light += n3dsMaterialDatabase->radiantLight(clientTile.background, clientTile.backgroundMod) * 0.65f;
 
       if (clientTile.liquid.liquid != EmptyLiquidId && clientTile.liquid.level > 0.0f)
-        light += n3dsLiquidsDatabase->radiantLight(clientTile.liquid) * clamp(clientTile.liquid.level, 0.0f, 1.0f);
+        light += n3dsLiquidRadiantLight(clientTile.liquid);
 
       Vec2I lightPosition = tilePosition - renderData.lightMinPosition;
       renderData.lightMap.set((unsigned)lightPosition[0], (unsigned)lightPosition[1], n3dsClampLight(light));
