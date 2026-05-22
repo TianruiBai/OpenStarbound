@@ -364,10 +364,96 @@ Assets::Assets(Settings settings, StringList assetSources) {
 
   auto addSource = [&](String const& sourcePath, AssetSourcePtr source) {
     m_assetSourcePaths.add(sourcePath, source);
+
 #ifdef STAR_PLATFORM_N3DS
     size_t descriptorCount = 0;
-#endif
+    bool isPacked = sourcePath.endsWith(".pak");
 
+    // Helper that processes a single file entry (shared between packed
+    // and directory sources).  packedSource is non-null for packed sources
+    // whose index has been released; patch-file reads must use openAt().
+    auto processFile = [&](String const& filename, uint64_t packedOffset, uint64_t packedSize, PackedAssetSource* packedSource) {
+      if (filename.contains(AssetsPatchSuffix, String::CaseInsensitive)) {
+        if (filename.endsWith(AssetsPatchSuffix, String::CaseInsensitive)) {
+          auto targetPatchFile = filename.substr(0, filename.size() - strlen(AssetsPatchSuffix));
+          if (auto p = m_files.ptr(targetPatchFile))
+            p->patchSources.append({filename, source});
+        } else if (filename.endsWith(AssetsLuaPatchSuffix, String::CaseInsensitive)) {
+          auto targetPatchFile = filename.substr(0, filename.size() - strlen(AssetsLuaPatchSuffix));
+          if (auto p = m_files.ptr(targetPatchFile))
+            p->patchSources.append({filename, source});
+        } else if (filename.endsWith(AssetsPatchListSuffix, String::CaseInsensitive)) {
+          ByteArray streamBytes;
+          if (packedSource)
+            streamBytes = packedSource->readAt(packedOffset, packedSize);
+          else
+            streamBytes = source->read(filename);
+          auto stream = std::move(streamBytes);
+          size_t patchIndex = 0;
+          for (auto const& patchPair : inputUtf8Json(stream.begin(), stream.end(), JsonParseType::Top).iterateArray()) {
+            auto patches = patchPair.getArray("patches");
+            for (auto& path : patchPair.getArray("paths")) {
+              if (auto p = m_files.ptr(path.toString())) {
+                for (size_t i = 0; i != patches.size(); ++i) {
+                  auto& patch = patches[i];
+                  if (patch.isType(Json::Type::String))
+                    p->patchSources.append({patch.toString(), source});
+                  else
+                    p->patchSources.append({strf("{}:[{}].patches[{}]", filename, patchIndex, i), source});
+                }
+              }
+            }
+            patchIndex++;
+          }
+        } else {
+          for (int i = 0; i < 10; i++) {
+            if (filename.endsWith(AssetsPatchSuffix + toString(i), String::CaseInsensitive)) {
+              auto targetPatchFile = filename.substr(0, filename.size() - strlen(AssetsPatchSuffix) - 1);
+              if (auto p = m_files.ptr(targetPatchFile))
+                p->patchSources.append({filename, source});
+              break;
+            }
+          }
+        }
+      }
+
+      auto& descriptor = m_files[filename];
+      if (isPacked) {
+        descriptor.packedOffset = packedOffset;
+        descriptor.packedSize = packedSize;
+      }
+      if (!isPacked || !filename.equals(filename.toLower()))
+        descriptor.sourceName = filename;
+      descriptor.source = source;
+      ++descriptorCount;
+      if (descriptorCount % 8192 == 0) {
+        logN3dsAssetMemory(strf("descriptor progress {}", sourcePath));
+      }
+    };
+
+    if (isPacked) {
+      // Collect all entries first, then release the 6.5 MB index, then
+      // build descriptors.  This avoids having both the index HashMap
+      // and the descriptor HashMap in memory simultaneously.
+      auto* packedSource = static_cast<PackedAssetSource*>(source.get());
+      struct PackedEntry { String filename; uint64_t offset; uint64_t size; };
+      List<PackedEntry> entries;
+      entries.reserve(50387);
+      packedSource->forEachAssetPathWithOffset([&](String const& filename, uint64_t offset, uint64_t size) {
+        entries.append(PackedEntry{filename, offset, size});
+      });
+      packedSource->releaseIndex();
+      Logger::info("N3DS assets released packed index for '{}'", sourcePath);
+      logN3dsAssetMemory(strf("after index release {}", sourcePath));
+      for (auto const& entry : entries)
+        processFile(entry.filename, entry.offset, entry.size, packedSource);
+      Logger::info("N3DS assets done processing entries for '{}'", sourcePath);
+    } else {
+      source->forEachAssetPath([&](String const& filename) {
+        processFile(filename, 0, 0, nullptr);
+      });
+    }
+#else
     source->forEachAssetPath([&](String const& filename) {
       if (filename.contains(AssetsPatchSuffix, String::CaseInsensitive)) {
         if (filename.endsWith(AssetsPatchSuffix, String::CaseInsensitive)) {
@@ -409,23 +495,11 @@ Assets::Assets(Settings settings, StringList assetSources) {
       }
 
       auto& descriptor = m_files[filename];
-#ifdef STAR_PLATFORM_N3DS
-  if (!is<PackedAssetSource>(source) || !filename.equals(filename.toLower()))
-    descriptor.sourceName = filename;
-#else
       descriptor.sourceName = filename;
-#endif
       descriptor.source = source;
-#ifndef STAR_PLATFORM_N3DS
       m_filesByExtension[AssetPath::extension(filename).toLower()].insert(filename);
-#else
-  ++descriptorCount;
-  if (descriptorCount % 8192 == 0) {
-    Logger::info("N3DS assets descriptor progress '{}': processed={} files={}", sourcePath, descriptorCount, m_files.size());
-    logN3dsAssetMemory(strf("descriptor progress {}", sourcePath));
-  }
-#endif
     });
+#endif
   };
 
   auto runLoadScripts = [&](String const& groupName, String const& sourcePath, AssetSourcePtr source) {
@@ -1146,8 +1220,15 @@ FramesSpecificationConstPtr Assets::bestFramesSpecification(String const& image)
 }
 
 IODevicePtr Assets::open(String const& path) const {
-  if (auto p = m_files.ptr(path))
+  if (auto p = m_files.ptr(path)) {
+#ifdef STAR_PLATFORM_N3DS
+    if (p->packedOffset != 0 || p->packedSize != 0) {
+      if (auto* packed = dynamic_cast<PackedAssetSource*>(p->source.get()))
+        return packed->openAt(p->packedOffset, p->packedSize, descriptorSourceName(*p, path));
+    }
+#endif
     return p->source->open(descriptorSourceName(*p, path));
+  }
   throw AssetException(strf("No such asset '{}'", path));
 }
 

@@ -24,6 +24,54 @@ void logN3dsPackedAssetMemory(String const& label) {
       info.fordblks,
       info.keepcost);
 }
+
+struct AssetReader : public IODevice {
+  AssetReader(FilePtr file, String path, StreamOffset offset, StreamOffset size)
+    : file(file), path(path), fileOffset(offset), assetSize(size), assetPos(0) {
+    setMode(IOMode::Read);
+  }
+
+  size_t read(char* data, size_t len) override {
+    len = min<StreamOffset>(len, assetSize - assetPos);
+    file->readFullAbsolute(fileOffset + assetPos, data, len);
+    assetPos += len;
+    return len;
+  }
+
+  size_t write(char const*, size_t) override {
+    throw IOException("Assets IODevices are read-only");
+  }
+
+  StreamOffset size() override { return assetSize; }
+  StreamOffset pos() override { return assetPos; }
+
+  String deviceName() const override {
+    return strf("{}:{}", file->deviceName(), path);
+  }
+
+  bool atEnd() override { return assetPos >= assetSize; }
+
+  void seek(StreamOffset p, IOSeek mode) override {
+    if (mode == IOSeek::Absolute)
+      assetPos = p;
+    else if (mode == IOSeek::Relative)
+      assetPos = clamp<StreamOffset>(assetPos + p, 0, assetSize);
+    else
+      assetPos = clamp<StreamOffset>(assetSize - p, 0, assetSize);
+  }
+
+  IODevicePtr clone() override {
+    auto cloned = make_shared<AssetReader>(file, path, fileOffset, assetSize);
+    cloned->assetPos = assetPos;
+    return cloned;
+  }
+
+  FilePtr file;
+  String path;
+  StreamOffset fileOffset;
+  StreamOffset assetSize;
+  StreamOffset assetPos;
+};
 }
 #endif
 
@@ -87,6 +135,23 @@ void PackedAssetSource::build(DirectoryAssetSource& directorySource, String cons
   ds.write(indexStart);
 }
 
+JsonObject PackedAssetSource::readMetadata(String const& filename) {
+  auto packedFile = File::open(filename, IOMode::Read);
+  DataStreamIODevice ds(packedFile);
+  if (ds.readBytes(8) != ByteArray("SBAsset6", 8))
+    throw AssetSourceException("Packed assets file format unrecognized!");
+
+  uint64_t indexStart = ds.read<uint64_t>();
+  ds.seek(indexStart);
+  ByteArray header = ds.readBytes(5);
+  if (header != ByteArray("INDEX", 5))
+    throw AssetSourceException("No index header found!");
+
+  JsonObject metadata;
+  ds.read(metadata);
+  return metadata;
+}
+
 PackedAssetSource::PackedAssetSource(String const& filename) {
   m_packedFile = File::open(filename, IOMode::Read);
 
@@ -108,10 +173,19 @@ PackedAssetSource::PackedAssetSource(String const& filename) {
 #ifdef STAR_PLATFORM_N3DS
   logN3dsPackedAssetMemory("after metadata");
 #endif
-  ds.read(m_index);
 #ifdef STAR_PLATFORM_N3DS
+  Logger::info("PackedAssetSource: reading index for '{}'", filename);
+  logN3dsPackedAssetMemory("before index read");
+  try {
+    ds.read(m_index);
+  } catch (std::exception const& e) {
+    Logger::error("PackedAssetSource: index read failed for '{}': {}", filename, e.what());
+    throw;
+  }
   Logger::info("PackedAssetSource: '{}' index entries={}", filename, m_index.size());
   logN3dsPackedAssetMemory("after index");
+#else
+  ds.read(m_index);
 #endif
 }
 
@@ -127,6 +201,27 @@ void PackedAssetSource::forEachAssetPath(function<void(String const&)> callback)
   for (auto const& entry : m_index)
     callback(entry.first);
 }
+
+#ifdef STAR_PLATFORM_N3DS
+void PackedAssetSource::forEachAssetPathWithOffset(function<void(String const&, uint64_t offset, uint64_t size)> callback) const {
+  for (auto const& entry : m_index)
+    callback(entry.first, entry.second.first, entry.second.second);
+}
+
+void PackedAssetSource::releaseIndex() {
+  m_index.clear();
+}
+
+IODevicePtr PackedAssetSource::openAt(uint64_t offset, uint64_t size, String const& path) {
+  return make_shared<AssetReader>(m_packedFile, path, offset, size);
+}
+
+ByteArray PackedAssetSource::readAt(uint64_t offset, uint64_t size) {
+  ByteArray data(size, 0);
+  m_packedFile->readFullAbsolute(offset, data.ptr(), size);
+  return data;
+}
+#endif
 
 IODevicePtr PackedAssetSource::open(String const& path) {
   struct AssetReader : public IODevice {

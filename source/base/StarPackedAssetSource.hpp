@@ -25,11 +25,26 @@ public:
   static void build(DirectoryAssetSource& directorySource, String const& targetPackedFile,
       StringList const& extensionSorting = {}, BuildProgressCallback progressCallback = {});
 
+  // Read only the metadata from a packed asset file without loading the full
+  // asset index.  Useful for scanning / discovery when the index is not needed.
+  static JsonObject readMetadata(String const& packedFileName);
+
   PackedAssetSource(String const& packedFileName);
 
   JsonObject metadata() const override;
   StringList assetPaths() const override;
   void forEachAssetPath(function<void(String const&)> callback) const override;
+#ifdef STAR_PLATFORM_N3DS
+  // Like forEachAssetPath but also provides the file offset and size within
+  // the packed archive, allowing the index to be freed after descriptors are
+  // built.
+  void forEachAssetPathWithOffset(function<void(String const&, uint64_t offset, uint64_t size)> callback) const;
+  // Free the in-memory index to save heap.  After calling this, open() and
+  // read() will no longer work — use openAt(offset, size) instead.
+  void releaseIndex();
+  IODevicePtr openAt(uint64_t offset, uint64_t size, String const& path = String());
+  ByteArray readAt(uint64_t offset, uint64_t size);
+#endif
 
   IODevicePtr open(String const& path) override;
   ByteArray read(String const& path) override;

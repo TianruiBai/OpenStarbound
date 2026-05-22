@@ -42,6 +42,7 @@ _deps
 *.log
 /citra-windows-msvc-20240303-0ff3440/
 .vscode/
+citra-captures/*
 
 # Local History for Visual Studio Code
 .history/

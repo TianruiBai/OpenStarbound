@@ -157,6 +157,13 @@ public:
     AssetSourcePtr source;
     // List of source names and sources for patches to this file.
     List<pair<String, AssetSourcePtr>> patchSources;
+#ifdef STAR_PLATFORM_N3DS
+    // File offset and size within the packed source (0 if not a packed source).
+    // These are populated during asset loading and allow the packed index to
+    // be freed to save memory.
+    uint64_t packedOffset = 0;
+    uint64_t packedSize = 0;
+#endif
   };
 
   Assets(Settings settings, StringList assetSources);

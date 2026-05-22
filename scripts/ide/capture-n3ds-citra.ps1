@@ -7,6 +7,7 @@ param(
   [string]$ThreeDsxPath = "build\citra-repack\starbound.3dsx",
   [string]$MakeromPath = "makerom-bin\makerom.exe",
   [string]$CxiPath = "build\citra-repack\starbound.cxi",
+  [Alias("OutputDir")]
   [string]$CaptureDir = "build\citra-captures\n3ds-current",
   [string]$BasePakPath = "",
   [int]$WindowWidth = 1280,
@@ -40,6 +41,36 @@ $makerom = Resolve-RepoPath $MakeromPath
 $cxi = Resolve-RepoPath $CxiPath
 $capture = Resolve-RepoPath $CaptureDir
 $usingDefaultAssetsRomfs = $RomfsPath -eq "assets"
+$stripTool = $null
+if ($env:DEVKITARM) {
+  $candidateStripTool = Join-Path $env:DEVKITARM "bin\arm-none-eabi-strip.exe"
+  if (Test-Path $candidateStripTool) {
+    $stripTool = $candidateStripTool
+  }
+}
+if (!$stripTool) {
+  $defaultStripTool = "C:\devkitPro\devkitARM\bin\arm-none-eabi-strip.exe"
+  if (Test-Path $defaultStripTool) {
+    $stripTool = $defaultStripTool
+  }
+}
+
+function New-RepackElf([string]$sourceElf, [string]$outputPath) {
+  if (!$stripTool) {
+    Write-Warning "arm-none-eabi-strip not found; repack will use the original ELF and may fail on large debug images."
+    return $sourceElf
+  }
+
+  New-Item -ItemType Directory -Path (Split-Path $outputPath -Parent) -Force | Out-Null
+  Copy-Item -LiteralPath $sourceElf -Destination $outputPath -Force
+
+  & $stripTool --strip-debug $outputPath
+  if ($LASTEXITCODE -ne 0) { throw "arm-none-eabi-strip --strip-debug failed with exit code $LASTEXITCODE" }
+
+  $strippedSize = (Get-Item -LiteralPath $outputPath).Length
+  Write-Host "Using repack ELF: $outputPath ($strippedSize bytes)"
+  return $outputPath
+}
 
 if ($BasePakPath) {
   $basePak = (Resolve-Path -LiteralPath $BasePakPath).Path
@@ -85,6 +116,7 @@ if (!$NoRepack -and $UseCxi) {
   if (!(Test-Path $elf)) { throw "N3DS ELF not found: $elf" }
   if (!(Test-Path $romfs)) { throw "RomFS path not found: $romfs" }
   New-Item -ItemType Directory -Path (Split-Path $cxi -Parent) -Force | Out-Null
+  $repackElf = New-RepackElf $elf (Join-Path (Split-Path $cxi -Parent) "starbound-stripdebug.elf")
 
   $romfsRoot = $romfs
   $repoPrefix = $repoRoot.Path.TrimEnd('\') + '\'
@@ -133,7 +165,7 @@ AccessControlInfo:
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($rsfPath, $rsf, $utf8NoBom)
 
-  & $makerom -f cxi -target t -rsf $rsfPath -elf $elf -desc app:4 -o $cxi
+  & $makerom -f cxi -target t -rsf $rsfPath -elf $repackElf -desc app:4 -o $cxi
   if ($LASTEXITCODE -ne 0) { throw "makerom failed with exit code $LASTEXITCODE" }
 } elseif (!$NoRepack) {
   if (!(Test-Path $threeDsxTool)) { throw "3dsxtool not found: $threeDsxTool" }
@@ -141,7 +173,8 @@ AccessControlInfo:
   if (!(Test-Path $smdh)) { throw "SMDH not found: $smdh" }
   if (!(Test-Path $romfs)) { throw "RomFS path not found: $romfs" }
   New-Item -ItemType Directory -Path (Split-Path $threeDsx -Parent) -Force | Out-Null
-  & $threeDsxTool $elf $threeDsx "--smdh=$smdh" "--romfs=$romfs"
+  $repackElf = New-RepackElf $elf (Join-Path (Split-Path $threeDsx -Parent) "starbound-stripdebug.elf")
+  & $threeDsxTool $repackElf $threeDsx "--smdh=$smdh" "--romfs=$romfs"
   if ($LASTEXITCODE -ne 0) { throw "3dsxtool failed with exit code $LASTEXITCODE" }
 }
 

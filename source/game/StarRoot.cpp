@@ -641,14 +641,21 @@ StringList Root::scanForAssetSources(StringList const& directories, StringList c
     else if (isDirectory)
       source = make_shared<DirectoryAssetSource>(sourcePath);
     else if (sourcePath.endsWith(".pak"))
-      source = make_shared<PackedAssetSource>(sourcePath);
+      ; // metadata read separately below to avoid loading full index during scan
     else
       Logger::warn("Root: Unrecognized file in asset directory '{}', skipping", name);
 
-    if (!source)
+    JsonObject metadata;
+    if (source) {
+      metadata = source->metadata();
+    } else if (sourcePath.endsWith(".pak")) {
+#ifdef STAR_PLATFORM_N3DS
+      Logger::info("N3DS Root: scanning pak metadata only for '{}'", sourcePath);
+#endif
+      metadata = PackedAssetSource::readMetadata(sourcePath);
+    } else {
       return false;
-
-    auto metadata = source->metadata();
+    }
 
     auto assetSource = make_shared<AssetSource>();
     assetSource->path = sourcePath;
@@ -665,14 +672,32 @@ StringList Root::scanForAssetSources(StringList const& directories, StringList c
 
     if (assetSource->name) {
       if (auto oldAssetSource = namedSources.value(*assetSource->name)) {
+#ifdef STAR_PLATFORM_N3DS
+        // On N3DS, prefer SDMC sources over romfs to avoid Citra romfs
+        // large-file read issues with packed.pak.
+        bool newIsRomfs = sourcePath.beginsWith("romfs:");
+        bool oldIsSdmc = oldAssetSource->path.beginsWith("sdmc:");
+        bool override = oldAssetSource->priority <= assetSource->priority;
+        if (oldIsSdmc && newIsRomfs && oldAssetSource->priority == assetSource->priority)
+          override = false;
+        if (override) {
+          Logger::warn("Root: Overriding duplicate asset source '{}' named '{}' with higher or equal priority source '{}'",
+              oldAssetSource->path, *assetSource->name, assetSource->path);
+          *oldAssetSource = *assetSource;
+        } else {
+          Logger::warn("Root: Skipping duplicate asset source '{}' named '{}', previous source '{}' has higher or equal priority",
+              assetSource->path, *assetSource->name, oldAssetSource->path);
+        }
+#else
         if (oldAssetSource->priority <= assetSource->priority) {
-          Logger::warn("Root: Overriding duplicate asset source '{}' named '{}' with higher or equal priority source '{}",
+          Logger::warn("Root: Overriding duplicate asset source '{}' named '{}' with higher or equal priority source '{}'",
               oldAssetSource->path, *assetSource->name, assetSource->path);
           *oldAssetSource = *assetSource;
         } else {
           Logger::warn("Root: Skipping duplicate asset source '{}' named '{}', previous source '{}' has higher priority",
               assetSource->path, *assetSource->name, oldAssetSource->priority);
         }
+#endif
       } else {
         namedSources[*assetSource->name] = assetSource;
         assetSources.append(std::move(assetSource));

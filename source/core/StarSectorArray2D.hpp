@@ -1,5 +1,8 @@
 #pragma once
 
+#include <new>
+
+#include "StarBlockAllocator.hpp"
 #include "StarMultiArray.hpp"
 #include "StarSet.hpp"
 #include "StarVector.hpp"
@@ -32,7 +35,44 @@ public:
     Element const& operator()(size_t x, size_t y) const;
     Element& operator()(size_t x, size_t y);
 
+#ifdef STAR_PLATFORM_N3DS
+    static void* operator new(size_t size) {
+      starAssert(size == sizeof(Array));
+      return allocator().allocate(1);
+    }
+
+    static void operator delete(void* ptr) noexcept {
+      if (ptr)
+        allocator().deallocate(static_cast<Array*>(ptr), 1);
+    }
+
+    static void operator delete(void* ptr, size_t) noexcept {
+      if (ptr)
+        allocator().deallocate(static_cast<Array*>(ptr), 1);
+    }
+
+    static void* operator new(size_t size, std::nothrow_t const&) noexcept {
+      try {
+        return operator new(size);
+      } catch (...) {
+        return nullptr;
+      }
+    }
+
+    static void operator delete(void* ptr, std::nothrow_t const&) noexcept {
+      operator delete(ptr);
+    }
+#endif
+
     Element elements[SectorSize * SectorSize];
+
+#ifdef STAR_PLATFORM_N3DS
+  private:
+    static BlockAllocator<Array, 64>& allocator() {
+      static BlockAllocator<Array, 64> s_allocator;
+      return s_allocator;
+    }
+#endif
   };
   typedef unique_ptr<Array> ArrayPtr;
 
