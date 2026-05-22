@@ -795,7 +795,7 @@ public:
 
   // Rate telemetry: PLACEHOLDER, return target rates as measured rates.
   float updateRate() const override { return m_targetUpdateRate; }      // PLACEHOLDER
-  float renderFps() const override { return m_targetRenderRate.value(60.0f); } // PLACEHOLDER
+  float renderFps() const override { return m_targetRenderRate.value(30.0f); } // N3DS: locked 30 fps target
   float getDisplayScale() const override { return 1.0f; }
 
   // Platform services use existing stub implementations.
@@ -827,7 +827,7 @@ public:
 
 private:
   float m_targetUpdateRate = 60.0f;
-  Maybe<float> m_targetRenderRate;
+  Maybe<float> m_targetRenderRate = 30.0f; // N3DS: default 30 fps
   float m_updateTrackWindow = 1.0f;
   unsigned m_maxFrameSkip = 5;
   bool m_quit = false;

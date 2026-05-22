@@ -630,38 +630,45 @@ bool Assets::assetExists(String const& path) const {
 
 #ifdef STAR_PLATFORM_N3DS
 bool Assets::n3dsTryBuildLazyDescriptor(String const& path) const {
+  // Packed asset indices store paths without a leading '/' and in lowercase.
+  // Normalise then lowercase before the O(1) case-sensitive HashMap lookup.
+  String lookupPath = path;
+  if (lookupPath.beginsWith("/"))
+    lookupPath = lookupPath.substr(1);
+  lookupPath = lookupPath.toLower();
+
+  // Cache of paths known to be missing from packed sources.
+  static CaseInsensitiveStringSet sN3dsLazyMissCache;
+
   for (auto const& source : m_n3dsLazyPackedSources) {
+    // Skip if we already know this path doesn't exist in any packed source
+    if (sN3dsLazyMissCache.contains(lookupPath))
+      continue;
+
     auto* packed = static_cast<PackedAssetSource*>(source.get());
     uint64_t offset = 0;
     uint64_t size = 0;
     String originalName;
-    // Try exact-case lookup first (fast, O(1))
-    if (packed->findOffset(path, offset, size, originalName)) {
+
+    // O(1) lookup with normalised path
+    if (packed->findOffset(lookupPath, offset, size, originalName)) {
       auto& descriptor = m_files[path];
       descriptor.source = source;
       descriptor.packedOffset = offset;
       descriptor.packedSize = size;
-      if (!originalName.equals(path))
+      if (!originalName.equals(lookupPath))
         descriptor.sourceName = originalName;
       return true;
     }
-    // Fallback: case-insensitive search. The packed index stores original
-    // filenames; asset lookups may use any case.  Walk all entries to find
-    // a case-insensitive match.  (Only runs on first access of each asset.)
-    auto lowerPath = path.toLower();
-    packed->forEachAssetPathWithOffset([&](String const& filename, uint64_t o, uint64_t s) {
-      if (offset == 0 && filename.toLower() == lowerPath) {
-        offset = o; size = s; originalName = filename;
-      }
-    });
-    if (offset != 0) {
-      auto& descriptor = m_files[path];
-      descriptor.source = source;
-      descriptor.sourceName = originalName;
-      descriptor.packedOffset = offset;
-      descriptor.packedSize = size;
-      return true;
-    }
+  }
+
+  // Cache the miss
+  sN3dsLazyMissCache.add(lookupPath);
+
+  static unsigned sN3dsLazyMissLogCount = 0;
+  if (sN3dsLazyMissLogCount < 20) {
+    Logger::warn("N3DS lazy descriptor miss: '{}' not found in packed sources", path);
+    ++sN3dsLazyMissLogCount;
   }
   return false;
 }

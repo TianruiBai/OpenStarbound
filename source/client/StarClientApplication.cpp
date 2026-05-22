@@ -545,8 +545,31 @@ void ClientApplication::render() {
 
   } else if (m_state == MainAppState::Title) {
 #ifdef STAR_PLATFORM_N3DS
-    if (auto n3dsRenderer = dynamic_cast<N3dsStubRenderer*>(renderer.get()))
+    if (auto n3dsRenderer = dynamic_cast<N3dsStubRenderer*>(renderer.get())) {
+      // Preload bottom-screen textures from packed assets so the bottom
+      // screen can draw real images.  Missing textures are OK — the renderer
+      // falls back to coloured rectangles.
+      static bool n3dsBottomTexturesLoaded = false;
+      if (!n3dsBottomTexturesLoaded) {
+        n3dsBottomTexturesLoaded = true;
+        auto loadPng = [](String const& path) -> Image {
+          try { return Image::readPng(Root::singleton().assets()->openFile(path)); }
+          catch (...) { return {}; }
+        };
+        StringMap<Image> images;
+        // Title menu buttons
+        images["singleplayer"] = loadPng("/interface/title/singleplayer.png");
+        images["multiplayer"]   = loadPng("/interface/title/multiplayer.png");
+        images["options"]       = loadPng("/interface/title/options.png");
+        images["exit"]          = loadPng("/interface/title/quit.png");
+        // HUD icons
+        images["heart"]  = loadPng("/interface/inventory/heart.png");
+        images["energy"] = loadPng("/interface/inventory/lightning.png");
+        images["hotbar"] = loadPng("/interface/actionbar/actionbarbg.png");
+        n3dsRenderer->preloadN3dsBottomTextures(images);
+      }
       n3dsRenderer->setHandheldTitleMenuState(m_titleScreen && m_titleScreen->currentState() == TitleState::Main);
+    }
 #endif
     if (m_titleScreen)
       m_titleScreen->render();

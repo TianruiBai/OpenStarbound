@@ -117,16 +117,21 @@ R"JSON(
   )JSON");
 
 #ifdef STAR_PLATFORM_N3DS
-// Phase-1 N3DS workaround: avoid early SD archive path handling on Citra by
-// bootstrapping from an embedded config and using ROMFS as initial storage.
+// N3DS boot configuration: assets and mods live on the SD card.
+// The romfs:/ embedded filesystem carries only the opensb base mod and
+// sbinit.config; all user-facing asset directories resolve to SDMC.
 Json const N3dsBootConfiguration = Json::parseJson(R"JSON(
     {
       "assetDirectories" : [
         "sdmc:/OpenStarbound/assets",
-        "romfs:/"
+        "sdmc:/OpenStarbound/mods"
       ],
 
-      "storageDirectory" : "sdmc:/OpenStarbound/storage",
+      "assetSources" : [
+        "romfs:/opensb"
+      ],
+
+      "storageDirectory" : "sdmc:/OpenStarbound/",
 
       "assetsSettings" : {
         "workerPoolSize" : 0,

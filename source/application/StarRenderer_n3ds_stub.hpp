@@ -69,6 +69,22 @@ public:
   void setHandheldOverlayState(N3dsHandheldOverlayState overlayState);
   void setHandheldGameplayState(bool inWorld, float healthFill, float energyFill, float breathFill);
   void setHandheldTitleMenuState(bool active);
+  // Pre-load bottom-screen textures from the Starbound-packed assets so the
+  // bottom screen can draw real images instead of coloured rectangles.
+  // Caller provides Images keyed by logical name:
+  //   "singleplayer", "multiplayer", "options", "exit" — title menu buttons
+  //   "heart", "energy" — HUD status icons
+  //   "hotbar" — action bar background
+  // Pass an empty Image for any unavailable texture; drawing falls back to
+  // coloured shapes.
+  void preloadN3dsBottomTextures(StringMap<Image> const& images);
+
+  // Legacy entry point kept for compatibility; delegates to preloadN3dsBottomTextures.
+  void preloadN3dsTitleMenuTextures(
+      Image const& imgSinglePlayer,
+      Image const& imgMultiplayer,
+      Image const& imgOptions,
+      Image const& imgExit);
 
 private:
   struct PrimitiveBatch {

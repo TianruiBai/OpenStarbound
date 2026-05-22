@@ -46,9 +46,8 @@ public:
   ByteArray readAt(uint64_t offset, uint64_t size);
   // Fast O(1) lookup of offset+size by asset path. Returns true and sets
   // offset/size/originalName if found, false otherwise.  Used for lazy
-  // descriptor building.  The lookup is case-sensitive; for case-insensitive
-  // matching, the caller should first try the exact case and fall back to
-  // iterating assetPaths().
+  // descriptor building.  The lookup expects the path to be pre-normalised
+  // (no leading '/', lowercased) to match the packed index format.
   bool findOffset(String const& path, uint64_t& offset, uint64_t& size, String& originalName) const;
 #endif
 

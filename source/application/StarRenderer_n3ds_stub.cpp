@@ -4,6 +4,7 @@
 
 #include "StarRenderer_n3ds_stub.hpp"
 #include "StarLogging.hpp"
+#include "StarImage.hpp"
 
 #include <array>
 #include <algorithm>
@@ -71,6 +72,38 @@ struct N3dsLightState {
 N3dsLightState sN3dsLightState;
 std::array<Tex3DS_SubTexture, N3dsMaxFrameSubTextures> sN3dsFrameSubTextures;
 size_t sN3dsFrameSubTextureCount = 0;
+
+// Pre-loaded bottom-screen textures keyed by logical name:
+//   "singleplayer", "multiplayer", "options", "exit" — title menu buttons
+//   "heart", "energy" — HUD status icons
+//   "hotbar" — action bar background
+struct N3dsCachedTexture {
+  C3D_Tex const* tex = nullptr;
+  Tex3DS_SubTexture sub;
+};
+StringMap<N3dsCachedTexture> sN3dsBottomTextures;
+
+static bool n3dsBottomTextureReady(String const& name) {
+  auto p = sN3dsBottomTextures.ptr(name);
+  return p && p->tex;
+}
+
+static C2D_Image n3dsBottomTextureImage(String const& name) {
+  auto p = sN3dsBottomTextures.ptr(name);
+  if (p && p->tex)
+    return C2D_Image{const_cast<C3D_Tex*>(p->tex), const_cast<Tex3DS_SubTexture*>(&p->sub)};
+  return {};
+}
+
+static void n3dsReleaseBottomTextures() {
+  for (auto& pair : sN3dsBottomTextures) {
+    if (pair.second.tex) {
+      C3D_TexDelete(const_cast<C3D_Tex*>(pair.second.tex));
+      delete pair.second.tex;
+    }
+  }
+  sN3dsBottomTextures.clear();
+}
 
 Tex3DS_SubTexture const* retainN3dsFrameSubTexture(Tex3DS_SubTexture const& subTexture) {
   if (sN3dsFrameSubTextureCount >= sN3dsFrameSubTextures.size())
@@ -376,34 +409,43 @@ void drawBottomTitleMenu(N3dsHandheldOverlayState const& overlayState) {
   drawBottomText("OPENSTARBOUND", 18.0f, 13.0f, 0.62f, C2D_Color32(230, 238, 246, 255));
   drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
 
-  struct MenuItem {
-    char const* label;
-    u32 accent;
-  };
-
-  static const MenuItem MenuItems[] = {
-      {"Single Player", C2D_Color32(255, 214, 82, 255)},
-      {"Multiplayer", C2D_Color32(88, 190, 255, 255)},
-      {"Settings", C2D_Color32(92, 220, 144, 255)},
-      {"Exit", C2D_Color32(238, 82, 92, 255)},
-  };
-
   constexpr float ButtonX = 18.0f;
   constexpr float ButtonY = 58.0f;
   constexpr float ButtonW = 284.0f;
   constexpr float ButtonH = 34.0f;
   constexpr float ButtonGap = 10.0f;
 
+  struct { char const* label; char const* textureKey; u32 accent; } const MenuItems[] = {
+      {"Single Player", "singleplayer", C2D_Color32(255, 214, 82, 255)},
+      {"Multiplayer",   "multiplayer",  C2D_Color32(88, 190, 255, 255)},
+      {"Settings",      "options",      C2D_Color32(92, 220, 144, 255)},
+      {"Exit",          "exit",         C2D_Color32(238, 82, 92, 255)},
+  };
+
   for (unsigned item = 0; item < 4; ++item) {
     float y = ButtonY + item * (ButtonH + ButtonGap);
     bool selected = item == overlayState.selectedTitleMenuItem;
-    u32 base = selected ? C2D_Color32(52, 64, 82, 255) : C2D_Color32(30, 37, 49, 255);
+    u32 bg = selected ? C2D_Color32(52, 64, 82, 255) : C2D_Color32(30, 37, 49, 255);
     u32 border = selected ? C2D_Color32(226, 234, 244, 255) : C2D_Color32(74, 84, 98, 255);
 
     C2D_DrawRectSolid(ButtonX, y, 0.0f, ButtonW, ButtonH, border);
-    C2D_DrawRectSolid(ButtonX + 1.0f, y + 1.0f, 0.0f, ButtonW - 2.0f, ButtonH - 2.0f, base);
-    C2D_DrawRectSolid(ButtonX + 8.0f, y + 8.0f, 0.0f, 5.0f, ButtonH - 16.0f, MenuItems[item].accent);
-    drawBottomText(MenuItems[item].label, ButtonX + 24.0f, y + 8.0f, 0.52f, selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(204, 214, 226, 255));
+    C2D_DrawRectSolid(ButtonX + 1.0f, y + 1.0f, 0.0f, ButtonW - 2.0f, ButtonH - 2.0f, bg);
+
+    auto texImage = n3dsBottomTextureImage(MenuItems[item].textureKey);
+    if (texImage.tex) {
+      float texW = static_cast<float>(texImage.tex->width);
+      float texH = static_cast<float>(texImage.tex->height);
+      float scale = std::min((ButtonH - 8.0f) / texH, 160.0f / texW);
+      float drawW = texW * scale;
+      float drawH = texH * scale;
+      C2D_DrawImageAt(texImage, ButtonX + 12.0f, y + (ButtonH - drawH) * 0.5f, 0.0f, nullptr, scale, scale);
+      drawBottomText(MenuItems[item].label, ButtonX + 12.0f + drawW + 8.0f, y + 8.0f, 0.50f,
+          selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(204, 214, 226, 255));
+    } else {
+      C2D_DrawRectSolid(ButtonX + 8.0f, y + 8.0f, 0.0f, 5.0f, ButtonH - 16.0f, MenuItems[item].accent);
+      drawBottomText(MenuItems[item].label, ButtonX + 24.0f, y + 8.0f, 0.52f,
+          selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(204, 214, 226, 255));
+    }
   }
 
   drawBottomText("A: Select   B: Exit   X: Multi   Y: Settings", 16.0f, 224.0f, 0.34f, C2D_Color32(160, 174, 190, 255));
@@ -421,55 +463,107 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
   }
 
   C2D_TextBufClear(bottomOverlayTextBuffer());
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(178, 232, 248, 255));
-  C2D_DrawCircleSolid(42.0f, 38.0f, 0.0f, 34.0f, C2D_Color32(220, 246, 255, 255));
-  C2D_DrawCircleSolid(104.0f, 26.0f, 0.0f, 28.0f, C2D_Color32(210, 242, 255, 255));
-  C2D_DrawCircleSolid(248.0f, 45.0f, 0.0f, 42.0f, C2D_Color32(222, 247, 255, 255));
-  C2D_DrawRectSolid(0.0f, 198.0f, 0.0f, 320.0f, 42.0f, C2D_Color32(28, 30, 36, 235));
-  C2D_DrawRectSolid(0.0f, 197.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(82, 88, 98, 255));
 
-  drawBottomStatusBar(10.0f, 9.0f, 98.0f, 10.0f, overlayState.healthFill, C2D_Color32(232, 64, 72, 255));
-  drawBottomStatusBar(10.0f, 23.0f, 98.0f, 10.0f, overlayState.energyFill, C2D_Color32(72, 176, 255, 255));
-  drawBottomStatusBar(118.0f, 9.0f, 58.0f, 10.0f, overlayState.breathFill, C2D_Color32(72, 220, 128, 255));
-  drawBottomStatusBar(118.0f, 23.0f, 58.0f, 10.0f, overlayState.circlePadActive ? 1.0f : 0.22f, C2D_Color32(255, 224, 48, 255));
+  // Dark backdrop for the whole bottom screen
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(18, 22, 30, 255));
+
+  // === Top bar: status icons + shoulder buttons ===
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 44.0f, C2D_Color32(24, 28, 38, 235));
+  C2D_DrawRectSolid(0.0f, 44.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(60, 68, 82, 255));
+
+  // Health icon + bar
+  float iconSize = 14.0f;
+  float barWidth = 72.0f;
+  float barHeight = 8.0f;
+  float barStartX = 24.0f;
+  auto heartImg = n3dsBottomTextureImage("heart");
+  auto energyImg = n3dsBottomTextureImage("energy");
+  if (heartImg.tex) {
+    C2D_DrawImageAt(heartImg, 6.0f, 4.0f, 0.0f, nullptr, iconSize / static_cast<float>(heartImg.tex->width), iconSize / static_cast<float>(heartImg.tex->height));
+    C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth, barHeight, C2D_Color32(48, 16, 16, 255));
+    C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth * overlayState.healthFill, barHeight, C2D_Color32(232, 64, 72, 255));
+    C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth * overlayState.healthFill, 3.0f, C2D_Color32(255, 160, 160, 80));
+  } else {
+    drawBottomStatusBar(barStartX, 6.0f, barWidth, barHeight, overlayState.healthFill, C2D_Color32(232, 64, 72, 255));
+  }
+
+  // Energy icon + bar
+  if (energyImg.tex) {
+    C2D_DrawImageAt(energyImg, 6.0f, 22.0f, 0.0f, nullptr, iconSize / static_cast<float>(energyImg.tex->width), iconSize / static_cast<float>(energyImg.tex->height));
+    C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth, barHeight, C2D_Color32(16, 40, 64, 255));
+    C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth * overlayState.energyFill, barHeight, C2D_Color32(72, 176, 255, 255));
+    C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth * overlayState.energyFill, 3.0f, C2D_Color32(160, 220, 255, 80));
+  } else {
+    drawBottomStatusBar(barStartX, 24.0f, barWidth, barHeight, overlayState.energyFill, C2D_Color32(72, 176, 255, 255));
+  }
+
+  // Breath bar (smaller, no icon — shows only when relevant)
+  C2D_DrawRectSolid(110.0f, 6.0f, 0.0f, 42.0f, barHeight, C2D_Color32(16, 48, 32, 255));
+  C2D_DrawRectSolid(110.0f, 6.0f, 0.0f, 42.0f * overlayState.breathFill, barHeight, C2D_Color32(72, 220, 128, 255));
+  C2D_DrawRectSolid(110.0f, 6.0f, 0.0f, 42.0f * overlayState.breathFill, 3.0f, C2D_Color32(160, 255, 200, 80));
+
+  // Movement indicator
+  float active = overlayState.circlePadActive ? 1.0f : 0.22f;
+  C2D_DrawRectSolid(110.0f, 22.0f, 0.0f, 42.0f, barHeight, C2D_Color32(40, 36, 16, 255));
+  C2D_DrawRectSolid(110.0f, 22.0f, 0.0f, 42.0f * active, barHeight, C2D_Color32(255, 224, 48, 255));
+  C2D_DrawRectSolid(110.0f, 22.0f, 0.0f, 42.0f * active, 3.0f, C2D_Color32(255, 244, 160, 80));
+
+  // Startup diagnostic beads (top-right)
   drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
 
+  // Shoulder buttons (right side of top bar)
+  drawBottomRoundButton(198.0f, 22.0f, 7.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
+  drawBottomRoundButton(224.0f, 22.0f, 9.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
+  drawBottomRoundButton(256.0f, 22.0f, 9.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
+  drawBottomRoundButton(288.0f, 22.0f, 7.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
+
+  // === Middle area: tool icons + movement pad + face buttons ===
   for (unsigned icon = 0; icon < 4; ++icon)
-    drawBottomToolIcon(118.0f + icon * 36.0f, 44.0f, icon, icon == overlayState.selectedHotbarSlot % 4);
+    drawBottomToolIcon(60.0f + icon * 40.0f, 72.0f, icon, icon == overlayState.selectedHotbarSlot % 4);
 
   drawBottomMissionCard(overlayState.inWorld);
 
-  drawBottomRoundButton(210.0f, 21.0f, 7.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
-  drawBottomRoundButton(242.0f, 21.0f, 9.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
-  drawBottomRoundButton(276.0f, 21.0f, 9.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
-  drawBottomRoundButton(308.0f, 21.0f, 7.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
+  // Movement pad (left)
+  C2D_DrawRectSolid(10.0f, 100.0f, 0.0f, 96.0f, 80.0f, C2D_Color32(17, 20, 26, 220));
+  drawBottomMovementPad(58.0f, 140.0f, overlayState.circlePadActive, overlayState.dpadActive);
 
-  C2D_DrawRectSolid(14.0f, 110.0f, 0.0f, 112.0f, 70.0f, C2D_Color32(17, 20, 26, 220));
-  drawBottomMovementPad(70.0f, 145.0f, overlayState.circlePadActive, overlayState.dpadActive);
+  // C-Stick indicator
+  C2D_DrawRectSolid(118.0f, 110.0f, 0.0f, 48.0f, 48.0f, C2D_Color32(16, 19, 24, 225));
+  C2D_DrawCircleSolid(142.0f, 134.0f, 0.0f, 16.0f, C2D_Color32(68, 74, 84, 255));
+  C2D_DrawCircleSolid(142.0f, 134.0f, 0.0f, 9.0f, C2D_Color32(38, 42, 50, 255));
+  C2D_DrawCircleSolid(142.0f, 134.0f, 0.0f, 4.0f, C2D_Color32(255, 224, 48, 255));
 
-  C2D_DrawRectSolid(146.0f, 112.0f, 0.0f, 56.0f, 56.0f, C2D_Color32(16, 19, 24, 225));
-  C2D_DrawCircleSolid(174.0f, 140.0f, 0.0f, 18.0f, C2D_Color32(68, 74, 84, 255));
-  C2D_DrawCircleSolid(174.0f, 140.0f, 0.0f, 11.0f, C2D_Color32(38, 42, 50, 255));
-  C2D_DrawCircleSolid(174.0f, 140.0f, 0.0f, 5.0f, C2D_Color32(255, 224, 48, 255));
+  // Face buttons (right)
+  C2D_DrawRectSolid(180.0f, 98.0f, 0.0f, 130.0f, 90.0f, C2D_Color32(18, 21, 27, 225));
+  drawBottomQuickButton(282.0f, 138.0f, 14.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255), BottomButtonGlyph::Check);
+  drawBottomQuickButton(252.0f, 168.0f, 14.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255), BottomButtonGlyph::Cross);
+  drawBottomQuickButton(252.0f, 108.0f, 14.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255), BottomButtonGlyph::Up);
+  drawBottomQuickButton(222.0f, 138.0f, 14.0f, overlayState.buttonY, C2D_Color32(72, 220, 128, 255), BottomButtonGlyph::Diamond);
+  C2D_DrawRectSolid(190.0f, 94.0f, 0.0f, 20.0f, 5.0f, C2D_Color32(216, 120, 255, 255));
+  C2D_DrawRectSolid(190.0f, 190.0f, 0.0f, 26.0f, 5.0f, C2D_Color32(255, 104, 160, 255));
 
-  C2D_DrawRectSolid(214.0f, 100.0f, 0.0f, 94.0f, 86.0f, C2D_Color32(18, 21, 27, 225));
-  drawBottomQuickButton(292.0f, 144.0f, 13.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255), BottomButtonGlyph::Check);
-  drawBottomQuickButton(260.0f, 174.0f, 13.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255), BottomButtonGlyph::Cross);
-  drawBottomQuickButton(260.0f, 114.0f, 13.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255), BottomButtonGlyph::Up);
-  drawBottomQuickButton(228.0f, 144.0f, 13.0f, overlayState.buttonY, C2D_Color32(72, 220, 128, 255), BottomButtonGlyph::Diamond);
-  C2D_DrawRectSolid(206.0f, 99.0f, 0.0f, 24.0f, 5.0f, C2D_Color32(216, 120, 255, 255));
-  C2D_DrawRectSolid(206.0f, 179.0f, 0.0f, 30.0f, 5.0f, C2D_Color32(255, 104, 160, 255));
-
+  // === Bottom bar: hotbar ===
+  auto hotbarBg = n3dsBottomTextureImage("hotbar");
   float slotSize = 28.0f;
   float slotGap = 2.0f;
-  float slotX = 11.0f;
-  float slotY = 206.0f;
+  float slotX = 10.0f;
+  float slotY = 204.0f;
+
+  C2D_DrawRectSolid(0.0f, 196.0f, 0.0f, 320.0f, 44.0f, C2D_Color32(28, 30, 36, 240));
+  C2D_DrawRectSolid(0.0f, 195.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(82, 88, 98, 255));
+
+  if (hotbarBg.tex) {
+    float bgScale = (slotSize * 10.0f + slotGap * 9.0f + 20.0f) / static_cast<float>(hotbarBg.tex->width);
+    C2D_DrawImageAt(hotbarBg, 0.0f, 196.0f, 0.0f, nullptr, bgScale, bgScale);
+  }
+
   u32 slotColors[] = {
       C2D_Color32(232, 188, 72, 255), C2D_Color32(220, 104, 240, 255), C2D_Color32(120, 190, 255, 255), C2D_Color32(255, 234, 116, 255), C2D_Color32(80, 160, 255, 255),
       C2D_Color32(255, 144, 72, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255)};
   for (unsigned slot = 0; slot < 10; ++slot)
     drawBottomSlot(slotX + slot * (slotSize + slotGap), slotY, slotSize, slot == overlayState.selectedHotbarSlot, slot < 6, slotColors[slot]);
 
+  // Cursors
   Vec2F bottomPointer = {overlayState.pointerPosition[0] * (static_cast<float>(N3dsBottomScreenWidth) / static_cast<float>(N3dsTopScreenWidth)), overlayState.pointerPosition[1]};
   drawBottomCursor(bottomPointer, overlayState.pointerPressed, false);
   if (overlayState.touchPressed)
@@ -1050,6 +1144,72 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
   m_immediatePrimitives.clear();
   m_primitiveBatches.clear();
   m_queuedPrimitiveCount = 0;
+}
+
+void N3dsStubRenderer::preloadN3dsBottomTextures(StringMap<Image> const& images) {
+#ifdef STAR_PLATFORM_N3DS
+  static bool sPreloaded = false;
+  if (sPreloaded)
+    return;
+
+  for (auto const& pair : images) {
+    auto const& name = pair.first;
+    auto const& image = pair.second;
+    if (image.empty())
+      continue;
+
+    auto* tex = new C3D_Tex();
+    if (!C3D_TexInit(tex, static_cast<u16>(image.width()), static_cast<u16>(image.height()), GPU_RGBA8)) {
+      delete tex;
+      Logger::warn("N3DS bottom texture '{}': C3D_TexInit failed for {}x{}", name, image.width(), image.height());
+      continue;
+    }
+
+    // Convert to 3DS-native RGBA8 as ABGR bytes in 8x8 Morton tile order
+    unsigned w = image.width();
+    unsigned h = image.height();
+    std::vector<uint8_t> tiled(static_cast<size_t>(w) * h * 4);
+    uint8_t* dst = tiled.data();
+    for (unsigned y = 0; y < h; ++y)
+      for (unsigned x = 0; x < w; ++x) {
+        auto pixel = image.getrgb(x, y);
+        size_t tileIdx = (static_cast<size_t>(y / 8) * ((w + 7) / 8) + (x / 8));
+        size_t inTile = (static_cast<size_t>(y & 7) * 8 + (x & 7));
+        size_t outIdx = (tileIdx * 64 + inTile) * 4;
+        dst[outIdx + 0] = pixel[2];  // B
+        dst[outIdx + 1] = pixel[1];  // G
+        dst[outIdx + 2] = pixel[0];  // R
+        dst[outIdx + 3] = pixel[3];  // A
+      }
+
+    C3D_TexUpload(tex, tiled.data());
+    C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
+    C3D_TexSetWrap(tex, GPU_CLAMP_TO_BORDER, GPU_CLAMP_TO_BORDER);
+
+    sN3dsBottomTextures[name].tex = tex;
+    sN3dsBottomTextures[name].sub = Tex3DS_SubTexture{
+        static_cast<u16>(w), static_cast<u16>(h),
+        0.0f, 1.0f, 1.0f, 0.0f};
+
+    Logger::info("N3DS bottom texture '{}' loaded: {}x{}", name, w, h);
+  }
+  sPreloaded = true;
+#else
+  (void)images;
+#endif
+}
+
+void N3dsStubRenderer::preloadN3dsTitleMenuTextures(
+    Image const& imgSinglePlayer,
+    Image const& imgMultiplayer,
+    Image const& imgOptions,
+    Image const& imgExit) {
+  StringMap<Image> images;
+  if (!imgSinglePlayer.empty()) images["singleplayer"] = imgSinglePlayer;
+  if (!imgMultiplayer.empty())   images["multiplayer"]   = imgMultiplayer;
+  if (!imgOptions.empty())       images["options"]       = imgOptions;
+  if (!imgExit.empty())          images["exit"]          = imgExit;
+  preloadN3dsBottomTextures(images);
 }
 
 } // namespace Star
