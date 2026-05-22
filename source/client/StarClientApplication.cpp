@@ -1150,14 +1150,13 @@ void ClientApplication::changeState(MainAppState newState) {
   #endif
 
   #ifdef STAR_PLATFORM_N3DS
-    Logger::info("N3DS game bootstrap: skipped client Lua restart");
-  #else
-    m_universeClient->restartLua();
+    Logger::info("N3DS game bootstrap: restarting client Lua");
   #endif
+    m_universeClient->restartLua();
     m_mainInterface = make_shared<MainInterface>(m_universeClient, m_worldPainter, m_cinematicOverlay);
   #ifdef STAR_PLATFORM_N3DS
     Logger::info("N3DS game bootstrap: compact main interface ready");
-  #else
+  #endif
     m_universeClient->setLuaCallbacks("interface", LuaBindings::makeInterfaceCallbacks(m_mainInterface.get()));
     m_universeClient->setLuaCallbacks("chat", LuaBindings::makeChatCallbacks(m_mainInterface.get(), m_universeClient.get()));
     m_universeClient->setLuaCallbacks("celestial", LuaBindings::makeCelestialCallbacks(m_universeClient.get()));
@@ -1174,15 +1173,13 @@ void ClientApplication::changeState(MainAppState newState) {
       });
       paneManager->displayRegisteredPane(MainInterfacePanes::HttpTrustDialog);
     });
-#endif
 
 
     m_mainInterface->displayDefaultPanes();
 #ifdef STAR_PLATFORM_N3DS
-    Logger::info("N3DS game bootstrap: skipped client Lua scripts");
-#else
-    m_universeClient->startLuaScripts();
+    Logger::info("N3DS game bootstrap: starting client Lua scripts");
 #endif
+    m_universeClient->startLuaScripts();
 
     m_mainMixer->setWorldPainter(m_worldPainter);
 

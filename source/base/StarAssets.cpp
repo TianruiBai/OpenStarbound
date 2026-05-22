@@ -669,7 +669,11 @@ bool Assets::n3dsTryBuildLazyDescriptor(String const& path) const {
       uint64_t size = 0;
       String originalName;
 
-      // O(1) exact-match lookup
+      // O(1) exact-match lookup.  Vanilla Starbound uses all-lowercase paths
+      // with a leading '/'; since we normalise the search path the same way,
+      // the exact match virtually always succeeds.  A case-insensitive scan
+      // over 50K entries is too expensive (~0.12s per miss) for the rare
+      // casing mismatch; the emergency fallback in open() catches those.
       if (packed->findOffset(searchPath, offset, size, originalName)) {
         if (diag) Logger::info("N3DS lazy lookup '{}' -> HIT exact (original='{}')", searchPath, originalName);
         auto& descriptor = m_files[path];
@@ -680,25 +684,9 @@ bool Assets::n3dsTryBuildLazyDescriptor(String const& path) const {
           descriptor.sourceName = originalName;
         return true;
       }
-
-      // Case-insensitive fallback: O(n) scan with zero-allocation compare
-      packed->forEachAssetPathWithOffset([&](String const& filename, uint64_t o, uint64_t s) {
-        if (offset == 0 && filename.compare(searchPath, String::CaseInsensitive) == 0) {
-          offset = o; size = s; originalName = filename;
-        }
-      });
-      if (offset != 0) {
-        if (diag) Logger::info("N3DS lazy lookup '{}' -> HIT case-insensitive (original='{}')", searchPath, originalName);
-        auto& descriptor = m_files[path];
-        descriptor.source = source;
-        descriptor.sourceName = originalName;
-        descriptor.packedOffset = offset;
-        descriptor.packedSize = size;
-        return true;
-      }
     }
     sN3dsLazyMissCache.add(searchPath);
-    if (diag) Logger::info("N3DS lazy lookup '{}' -> MISS after exact+case-insensitive scan", searchPath);
+    if (diag) Logger::info("N3DS lazy lookup '{}' -> MISS (exact match only)", searchPath);
     return false;
   };
 
@@ -1335,6 +1323,26 @@ ImageConstPtr Assets::readImage(String const& path) const {
     }
     return image;
   }
+#ifdef STAR_PLATFORM_N3DS
+  if (n3dsTryBuildLazyDescriptor(path))
+    if (auto p = m_files.ptr(path)) {
+      ImageConstPtr image;
+      auto const& sourceName = descriptorSourceName(*p, path);
+      if (auto memorySource = as<MemoryAssetSource>(p->source))
+        image = memorySource->image(sourceName);
+      if (!image)
+        image = make_shared<Image>(Image::readPng(p->source->open(sourceName)));
+      if (!p->patchSources.empty())
+        return applyImagePatches(image, path, p->patchSources);
+      return image;
+    }
+  // Emergency fallback: try each known source directly.
+  for (auto const& pair : m_assetSourcePaths)
+    try {
+      auto img = make_shared<Image>(Image::readPng(pair.second->open(path)));
+      return img;
+    } catch (...) {}
+#endif
   throw AssetException(strf("No such asset '{}'", path));
 }
 

@@ -1159,21 +1159,24 @@ void N3dsStubRenderer::preloadN3dsBottomTextures(StringMap<Image> const& images)
       continue;
 
     auto* tex = new C3D_Tex();
-    if (!C3D_TexInit(tex, static_cast<u16>(image.width()), static_cast<u16>(image.height()), GPU_RGBA8)) {
+    unsigned w = image.width();
+    unsigned h = image.height();
+    unsigned storageW = n3dsTextureExtent(w);
+    unsigned storageH = n3dsTextureExtent(h);
+    if (!C3D_TexInit(tex, static_cast<u16>(storageW), static_cast<u16>(storageH), GPU_RGBA8)) {
       delete tex;
-      Logger::warn("N3DS bottom texture '{}': C3D_TexInit failed for {}x{}", name, image.width(), image.height());
+      Logger::warn("N3DS bottom texture '{}': C3D_TexInit failed for {}x{} (storage {}x{})", name, w, h, storageW, storageH);
       continue;
     }
 
     // Convert to 3DS-native RGBA8 as ABGR bytes in 8x8 Morton tile order
-    unsigned w = image.width();
-    unsigned h = image.height();
-    std::vector<uint8_t> tiled(static_cast<size_t>(w) * h * 4);
+    std::vector<uint8_t> tiled(static_cast<size_t>(storageW) * storageH * 4);
     uint8_t* dst = tiled.data();
+    std::memset(dst, 0, tiled.size());
     for (unsigned y = 0; y < h; ++y)
       for (unsigned x = 0; x < w; ++x) {
         auto pixel = image.getrgb(x, y);
-        size_t tileIdx = (static_cast<size_t>(y / 8) * ((w + 7) / 8) + (x / 8));
+        size_t tileIdx = (static_cast<size_t>(y / 8) * (storageW / 8) + (x / 8));
         size_t inTile = (static_cast<size_t>(y & 7) * 8 + (x & 7));
         size_t outIdx = (tileIdx * 64 + inTile) * 4;
         dst[outIdx + 0] = pixel[2];  // B
