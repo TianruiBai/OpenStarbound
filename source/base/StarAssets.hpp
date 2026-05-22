@@ -350,9 +350,22 @@ private:
   BiMap<String, AssetSourcePtr> m_assetSourcePaths;
 
   // Maps the source asset name to the source containing it
-  CaseInsensitiveStringMap<AssetFileDescriptor> m_files;
+  mutable CaseInsensitiveStringMap<AssetFileDescriptor> m_files;
   // Maps an extension to the files with that extension
   mutable CaseInsensitiveStringMap<CaseInsensitiveStringSet> m_filesByExtension;
+
+#ifdef STAR_PLATFORM_N3DS
+  // On N3DS, packed-source descriptors are NOT built eagerly to save
+  // memory.  Instead the PackedAssetSource index is kept and individual
+  // descriptors are constructed on first access.  This list tracks
+  // sources whose descriptors haven't been built yet.
+  List<AssetSourcePtr> m_n3dsLazyPackedSources;
+
+  // Look up a path in the lazy packed sources and, if found, build its
+  // descriptor in m_files.  Returns true if the asset was found and
+  // cached.
+  bool n3dsTryBuildLazyDescriptor(String const& path) const;
+#endif
 
   ByteArray m_digest;
 

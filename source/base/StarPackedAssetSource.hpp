@@ -44,6 +44,12 @@ public:
   void releaseIndex();
   IODevicePtr openAt(uint64_t offset, uint64_t size, String const& path = String());
   ByteArray readAt(uint64_t offset, uint64_t size);
+  // Fast O(1) lookup of offset+size by asset path. Returns true and sets
+  // offset/size/originalName if found, false otherwise.  Used for lazy
+  // descriptor building.  The lookup is case-sensitive; for case-insensitive
+  // matching, the caller should first try the exact case and fall back to
+  // iterating assetPaths().
+  bool findOffset(String const& path, uint64_t& offset, uint64_t& size, String& originalName) const;
 #endif
 
   IODevicePtr open(String const& path) override;

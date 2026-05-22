@@ -221,6 +221,16 @@ ByteArray PackedAssetSource::readAt(uint64_t offset, uint64_t size) {
   m_packedFile->readFullAbsolute(offset, data.ptr(), size);
   return data;
 }
+
+bool PackedAssetSource::findOffset(String const& path, uint64_t& offset, uint64_t& size, String& originalName) const {
+  auto p = m_index.ptr(path);
+  if (!p)
+    return false;
+  offset = p->first;
+  size = p->second;
+  originalName = path;
+  return true;
+}
 #endif
 
 IODevicePtr PackedAssetSource::open(String const& path) {
