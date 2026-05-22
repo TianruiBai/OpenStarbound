@@ -54,7 +54,7 @@ constexpr int N3dsTopScreenHeight = 240;
 constexpr int N3dsBottomScreenWidth = 320;
 constexpr int N3dsBottomScreenHeight = 240;
 constexpr unsigned N3dsMaxTextureExtent = 1024;
-constexpr size_t N3dsTextureUploadBudget = 6 * 1024 * 1024;
+constexpr size_t N3dsTextureUploadBudget = 10 * 1024 * 1024;
 constexpr size_t N3dsMaxFrameSubTextures = N3dsMaxQueuedPrimitives + 64;
 constexpr size_t N3dsMaxLightMapPixels = 64 * 64;
 constexpr bool N3dsDrawTopDiagnostics = false;
@@ -400,25 +400,63 @@ void drawBottomText(char const* text, float x, float y, float scale, u32 color) 
   C2D_DrawText(&parsedText, C2D_WithColor, x, y, 0.0f, scale, scale, color);
 }
 
+// Top-screen C2D system-font text buffer (separate from bottom screen)
+C2D_TextBuf& topOverlayTextBuffer() {
+  static C2D_TextBuf textBuffer = C2D_TextBufNew(1024);
+  return textBuffer;
+}
+
+static void drawTopText(char const* text, float x, float y, float scale, u32 color) {
+  C2D_Text parsedText;
+  C2D_TextParse(&parsedText, topOverlayTextBuffer(), text);
+  C2D_TextOptimize(&parsedText);
+  C2D_DrawText(&parsedText, C2D_WithColor, x, y, 0.0f, scale, scale, color);
+}
+
+void drawTopScreenTextOverlay(FrameReplayStats const& frameStats) {
+  C2D_TextBufClear(topOverlayTextBuffer());
+
+  // Semi-transparent top bar
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 400.0f, 16.0f, C2D_Color32(0, 0, 0, 160));
+
+  // Title
+  drawTopText("OpenStarbound  N3DS", 6.0f, 1.0f, 0.42f, C2D_Color32(220, 230, 248, 255));
+
+  // Frame stats on right side
+  char statsBuf[80];
+  snprintf(statsBuf, sizeof(statsBuf), "prims:%zu tex:%zu batch:%zu",
+      frameStats.replayedPrimitives, frameStats.texturedQuads, frameStats.batchCount);
+  drawTopText(statsBuf, 180.0f, 1.0f, 0.36f, C2D_Color32(156, 168, 186, 220));
+}
+
 void drawBottomTitleMenu(N3dsHandheldOverlayState const& overlayState) {
   C2D_TextBufClear(bottomOverlayTextBuffer());
 
-  // Dark backdrop so the menu is readable over the bottom-screen scene.
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(6, 10, 18, 220));
+  // Dark gradient-like backdrop with subtle vertical bands for depth
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(8, 12, 20, 245));
+  // Top accent line
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 2.0f, C2D_Color32(160, 180, 210, 128));
+  // Bottom divider before controls hint
+  C2D_DrawRectSolid(0.0f, 222.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(48, 56, 72, 180));
 
-  drawBottomText("OpenStarbound", 12.0f, 102.0f, 0.48f, C2D_Color32(196, 208, 226, 220));
+  // Game title with subtle glow (layered text)
+  drawBottomText("OpenStarbound", 14.0f, 12.0f, 0.52f, C2D_Color32(48, 54, 66, 255));
+  drawBottomText("OpenStarbound", 13.0f, 11.0f, 0.52f, C2D_Color32(220, 230, 248, 255));
+  drawBottomText("Nintendo 3DS", 16.0f, 32.0f, 0.36f, C2D_Color32(140, 156, 176, 200));
+
+  // System status beads
   drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
 
-  constexpr float ButtonX = 8.0f;
-  constexpr float ButtonY = 116.0f;
-  constexpr float ButtonTargetH = 22.0f;
-  constexpr float ButtonGap = 8.0f;
+  constexpr float ButtonX = 16.0f;
+  constexpr float ButtonY = 58.0f;
+  constexpr float ButtonTargetH = 24.0f;
+  constexpr float ButtonGap = 10.0f;
 
   struct { char const* label; char const* textureKey; u32 accent; } const MenuItems[] = {
-      {"Single Player", "singleplayer", C2D_Color32(255, 214, 82, 255)},
-      {"Multiplayer",   "multiplayer",  C2D_Color32(88, 190, 255, 255)},
-      {"Settings",      "options",      C2D_Color32(92, 220, 144, 255)},
-      {"Exit",          "exit",         C2D_Color32(238, 82, 92, 255)},
+      {"Single Player", "singleplayer", C2D_Color32(255, 218, 82, 255)},
+      {"Multiplayer",   "multiplayer",  C2D_Color32(92, 196, 255, 255)},
+      {"Settings",      "options",      C2D_Color32(96, 226, 148, 255)},
+      {"Exit",          "exit",         C2D_Color32(242, 86, 96, 255)},
   };
 
   float y = ButtonY;
@@ -427,6 +465,12 @@ void drawBottomTitleMenu(N3dsHandheldOverlayState const& overlayState) {
     float rowHeight = ButtonTargetH;
 
     auto texImage = n3dsBottomTextureImage(MenuItems[item].textureKey);
+    static bool loggedTexStatus[4] = {false, false, false, false};
+    if (!loggedTexStatus[item]) {
+      Logger::info("N3DS drawBottomTitleMenu item '{}': texImage.tex={} subtex={}",
+          MenuItems[item].textureKey, (void*)texImage.tex, (void*)texImage.subtex);
+      loggedTexStatus[item] = true;
+    }
     if (texImage.tex) {
       float texW = static_cast<float>(texImage.subtex ? texImage.subtex->width : texImage.tex->width);
       float texH = static_cast<float>(texImage.subtex ? texImage.subtex->height : texImage.tex->height);
@@ -435,27 +479,43 @@ void drawBottomTitleMenu(N3dsHandheldOverlayState const& overlayState) {
       float scale = ButtonTargetH / texH;
       float drawW = texW * scale;
       float drawH = texH * scale;
+      float drawX = ButtonX + 6.0f;
       float drawY = y + (rowHeight - drawH) * 0.5f;
 
+      // Selection background with rounded feel (layered rects)
       if (selected) {
-        C2D_DrawRectSolid(ButtonX - 3.0f, drawY - 2.0f, 0.0f, drawW + 10.0f, drawH + 4.0f, C2D_Color32(250, 252, 255, 58));
+        C2D_DrawRectSolid(ButtonX, y - 1.0f, 0.0f, 288.0f, rowHeight + 2.0f, C2D_Color32(36, 44, 60, 220));
+        // Left accent bar for selected item
+        C2D_DrawRectSolid(ButtonX, y, 0.0f, 4.0f, rowHeight, MenuItems[item].accent);
+        // Subtle glow
+        C2D_DrawRectSolid(ButtonX + 4.0f, y, 0.0f, 284.0f, rowHeight, C2D_Color32(250, 252, 255, 16));
+      } else {
+        // Item background for unselected
+        C2D_DrawRectSolid(ButtonX, y, 0.0f, 288.0f, rowHeight, C2D_Color32(22, 28, 40, 200));
       }
-      C2D_DrawImageAt(texImage, ButtonX, drawY, 0.0f, nullptr, scale, scale);
+      // Draw texture with tint-multiply (same as star path) to handle alpha correctly
+      C2D_ImageTint tint;
+      C2D_PlainImageTint(&tint, C2D_Color32(255, 255, 255, 255), 1.0f);
+      C2D_SetTintMode(C2D_TintMult);
+      bool drawResult = C2D_DrawImageAt(texImage, drawX, drawY, 0.0f, &tint, scale, scale);
+      C2D_SetTintMode(C2D_TintSolid);
     } else {
-      // Fallback: simple coloured button with label
-      float drawW = 172.0f;
-      C2D_DrawRectSolid(ButtonX, y, 0.0f, drawW, rowHeight, C2D_Color32(33, 40, 54, 220));
+      // Fallback button with icon-like coloured bar
+      float drawW = 280.0f;
+      C2D_DrawRectSolid(ButtonX, y, 0.0f, drawW, rowHeight, selected ? C2D_Color32(38, 46, 62, 220) : C2D_Color32(26, 32, 44, 200));
       C2D_DrawRectSolid(ButtonX, y, 0.0f, 4.0f, rowHeight, MenuItems[item].accent);
       if (selected)
         C2D_DrawRectSolid(ButtonX - 2.0f, y - 1.0f, 0.0f, drawW + 4.0f, rowHeight + 2.0f, C2D_Color32(250, 252, 255, 62));
-      drawBottomText(MenuItems[item].label, ButtonX + 12.0f, y + 4.0f, 0.46f,
-          selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(212, 222, 235, 255));
+      drawBottomText(MenuItems[item].label, ButtonX + 14.0f, y + 4.0f, 0.46f,
+          selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(196, 210, 228, 255));
     }
 
     y += rowHeight + ButtonGap;
   }
 
-  drawBottomText("A: Select   B: Back", 10.0f, 230.0f, 0.33f, C2D_Color32(170, 182, 198, 230));
+  // Divider before controls
+  C2D_DrawRectSolid(16.0f, y + 2.0f, 0.0f, 288.0f, 1.0f, C2D_Color32(56, 64, 80, 120));
+  drawBottomText("A: Select   D-Pad: Navigate   B: Exit", 16.0f, 228.0f, 0.33f, C2D_Color32(156, 168, 186, 220));
 
   if (overlayState.touchPressed)
     drawBottomCursor(overlayState.touchPosition, true, true);
@@ -488,7 +548,13 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
   if (heartImg.tex) {
     float heartW = static_cast<float>(heartImg.subtex ? heartImg.subtex->width : heartImg.tex->width);
     float heartH = static_cast<float>(heartImg.subtex ? heartImg.subtex->height : heartImg.tex->height);
-    C2D_DrawImageAt(heartImg, 6.0f, 4.0f, 0.0f, nullptr, iconSize / heartW, iconSize / heartH);
+    // Uniform scale preserves aspect ratio — use the smaller dimension to fit in icon area
+    float heartUniformScale = min(iconSize / heartW, iconSize / heartH);
+    float heartDrawW = heartW * heartUniformScale;
+    float heartDrawH = heartH * heartUniformScale;
+    float heartDrawX = 6.0f + (iconSize - heartDrawW) * 0.5f;
+    float heartDrawY = 4.0f + (iconSize - heartDrawH) * 0.5f;
+    C2D_DrawImageAt(heartImg, heartDrawX, heartDrawY, 0.0f, nullptr, heartUniformScale, heartUniformScale);
     C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth, barHeight, C2D_Color32(48, 16, 16, 255));
     C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth * overlayState.healthFill, barHeight, C2D_Color32(232, 64, 72, 255));
     C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth * overlayState.healthFill, 3.0f, C2D_Color32(255, 160, 160, 80));
@@ -500,7 +566,13 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
   if (energyImg.tex) {
     float energyW = static_cast<float>(energyImg.subtex ? energyImg.subtex->width : energyImg.tex->width);
     float energyH = static_cast<float>(energyImg.subtex ? energyImg.subtex->height : energyImg.tex->height);
-    C2D_DrawImageAt(energyImg, 6.0f, 22.0f, 0.0f, nullptr, iconSize / energyW, iconSize / energyH);
+    // Uniform scale preserves aspect ratio
+    float energyUniformScale = min(iconSize / energyW, iconSize / energyH);
+    float energyDrawW = energyW * energyUniformScale;
+    float energyDrawH = energyH * energyUniformScale;
+    float energyDrawX = 6.0f + (iconSize - energyDrawW) * 0.5f;
+    float energyDrawY = 22.0f + (iconSize - energyDrawH) * 0.5f;
+    C2D_DrawImageAt(energyImg, energyDrawX, energyDrawY, 0.0f, nullptr, energyUniformScale, energyUniformScale);
     C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth, barHeight, C2D_Color32(16, 40, 64, 255));
     C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth * overlayState.energyFill, barHeight, C2D_Color32(72, 176, 255, 255));
     C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth * overlayState.energyFill, 3.0f, C2D_Color32(160, 220, 255, 80));
@@ -670,26 +742,24 @@ public:
     if (!m_textureReady || m_storageWidth == 0 || m_storageHeight == 0)
       return false;
 
-    auto clampTextureCoordinate = [](float value, float maximum) {
-      return std::clamp(value, 0.0f, maximum);
-    };
-
+    // Compute bounding box of all 4 texture coordinates — works regardless
+    // of vertex ordering or minor coordinate skew.
     float maxTextureX = static_cast<float>(m_size[0]);
     float maxTextureY = static_cast<float>(m_size[1]);
-    float left = clampTextureCoordinate(quad.a.textureCoordinate[0], maxTextureX);
-    float right = clampTextureCoordinate(quad.b.textureCoordinate[0], maxTextureX);
-    float bottom = clampTextureCoordinate(quad.a.textureCoordinate[1], maxTextureY);
-    float top = clampTextureCoordinate(quad.d.textureCoordinate[1], maxTextureY);
+    float left   = std::clamp(std::min({quad.a.textureCoordinate[0], quad.b.textureCoordinate[0], quad.c.textureCoordinate[0], quad.d.textureCoordinate[0]}), 0.0f, maxTextureX);
+    float right  = std::clamp(std::max({quad.a.textureCoordinate[0], quad.b.textureCoordinate[0], quad.c.textureCoordinate[0], quad.d.textureCoordinate[0]}), 0.0f, maxTextureX);
+    float bottom = std::clamp(std::min({quad.a.textureCoordinate[1], quad.b.textureCoordinate[1], quad.c.textureCoordinate[1], quad.d.textureCoordinate[1]}), 0.0f, maxTextureY);
+    float top    = std::clamp(std::max({quad.a.textureCoordinate[1], quad.b.textureCoordinate[1], quad.c.textureCoordinate[1], quad.d.textureCoordinate[1]}), 0.0f, maxTextureY);
 
     if (right <= left || top <= bottom)
       return false;
 
-    subTexture.width = static_cast<u16>(std::lround(right - left));
+    subTexture.width  = static_cast<u16>(std::lround(right - left));
     subTexture.height = static_cast<u16>(std::lround(top - bottom));
-    subTexture.left = left / static_cast<float>(m_storageWidth);
-    subTexture.right = right / static_cast<float>(m_storageWidth);
+    subTexture.left   = left / static_cast<float>(m_storageWidth);
+    subTexture.right  = right / static_cast<float>(m_storageWidth);
     subTexture.bottom = 1.0f - (static_cast<float>(m_size[1]) - bottom) / static_cast<float>(m_storageHeight);
-    subTexture.top = 1.0f - (static_cast<float>(m_size[1]) - top) / static_cast<float>(m_storageHeight);
+    subTexture.top    = 1.0f - (static_cast<float>(m_size[1]) - top) / static_cast<float>(m_storageHeight);
     image = C2D_Image{const_cast<C3D_Tex*>(&m_texture), &subTexture};
     return true;
   }
@@ -733,12 +803,47 @@ private:
 
     if (!C3D_TexInit(&m_texture, static_cast<u16>(storageWidth), static_cast<u16>(storageHeight), GPU_RGBA8)) {
       linearFree(linearUploadData);
-      Logger::warn("N3dsStubTexture: C3D_TexInit failed for {}x{}", image.width(), image.height());
-      return;
+      // Try half-size fallback before giving up
+      unsigned halfW = storageWidth / 2;
+      unsigned halfH = storageHeight / 2;
+      if (halfW >= 16 && halfH >= 16 && (halfW != storageWidth || halfH != storageHeight)) {
+        Logger::info("N3dsStubTexture: C3D_TexInit failed for {}x{}, retrying at {}x{}", storageWidth, storageHeight, halfW, halfH);
+        size_t halfBytes = static_cast<size_t>(halfW) * halfH * 4;
+        void* halfData = linearAlloc(halfBytes);
+        if (halfData) {
+          std::memset(halfData, 0, halfBytes);
+          auto* halfUpload = static_cast<uint8_t*>(halfData);
+          for (unsigned y = 0; y < halfH; ++y) {
+            unsigned srcY = static_cast<unsigned>(static_cast<float>(y) / halfH * image.height());
+            unsigned texY = halfH - y - 1;
+            for (unsigned x = 0; x < halfW; ++x) {
+              unsigned srcX = static_cast<unsigned>(static_cast<float>(x) / halfW * image.width());
+              size_t dstOff = n3dsTiledPixelIndex(x, texY, halfW) * 4;
+              auto pixel = image.getrgb({srcX, srcY});
+              writeNativeRgba8Pixel(halfUpload + dstOff, pixel.ptr());
+            }
+          }
+          if (C3D_TexInit(&m_texture, static_cast<u16>(halfW), static_cast<u16>(halfH), GPU_RGBA8)) {
+            C3D_TexUpload(&m_texture, halfData);
+            storageWidth = halfW;
+            storageHeight = halfH;
+            textureBytes = halfBytes;
+            n3dsTextureBytesInUse() += textureBytes;
+            m_textureReady = true;
+          } else {
+            Logger::warn("N3dsStubTexture: half-size retry also failed for {}x{}", halfW, halfH);
+          }
+          linearFree(halfData);
+        }
+      } else {
+        Logger::warn("N3dsStubTexture: C3D_TexInit failed for {}x{}", image.width(), image.height());
+      }
+      if (!m_textureReady)
+        return;
+    } else {
+      C3D_TexUpload(&m_texture, linearUploadData);
+      linearFree(linearUploadData);
     }
-
-    C3D_TexUpload(&m_texture, linearUploadData);
-    linearFree(linearUploadData);
 
     auto filter = m_filtering == TextureFiltering::Linear ? GPU_LINEAR : GPU_NEAREST;
     auto wrap = m_addressing == TextureAddressing::Wrap ? GPU_REPEAT : GPU_CLAMP_TO_EDGE;
@@ -832,7 +937,7 @@ bool drawTexturedQuad(RenderQuad const& quad) {
     return false;
 
   auto texture = dynamic_cast<N3dsStubTexture const*>(quad.texture.get());
-  if (!texture || !texture->ready() || !isAxisAlignedTextureRect(quad))
+  if (!texture || !texture->ready())
     return false;
 
   C2D_ImageTint tint;
@@ -1140,6 +1245,9 @@ void N3dsStubRenderer::flush(Mat3F const& transformation) {
     if (N3dsDrawTopDiagnostics)
       drawTopScreenDiagnostics(frameStats);
 
+    // Top-screen C2D system-font text overlay (debug + status)
+    drawTopScreenTextOverlay(frameStats);
+
     if (bottomTarget) {
       C2D_TargetClear(bottomTarget, C2D_Color32(14, 17, 22, 255));
       C2D_SceneBegin(bottomTarget);
@@ -1170,7 +1278,8 @@ void N3dsStubRenderer::preloadN3dsBottomTextures(StringMap<Image> const& images)
     if (image.empty())
       continue;
 
-    auto* tex = new C3D_Tex();
+    auto* tex = new C3D_Tex{};
+    std::memset(tex, 0, sizeof(C3D_Tex)); // zero-init before C3D_TexInit
     unsigned w = image.width();
     unsigned h = image.height();
     unsigned storageW = n3dsTextureExtent(w);
@@ -1203,8 +1312,8 @@ void N3dsStubRenderer::preloadN3dsBottomTextures(StringMap<Image> const& images)
     sN3dsBottomTextures[name].sub = Tex3DS_SubTexture{
         static_cast<u16>(w), static_cast<u16>(h),
         0.0f,
-        static_cast<float>(w) / static_cast<float>(storageW),
         1.0f,
+        static_cast<float>(w) / static_cast<float>(storageW),
         1.0f - static_cast<float>(h) / static_cast<float>(storageH)};
 
     Logger::info("N3DS bottom texture '{}' loaded: {}x{}", name, w, h);

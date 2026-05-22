@@ -553,17 +553,35 @@ void ClientApplication::render() {
       if (!n3dsBottomTexturesLoaded) {
         n3dsBottomTexturesLoaded = true;
         auto loadImage = [](String const& path) -> Image {
+          // Try the full asset pipeline first
           try {
-            if (auto image = Root::singleton().assets()->image(path))
+            auto assets = Root::singleton().assets();
+            if (auto image = assets->image(path)) {
+              Logger::info("N3DS preload '{}' via assets()->image(): {}x{} fmt={} sample[0]=({},{},{},{})",
+                  path, (*image).width(), (*image).height(), (int)(*image).pixelFormat(),
+                  (*image).getrgb(0u,0u)[0], (*image).getrgb(0u,0u)[1],
+                  (*image).getrgb(0u,0u)[2], (*image).getrgb(0u,0u)[3]);
               return *image;
+            }
+          } catch (std::exception const& e) {
+            Logger::info("N3DS preload '{}' assets()->image() threw: {}", path, e.what());
           } catch (...) {
+            Logger::info("N3DS preload '{}' assets()->image() threw unknown", path);
           }
 
+          // Fallback: raw PNG read from any asset source
           try {
-            return Image::readPng(Root::singleton().assets()->openFile(path));
+            auto assets = Root::singleton().assets();
+            auto device = assets->openFile(path);
+            auto img = Image::readPng(device);
+            Logger::info("N3DS preload '{}' via openFile+readPng: {}x{}", path, img.width(), img.height());
+            return img;
+          } catch (std::exception const& e) {
+            Logger::warn("N3DS preload '{}' openFile/readPng failed: {}", path, e.what());
           } catch (...) {
-            return {};
+            Logger::warn("N3DS preload '{}' openFile/readPng failed unknown", path);
           }
+          return {};
         };
 
         StringMap<String> menuButtonImagePaths;
@@ -1478,7 +1496,15 @@ void ClientApplication::updateTitle(float dt) {
   }
 
   if (m_titleScreen->currentState() == TitleState::StartSinglePlayer) {
+#ifdef STAR_PLATFORM_N3DS
+    // World rendering (tiles, entities, liquids) is not yet implemented for N3DS.
+    // Redirect back to title screen instead of crashing in the world init path.
+    Logger::info("N3DS: Single Player requested but world rendering not yet available — returning to title");
+    if (m_titleScreen)
+      m_titleScreen->resetState();
+#else
     changeState(MainAppState::SinglePlayer);
+#endif
 
   } else if (m_titleScreen->currentState() == TitleState::StartMultiPlayer) {
     if (!m_pendingMultiPlayerConnection || m_pendingMultiPlayerConnection->server.is<HostAddressWithPort>()) {
