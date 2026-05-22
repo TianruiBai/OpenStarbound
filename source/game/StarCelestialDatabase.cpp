@@ -56,26 +56,75 @@ RectI CelestialDatabase::chunkRegion(Vec2I const& chunkIndex) const {
 
 CelestialMasterDatabase::CelestialMasterDatabase(Maybe<String> databaseFile) {
 #ifdef STAR_PLATFORM_N3DS
-  m_baseInformation.planetOrbitalLevels = 1;
-  m_baseInformation.satelliteOrbitalLevels = 0;
-  m_baseInformation.chunkSize = 8;
-  m_baseInformation.xyCoordRange = Vec2I(-8, 8);
-  m_baseInformation.zCoordRange = Vec2I(0, 1);
-  m_baseInformation.enforceCoordRange = true;
+  // Keep a tiny coordinate range so world generation stays bounded,
+  // but load celestial.config and names.config to populate planet-type
+  // and name data so produceSystem() can generate planetary bodies.
+  {
+    auto assets = Root::singleton().assets();
+    auto config = assets->json("/celestial.config");
+    auto namesConfig = assets->json("/celestial/names.config");
 
-  m_generationInformation.systemProbability = 0.0f;
-  m_generationInformation.constellationProbability = 0.0f;
-  m_generationInformation.constellationLineCountRange = Vec2U(0, 0);
-  m_generationInformation.constellationMaxTries = 0;
-  m_generationInformation.maximumConstellationLineLength = 0.0f;
-  m_generationInformation.minimumConstellationLineLength = 0.0f;
-  m_generationInformation.minimumConstellationMagnitude = 999.0f;
-  m_generationInformation.minimumConstellationLineCloseness = 0.0f;
+    m_baseInformation.planetOrbitalLevels = 11;
+    m_baseInformation.satelliteOrbitalLevels = 0;
+    m_baseInformation.chunkSize = 8;
+    m_baseInformation.xyCoordRange = Vec2I(-12, 12);
+    m_baseInformation.zCoordRange = Vec2I(0, 1);
+    m_baseInformation.enforceCoordRange = true;
 
-  m_commitInterval = 600.0f;
-  m_commitTimer.restart(m_commitInterval);
-  Logger::info("N3DS CelestialMasterDatabase: using compact in-memory database");
-  return;
+    m_generationInformation.systemProbability = 0.5f;
+    m_generationInformation.constellationProbability = 0.0f;
+    m_generationInformation.constellationLineCountRange = Vec2U(0, 0);
+    m_generationInformation.constellationMaxTries = 0;
+    m_generationInformation.maximumConstellationLineLength = 0.0f;
+    m_generationInformation.minimumConstellationLineLength = 0.0f;
+    m_generationInformation.minimumConstellationMagnitude = 999.0f;
+    m_generationInformation.minimumConstellationLineCloseness = 0.0f;
+
+    for (auto const& systemPair : Map<String, Json>::from(config.getObject("systemTypes"))) {
+      SystemType st;
+      st.typeName = systemPair.first;
+      st.baseParameters = systemPair.second.get("baseParameters");
+      st.variationParameters = systemPair.second.getArray("variationParameters", JsonArray());
+      for (auto const& orbitRegion : systemPair.second.getArray("orbitRegions", JsonArray())) {
+        st.orbitRegions.append({
+            orbitRegion.getString("regionName"),
+            jsonToVec2I(orbitRegion.get("orbitRange")),
+            orbitRegion.getFloat("bodyProbability"),
+            jsonToWeightedPool<String>(orbitRegion.get("planetaryTypes")),
+            jsonToWeightedPool<String>(orbitRegion.get("satelliteTypes"))});
+      }
+      m_generationInformation.systemTypes.add(systemPair.first, st);
+    }
+
+    m_generationInformation.systemTypePerlin = PerlinD(config.getObject("systemTypePerlin"), staticRandomU64("N3dsStarSeed"));
+    m_generationInformation.systemTypeBins = config.get("systemTypeBins");
+
+    for (auto const& planetPair : Map<String, Json>::from(config.getObject("planetaryTypes"))) {
+      PlanetaryType pt;
+      pt.typeName = planetPair.first;
+      pt.satelliteProbability = planetPair.second.getFloat("satelliteProbability", 0.0);
+      pt.maxSatelliteCount = planetPair.second.getUInt("maxSatelliteCount", 0);
+      pt.baseParameters = planetPair.second.get("baseParameters");
+      pt.variationParameters = planetPair.second.getArray("variationParameters", JsonArray());
+      pt.orbitParameters = planetPair.second.getObject("orbitParameters", JsonObject());
+      m_generationInformation.planetaryTypes[pt.typeName] = pt;
+    }
+
+    m_generationInformation.planetarySuffixes = jsonToStringList(namesConfig.get("planetarySuffixes"));
+    m_generationInformation.satelliteSuffixes = jsonToStringList(namesConfig.get("satelliteSuffixes"));
+
+    for (auto const& list : namesConfig.get("systemPrefixNames").iterateArray())
+      m_generationInformation.systemPrefixNames.add(list.getFloat(0), list.getString(1));
+    for (auto const& list : namesConfig.get("systemNames").iterateArray())
+      m_generationInformation.systemNames.add(list.getFloat(0), list.getString(1));
+    for (auto const& list : namesConfig.get("systemSuffixNames").iterateArray())
+      m_generationInformation.systemSuffixNames.add(list.getFloat(0), list.getString(1));
+
+    m_commitInterval = 600.0f;
+    m_commitTimer.restart(m_commitInterval);
+    Logger::info("N3DS CelestialMasterDatabase: using compact in-memory database");
+    return;
+  }
 #endif
 
   auto assets = Root::singleton().assets();

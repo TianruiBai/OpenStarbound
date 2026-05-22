@@ -34,11 +34,29 @@ TitleScreen::TitleScreen(PlayerStoragePtr playerStorage, MixerPtr mixer, Univers
   m_guiContext = GuiContext::singletonPtr();
 
 #ifdef STAR_PLATFORM_N3DS
-  // PLACEHOLDER: The random title-world backdrop builds the local celestial database.
-  // Keep the real title UI path alive on memory-constrained N3DS until the
-  // remote-client profile has a cheaper menu backdrop.
-  Logger::info("N3DS TitleScreen: using lightweight sky backdrop");
-  m_skyBackdrop = make_shared<Sky>();
+  m_celestialDatabase = make_shared<CelestialMasterDatabase>();
+
+  // Search for any world in the compact database using the standard
+  // random probe — this triggers lazy chunk generation correctly.
+  auto randomWorld = m_celestialDatabase->findRandomWorld(40, 50,
+      [this](CelestialCoordinate const& coordinate) {
+        try {
+          return (bool)m_celestialDatabase->parameters(coordinate)->visitableParameters();
+        } catch (...) {
+          return false;
+        }
+      });
+
+  if (randomWorld) {
+    if (auto name = m_celestialDatabase->name(*randomWorld))
+      Logger::info("Title world is {} @ CelestialWorld:{}", Text::stripEscapeCodes(*name), *randomWorld);
+
+    SkyParameters skyParameters(*randomWorld, m_celestialDatabase);
+    m_skyBackdrop = make_shared<Sky>(skyParameters, true);
+  } else {
+    Logger::info("N3DS TitleScreen: no planetary world found in compact database, using basic starfield");
+    m_skyBackdrop = make_shared<Sky>(SkyParameters(), true);
+  }
 #else
   m_celestialDatabase = make_shared<CelestialMasterDatabase>();
   auto randomWorld = m_celestialDatabase->findRandomWorld(10, 50, [this](CelestialCoordinate const& coordinate) {
@@ -70,9 +88,7 @@ TitleScreen::TitleScreen(PlayerStoragePtr playerStorage, MixerPtr mixer, Univers
 
 void TitleScreen::renderInit(RendererPtr renderer) {
   m_renderer = std::move(renderer);
-#ifndef STAR_PLATFORM_N3DS
   m_environmentPainter = make_shared<EnvironmentPainter>(m_renderer);
-#endif
 }
 
 void TitleScreen::render() {
@@ -82,8 +98,25 @@ void TitleScreen::render() {
   Vec2F screenSize = Vec2F(m_guiContext->windowSize());
 
 #ifdef STAR_PLATFORM_N3DS
+  auto skyRenderData = m_skyBackdrop->renderData();
+
+  float pixelRatioBasis = screenSize[1] / 1080.0f;
+  float starAndDebrisRatio = lerp(0.0625f, pixelRatioBasis * 2.0f, pixelRatio);
+  float orbiterAndPlanetRatio = lerp(0.125f, pixelRatioBasis * 3.0f, pixelRatio);
+
+  m_environmentPainter->renderStars(starAndDebrisRatio, screenSize, skyRenderData);
+  m_environmentPainter->renderDebrisFields(starAndDebrisRatio, screenSize, skyRenderData);
+  m_environmentPainter->renderBackOrbiters(orbiterAndPlanetRatio, screenSize, skyRenderData);
+  m_environmentPainter->renderPlanetHorizon(orbiterAndPlanetRatio, screenSize, skyRenderData);
+  m_environmentPainter->renderSky(screenSize, skyRenderData);
+  m_environmentPainter->renderFrontOrbiters(orbiterAndPlanetRatio, screenSize, skyRenderData);
+
+  m_renderer->flush();
+
   auto skyBackdropDarken = jsonToColor(assets->json("/interface/windowconfig/title.config:skyBackdropDarken"));
   m_renderer->render(renderFlatRect(RectF(0, 0, windowWidth(), windowHeight()), skyBackdropDarken.toRgba(), 0.0f));
+
+  m_renderer->flush();
 #else
   auto skyRenderData = m_skyBackdrop->renderData();
 

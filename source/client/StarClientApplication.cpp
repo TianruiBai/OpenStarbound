@@ -552,20 +552,48 @@ void ClientApplication::render() {
       static bool n3dsBottomTexturesLoaded = false;
       if (!n3dsBottomTexturesLoaded) {
         n3dsBottomTexturesLoaded = true;
-        auto loadPng = [](String const& path) -> Image {
-          try { return Image::readPng(Root::singleton().assets()->openFile(path)); }
-          catch (...) { return {}; }
+        auto loadImage = [](String const& path) -> Image {
+          try {
+            if (auto image = Root::singleton().assets()->image(path))
+              return *image;
+          } catch (...) {
+          }
+
+          try {
+            return Image::readPng(Root::singleton().assets()->openFile(path));
+          } catch (...) {
+            return {};
+          }
         };
+
+        StringMap<String> menuButtonImagePaths;
+        try {
+          auto titleConfig = Root::singleton().assets()->json("/interface/windowconfig/title.config");
+          for (auto buttonConfig : titleConfig.getArray("mainMenuButtons")) {
+            String key = buttonConfig.getString("key", "");
+            String image = buttonConfig.getString("button", "");
+            if (!key.empty() && !image.empty())
+              menuButtonImagePaths[key] = image;
+          }
+        } catch (...) {
+        }
+
+        auto menuButtonImagePath = [&](String const& key, String const& fallbackPath) {
+          if (auto configuredPath = menuButtonImagePaths.ptr(key))
+            return *configuredPath;
+          return fallbackPath;
+        };
+
         StringMap<Image> images;
         // Title menu buttons
-        images["singleplayer"] = loadPng("/interface/title/singleplayer.png");
-        images["multiplayer"]   = loadPng("/interface/title/multiplayer.png");
-        images["options"]       = loadPng("/interface/title/options.png");
-        images["exit"]          = loadPng("/interface/title/quit.png");
+        images["singleplayer"] = loadImage(menuButtonImagePath("singleplayer", "/interface/title/singleplayer.png"));
+        images["multiplayer"]   = loadImage(menuButtonImagePath("multiplayer", "/interface/title/multiplayer.png"));
+        images["options"]       = loadImage(menuButtonImagePath("options", "/interface/title/options.png"));
+        images["exit"]          = loadImage(menuButtonImagePath("quit", "/interface/title/quit.png"));
         // HUD icons
-        images["heart"]  = loadPng("/interface/inventory/heart.png");
-        images["energy"] = loadPng("/interface/inventory/lightning.png");
-        images["hotbar"] = loadPng("/interface/actionbar/actionbarbg.png");
+        images["heart"]  = loadImage("/interface/inventory/heart.png");
+        images["energy"] = loadImage("/interface/inventory/lightning.png");
+        images["hotbar"] = loadImage("/interface/actionbar/actionbarbg.png");
         n3dsRenderer->preloadN3dsBottomTextures(images);
       }
       n3dsRenderer->setHandheldTitleMenuState(m_titleScreen && m_titleScreen->currentState() == TitleState::Main);

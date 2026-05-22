@@ -14,6 +14,9 @@ CelestialParameters::CelestialParameters() : m_seed(0) {}
 CelestialParameters::CelestialParameters(CelestialCoordinate coordinate, uint64_t seed, String name, Json parameters)
   : m_coordinate(std::move(coordinate)), m_seed(seed), m_name(std::move(name)), m_parameters(std::move(parameters)) {
   if (auto worldType = getParameter("worldType").optString()) {
+#ifdef STAR_PLATFORM_N3DS
+    try {
+#endif
     if (worldType->equalsIgnoreCase("Terrestrial")) {
       auto worldSize = getParameter("worldSize").toString();
       auto type = randomizeParameterList("terrestrialType").toString();
@@ -23,6 +26,11 @@ CelestialParameters::CelestialParameters(CelestialCoordinate coordinate, uint64_
     } else if (worldType->equalsIgnoreCase("FloatingDungeon")) {
       m_visitableParameters = generateFloatingDungeonWorldParameters(getParameter("dungeonWorld").toString());
     }
+#ifdef STAR_PLATFORM_N3DS
+    } catch (std::exception const& e) {
+      // N3DS compact assets may be missing liquids/biomes; leave visitableParameters null
+    }
+#endif
   }
 }
 
