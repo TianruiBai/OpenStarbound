@@ -630,40 +630,87 @@ bool Assets::assetExists(String const& path) const {
 
 #ifdef STAR_PLATFORM_N3DS
 bool Assets::n3dsTryBuildLazyDescriptor(String const& path) const {
-  // Packed asset indices store paths without a leading '/' and in lowercase.
-  // Normalise then lowercase before the O(1) case-sensitive HashMap lookup.
+  // The packed index may store paths with or without a leading '/'.
+  // Try the original path first, then without leading '/'.
   String lookupPath = path;
-  if (lookupPath.beginsWith("/"))
-    lookupPath = lookupPath.substr(1);
-  lookupPath = lookupPath.toLower();
+
+  // One-time dump of the first few packed-index entries so we can
+  // verify the path format (leading-slash vs bare, casing convention).
+  static bool sN3dsDumpedSamplePaths = false;
+  if (!sN3dsDumpedSamplePaths && !m_n3dsLazyPackedSources.empty()) {
+    sN3dsDumpedSamplePaths = true;
+    auto* packed = static_cast<PackedAssetSource*>(m_n3dsLazyPackedSources.first().get());
+    unsigned count = 0;
+    packed->forEachAssetPathWithOffset([&](String const& filename, uint64_t, uint64_t) {
+      if (count < 8) {
+        Logger::info("N3DS packed index sample[{}]: '{}'", count, filename);
+        ++count;
+      }
+    });
+  }
+
+  // Per-lookup diagnostic for title-screen and other critical paths.
+  static unsigned sN3dsDiagCount = 0;
+  bool diag = sN3dsDiagCount < 40;
+  if (diag) { ++sN3dsDiagCount; Logger::info("N3DS lazy lookup #{}: '{}'", sN3dsDiagCount, path); }
 
   // Cache of paths known to be missing from packed sources.
   static CaseInsensitiveStringSet sN3dsLazyMissCache;
 
-  for (auto const& source : m_n3dsLazyPackedSources) {
-    // Skip if we already know this path doesn't exist in any packed source
-    if (sN3dsLazyMissCache.contains(lookupPath))
-      continue;
-
-    auto* packed = static_cast<PackedAssetSource*>(source.get());
-    uint64_t offset = 0;
-    uint64_t size = 0;
-    String originalName;
-
-    // O(1) lookup with normalised path
-    if (packed->findOffset(lookupPath, offset, size, originalName)) {
-      auto& descriptor = m_files[path];
-      descriptor.source = source;
-      descriptor.packedOffset = offset;
-      descriptor.packedSize = size;
-      if (!originalName.equals(lookupPath))
-        descriptor.sourceName = originalName;
-      return true;
+  auto tryLookup = [&](String const& searchPath) -> bool {
+    if (sN3dsLazyMissCache.contains(searchPath)) {
+      if (diag) Logger::info("N3DS lazy lookup '{}' -> miss (cached)", searchPath);
+      return false;
     }
-  }
 
-  // Cache the miss
-  sN3dsLazyMissCache.add(lookupPath);
+    for (auto const& source : m_n3dsLazyPackedSources) {
+      auto* packed = static_cast<PackedAssetSource*>(source.get());
+      uint64_t offset = 0;
+      uint64_t size = 0;
+      String originalName;
+
+      // O(1) exact-match lookup
+      if (packed->findOffset(searchPath, offset, size, originalName)) {
+        if (diag) Logger::info("N3DS lazy lookup '{}' -> HIT exact (original='{}')", searchPath, originalName);
+        auto& descriptor = m_files[path];
+        descriptor.source = source;
+        descriptor.packedOffset = offset;
+        descriptor.packedSize = size;
+        if (!originalName.equals(searchPath))
+          descriptor.sourceName = originalName;
+        return true;
+      }
+
+      // Case-insensitive fallback: O(n) scan with zero-allocation compare
+      packed->forEachAssetPathWithOffset([&](String const& filename, uint64_t o, uint64_t s) {
+        if (offset == 0 && filename.compare(searchPath, String::CaseInsensitive) == 0) {
+          offset = o; size = s; originalName = filename;
+        }
+      });
+      if (offset != 0) {
+        if (diag) Logger::info("N3DS lazy lookup '{}' -> HIT case-insensitive (original='{}')", searchPath, originalName);
+        auto& descriptor = m_files[path];
+        descriptor.source = source;
+        descriptor.sourceName = originalName;
+        descriptor.packedOffset = offset;
+        descriptor.packedSize = size;
+        return true;
+      }
+    }
+    sN3dsLazyMissCache.add(searchPath);
+    if (diag) Logger::info("N3DS lazy lookup '{}' -> MISS after exact+case-insensitive scan", searchPath);
+    return false;
+  };
+
+  // Try exact path first
+  if (tryLookup(lookupPath))
+    return true;
+
+  // If the path starts with '/', also try without it (packed index may use
+  // bare relative paths)
+  if (lookupPath.beginsWith("/"))
+    if (tryLookup(lookupPath.substr(1)))
+      return true;
 
   static unsigned sN3dsLazyMissLogCount = 0;
   if (sN3dsLazyMissLogCount < 20) {
@@ -1255,6 +1302,10 @@ IODevicePtr Assets::open(String const& path) const {
       }
       return p->source->open(descriptorSourceName(*p, path));
     }
+  // Emergency fallback: try each known source directly.
+  // The lazy index may miss files due to casing or index-format drift.
+  for (auto const& pair : m_assetSourcePaths)
+    try { return pair.second->open(path); } catch (...) {}
 #endif
   throw AssetException(strf("No such asset '{}'", path));
 }
