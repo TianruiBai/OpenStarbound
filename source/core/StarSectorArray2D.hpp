@@ -153,7 +153,9 @@ template <typename ElementT, size_t SectorSize>
 void SectorArray2D<ElementT, SectorSize>::init(size_t numSectorsWide, size_t numSectorsHigh) {
   m_sectors.clear();
   m_sectors.setSize(numSectorsWide, numSectorsHigh);
+#ifndef STAR_PLATFORM_N3DS
   m_loadedSectors.clear();
+#endif
 }
 
 template <typename ElementT, size_t SectorSize>
@@ -197,17 +199,43 @@ bool SectorArray2D<ElementT, SectorSize>::hasSector(Sector const& id) const {
 
 template <typename ElementT, size_t SectorSize>
 auto SectorArray2D<ElementT, SectorSize>::loadedSectors() const -> List<Sector> {
+#ifdef STAR_PLATFORM_N3DS
+  List<Sector> sectors;
+  for (size_t x = 0; x < m_sectors.size(0); ++x) {
+    for (size_t y = 0; y < m_sectors.size(1); ++y) {
+      if (m_sectors(x, y))
+        sectors.append(Sector{(uint16_t)x, (uint16_t)y});
+    }
+  }
+  return sectors;
+#else
   return m_loadedSectors.values();
+#endif
 }
 
 template <typename ElementT, size_t SectorSize>
 size_t SectorArray2D<ElementT, SectorSize>::loadedSectorCount() const {
+#ifdef STAR_PLATFORM_N3DS
+  size_t count = 0;
+  for (size_t x = 0; x < m_sectors.size(0); ++x) {
+    for (size_t y = 0; y < m_sectors.size(1); ++y) {
+      if (m_sectors(x, y))
+        ++count;
+    }
+  }
+  return count;
+#else
   return m_loadedSectors.size();
+#endif
 }
 
 template <typename ElementT, size_t SectorSize>
 bool SectorArray2D<ElementT, SectorSize>::sectorLoaded(Sector const& id) const {
+#ifdef STAR_PLATFORM_N3DS
+  return (bool)m_sectors(id[0], id[1]);
+#else
   return m_loadedSectors.contains(id);
+#endif
 }
 
 template <typename ElementT, size_t SectorSize>
@@ -224,10 +252,12 @@ template <typename ElementT, size_t SectorSize>
 void SectorArray2D<ElementT, SectorSize>::loadSector(Sector const& id, ArrayPtr array) {
   auto& data = m_sectors(id[0], id[1]);
   data = std::move(array);
+#ifndef STAR_PLATFORM_N3DS
   if (data)
     m_loadedSectors.add(id);
   else
     m_loadedSectors.remove(id);
+#endif
 }
 
 template <typename ElementT, size_t SectorSize>
@@ -243,14 +273,18 @@ template <typename ElementT, size_t SectorSize>
 typename SectorArray2D<ElementT, SectorSize>::ArrayPtr SectorArray2D<ElementT, SectorSize>::takeSector(
     Sector const& id) {
   ArrayPtr ret;
+#ifndef STAR_PLATFORM_N3DS
   m_loadedSectors.remove(id);
+#endif
   std::swap(m_sectors(id[0], id[1]), ret);
   return ret;
 }
 
 template <typename ElementT, size_t SectorSize>
 void SectorArray2D<ElementT, SectorSize>::discardSector(Sector const& id) {
+#ifndef STAR_PLATFORM_N3DS
   m_loadedSectors.remove(id);
+#endif
   m_sectors(id[0], id[1]).reset();
 }
 

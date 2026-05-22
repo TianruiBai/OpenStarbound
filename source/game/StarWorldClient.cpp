@@ -1145,7 +1145,20 @@ void WorldClient::setCollisionDebug(bool collisionDebug) {
 }
 
 void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
-  for (auto const& packet : packets) {
+#ifdef STAR_PLATFORM_N3DS
+  List<PacketPtr> pacedPackets;
+  if (!m_deferredTileArrayPackets.empty()) {
+    auto deferredPacket = m_deferredTileArrayPackets.first();
+    m_deferredTileArrayPackets.eraseAt(0);
+    pacedPackets.append(deferredPacket);
+  }
+  pacedPackets.appendAll(packets);
+  bool processedTileArrayPacket = false;
+#else
+  auto const& pacedPackets = packets;
+#endif
+
+  for (auto const& packet : pacedPackets) {
     if (!inWorld() && !is<WorldStartPacket>(packet))
       Logger::error("WorldClient received packet type {} while not in world", PacketTypeNames.getRight(packet->type()));
 
@@ -1216,6 +1229,14 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
       m_centralStructure = WorldStructure(structurePacket->structureData);
 
     } else if (auto tileArrayUpdate = as<TileArrayUpdatePacket>(packet)) {
+#ifdef STAR_PLATFORM_N3DS
+      if (processedTileArrayPacket) {
+        m_deferredTileArrayPackets.append(packet);
+        continue;
+      }
+      processedTileArrayPacket = true;
+#endif
+
       RectI tileRegion = RectI::withSize(tileArrayUpdate->min, Vec2I(tileArrayUpdate->array.size()));
 #ifdef STAR_PLATFORM_N3DS
       static unsigned sN3dsTileArrayLogCount = 0;
@@ -1232,7 +1253,9 @@ void WorldClient::handleIncomingPackets(List<PacketPtr> const& packets) {
       // at no other time, and this is sort of a big assumption that
       // tileArrayUpdate happens for all valid client side sectors first before
       // any other tile updates.
-      for (auto const& sector : m_tileArray->validSectorsFor(tileRegion)) {
+      for (auto const& sector : m_tileArray->validSectorsFor(
+           tileRegion
+           )) {
 #ifdef STAR_PLATFORM_N3DS
         if (m_tileArray->sectorLoaded(sector)) {
           if (n3dsLogTileArray)
@@ -2219,6 +2242,9 @@ void WorldClient::initWorld(WorldStartPacket const& startPacket) {
   Logger::info("N3DS WorldClient: WorldStart begin");
 #endif
   clearWorld();
+#ifdef STAR_PLATFORM_N3DS
+  m_deferredTileArrayPackets.clear();
+#endif
   m_outgoingPackets.append(make_shared<WorldStartAcknowledgePacket>());
 
   auto assets = Root::singleton().assets();
@@ -2375,6 +2401,9 @@ void WorldClient::clearWorld() {
   m_masterEntitiesNetVersion.clear();
   m_slaveEntityIdsByConnection.clear();
   m_outgoingPackets.clear();
+#ifdef STAR_PLATFORM_N3DS
+  m_deferredTileArrayPackets.clear();
+#endif
 
   m_pingTime.reset();
 

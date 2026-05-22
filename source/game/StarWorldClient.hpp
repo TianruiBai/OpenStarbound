@@ -337,6 +337,9 @@ private:
   GameTimer m_entityUpdateTimer;
 
   List<PacketPtr> m_outgoingPackets;
+#ifdef STAR_PLATFORM_N3DS
+  List<PacketPtr> m_deferredTileArrayPackets;
+#endif
   Maybe<int64_t> m_pingTime;
   int64_t m_latency;
 
