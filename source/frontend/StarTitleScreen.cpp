@@ -100,16 +100,10 @@ void TitleScreen::render() {
 #ifdef STAR_PLATFORM_N3DS
   auto skyRenderData = m_skyBackdrop->renderData();
 
-  float pixelRatioBasis = screenSize[1] / 1080.0f;
-  float starAndDebrisRatio = lerp(0.0625f, pixelRatioBasis * 2.0f, pixelRatio);
-  float orbiterAndPlanetRatio = lerp(0.125f, pixelRatioBasis * 3.0f, pixelRatio);
-
-  m_environmentPainter->renderStars(starAndDebrisRatio, screenSize, skyRenderData);
-  m_environmentPainter->renderDebrisFields(starAndDebrisRatio, screenSize, skyRenderData);
-  m_environmentPainter->renderBackOrbiters(orbiterAndPlanetRatio, screenSize, skyRenderData);
-  m_environmentPainter->renderPlanetHorizon(orbiterAndPlanetRatio, screenSize, skyRenderData);
+  // Keep title rendering responsive on N3DS: the full star/debris/orbiter
+  // passes trigger large synchronous texture loads and can stall immediately
+  // after splash. Render only the lightweight sky pass for now.
   m_environmentPainter->renderSky(screenSize, skyRenderData);
-  m_environmentPainter->renderFrontOrbiters(orbiterAndPlanetRatio, screenSize, skyRenderData);
 
   m_renderer->flush();
 
@@ -159,8 +153,7 @@ void TitleScreen::render() {
 #endif
 #ifdef STAR_PLATFORM_N3DS
   m_backgroundMenu->render(RectI(Vec2I(), Vec2I(m_guiContext->windowInterfaceSize())));
-  if (m_titleState != TitleState::Main)
-    m_paneManager.render();
+  m_paneManager.render();
 #else
   m_backgroundMenu->render(RectI(Vec2I(), Vec2I(m_guiContext->windowInterfaceSize())));
   m_paneManager.render();

@@ -100,6 +100,14 @@ const FontTextureGroup::GlyphTexture& FontTextureGroup::glyphTexture(String::Cha
     glyphTexture.colored |= get<2>(renderResult);
     glyphTexture.offset += Vec2F(get<1>(renderResult));
     glyphTexture.texture = m_textureGroup->create(image);
+#ifdef STAR_PLATFORM_N3DS
+    static int sN3dsGlyphCount = 0;
+    if (++sN3dsGlyphCount <= 10) {
+      Logger::info("N3DS FontTextureGroup: glyph #{} char='{}' size={}px image={}x{} texture={}",
+          sN3dsGlyphCount, String(c), size, image.width(), image.height(),
+          glyphTexture.texture ? "ok" : "FAILED");
+    }
+#endif
   }
 
   glyphTexture.time = Time::monotonicMilliseconds();

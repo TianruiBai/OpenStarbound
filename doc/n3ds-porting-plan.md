@@ -99,13 +99,13 @@ N3DS Hardware
 - [x] Audio output (ndsp + csnd)
 - [x] Title menu with real PNG textures
 
-### Phase 2 — Top Screen Readability 🔄 IN PROGRESS
-- [ ] **Font atlas loading** — Load system font, build glyph cache
-- [ ] **Top-screen text rendering** — C2D text in primitive replay path
-- [ ] **Arbitrary-rotation textured quads** — Fix rotation support in drawTexturedQuad
-- [ ] **UI widget basics** — 9-slice, button text, scroll regions
-- [ ] **Title screen UI** — Visible menu text and buttons on top screen
-- [ ] Fix intermittent boot crash (asset init phase)
+### Phase 2 - Top Screen Readability (DONE May 2026)
+- [x] **Font atlas loading** - Load system font, build glyph cache (hobo.ttf + twemoji.woff2 from packed assets; N3dsStubTexture per glyph)
+- [x] **Top-screen text rendering** - TextPainter pipeline verified; 20px glyphs with 2.5x font multiplier in GuiContext::setTextStyle()
+- [x] **Arbitrary-rotation textured quads** - Fixed in verify93 (removed isAxisAlignedTextureRect check; imageForQuad uses UV bounding box)
+- [x] **UI widget basics** - Pane manager renders on top screen for all states; ButtonWidget images via AssetTextureGroup; 9-slice via drawable system
+- [x] **Title screen UI** - Visible menu buttons on top screen with embedded text images; bottom screen polished overlay
+- [ ] Fix intermittent boot crash (asset init phase) - improved, still needs investigation
 
 ### Phase 3 — World Rendering
 - [ ] **Tile atlas system** — Material-tinted tile rendering

@@ -319,9 +319,21 @@ void TextPainter::reloadFonts() {
   m_fontTextureGroup.cleanup(0);
   auto assets = Root::singleton().assets();
 #ifdef STAR_PLATFORM_N3DS
-  addFont(loadFont("/hobo.ttf"), "hobo");
-  addFont(loadFont("/font/twemoji.woff2"), "twemoji");
+  Logger::info("N3DS TextPainter: loading fonts for text rendering...");
+  try {
+    addFont(loadFont("/hobo.ttf"), "hobo");
+    Logger::info("N3DS TextPainter: loaded hobo font");
+  } catch (std::exception const& e) {
+    Logger::warn("N3DS TextPainter: failed to load hobo font: {}", e.what());
+  }
+  try {
+    addFont(loadFont("/font/twemoji.woff2"), "twemoji");
+    Logger::info("N3DS TextPainter: loaded twemoji font");
+  } catch (std::exception const& e) {
+    Logger::warn("N3DS TextPainter: failed to load twemoji font: {}", e.what());
+  }
   m_fontTextureGroup.setFixedFonts("hobo", "hobo", "twemoji");
+  Logger::info("N3DS TextPainter: font loading complete, activeFont={}", m_fontTextureGroup.activeFont());
 #else
   auto loadFontsByExtension = [&](String const& ext) {
     for (auto& fontPath : assets->scanExtension(ext)) {

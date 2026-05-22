@@ -381,6 +381,14 @@ void GuiContext::setDefaultFont() {
 TextStyle& GuiContext::setTextStyle(TextStyle const& textStyle, float pixelRatio) {
   TextStyle& setStyle = textPainter()->setTextStyle(textStyle);
   setStyle.fontSize *= pixelRatio;
+#ifdef STAR_PLATFORM_N3DS
+  // N3DS screen is 400x240 with interfaceScale=1. Desktop font sizes
+  // are designed for interfaceScale=3 (e.g. 8px*3=24px). On N3DS we
+  // need at least 14px for readability. Multiply by 2.5x as baseline
+  // but only if the result would otherwise be too small.
+  if (setStyle.fontSize < 14.0f)
+    setStyle.fontSize = std::round(setStyle.fontSize * 2.5f);
+#endif
   return setStyle;
 }
 

@@ -416,15 +416,15 @@ static void drawTopText(char const* text, float x, float y, float scale, u32 col
 void drawTopScreenTextOverlay(FrameReplayStats const& frameStats) {
   C2D_TextBufClear(topOverlayTextBuffer());
 
-  // Semi-transparent top bar
+  // Semi-transparent top bar for debug info
   C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 400.0f, 16.0f, C2D_Color32(0, 0, 0, 160));
 
-  // Title
-  drawTopText("OpenStarbound  N3DS", 6.0f, 1.0f, 0.42f, C2D_Color32(220, 230, 248, 255));
+  // Title line
+  drawTopText("OpenStarbound  N3DS  Phase 2", 6.0f, 1.0f, 0.42f, C2D_Color32(220, 230, 248, 255));
 
   // Frame stats on right side
   char statsBuf[80];
-  snprintf(statsBuf, sizeof(statsBuf), "prims:%zu tex:%zu batch:%zu",
+  snprintf(statsBuf, sizeof(statsBuf), "p:%zu t:%zu b:%zu",
       frameStats.replayedPrimitives, frameStats.texturedQuads, frameStats.batchCount);
   drawTopText(statsBuf, 180.0f, 1.0f, 0.36f, C2D_Color32(156, 168, 186, 220));
 }
@@ -1291,10 +1291,19 @@ void N3dsStubRenderer::preloadN3dsBottomTextures(StringMap<Image> const& images)
     }
 
     // Convert to 3DS-native RGBA8 as ABGR bytes in 8x8 Morton tile order.
-    // This must match the normal N3DS texture upload path to avoid tile-scrambled glyphs.
-    std::vector<uint8_t> tiled(static_cast<size_t>(storageW) * storageH * 4);
-    uint8_t* dst = tiled.data();
-    std::memset(dst, 0, tiled.size());
+    // Use linear memory for uploads to match the main texture path and avoid
+    // GPU-side instability on hardware/emulator.
+    size_t tiledBytes = static_cast<size_t>(storageW) * storageH * 4;
+    void* linearUploadData = linearAlloc(tiledBytes);
+    if (!linearUploadData) {
+      C3D_TexDelete(tex);
+      delete tex;
+      Logger::warn("N3DS bottom texture '{}': linearAlloc failed for {} bytes", name, tiledBytes);
+      continue;
+    }
+
+    uint8_t* dst = static_cast<uint8_t*>(linearUploadData);
+    std::memset(dst, 0, tiledBytes);
     for (unsigned y = 0; y < h; ++y) {
       unsigned textureY = h - y - 1;
       for (unsigned x = 0; x < w; ++x) {
@@ -1304,7 +1313,8 @@ void N3dsStubRenderer::preloadN3dsBottomTextures(StringMap<Image> const& images)
       }
     }
 
-    C3D_TexUpload(tex, tiled.data());
+    C3D_TexUpload(tex, linearUploadData);
+    linearFree(linearUploadData);
     C3D_TexSetFilter(tex, GPU_LINEAR, GPU_LINEAR);
     C3D_TexSetWrap(tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
 
