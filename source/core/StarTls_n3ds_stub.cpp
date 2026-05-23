@@ -10,13 +10,13 @@ alignas(8) std::array<unsigned char, 0x2000> sN3dsMainThreadTls{};
 
 }
 
-// New3DS has 256 MB total RAM, but Citra currently emulates the original
-// 3DS 64 MB FCRAM layout.  The ELF .text + .rodata + .data + .bss uses
-// ~20 MB.  Keep the linear heap small (8 MB) since the texture upload
-// budget is only 6 MB, leaving ~36 MB for the application heap which is
-// needed for the 900 MB packed.pak index + 50K descriptor database.
-extern "C" unsigned int __ctru_heap_size = 64 * 1024 * 1024;
-extern "C" unsigned int __ctru_linear_heap_size = 8 * 1024 * 1024;
+// New3DS has 256 MB total RAM. With ~20 MB for ELF sections and
+// ~10 MB linear heap, allocate 100 MB for the app heap.
+// This leaves headroom for GPU framebuffers, RomFS cache, and OS.
+// Note: Citra may emulate original 3DS FCRAM layout (64-128MB);
+// if the game fails to start, reduce these values.
+extern "C" unsigned int __ctru_heap_size = 100 * 1024 * 1024;
+extern "C" unsigned int __ctru_linear_heap_size = 10 * 1024 * 1024;
 
 extern "C" void* __aeabi_read_tp() {
   return sN3dsMainThreadTls.data();

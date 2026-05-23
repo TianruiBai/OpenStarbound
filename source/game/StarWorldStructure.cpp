@@ -52,15 +52,27 @@ WorldStructure::WorldStructure(String const& configPath) {
     MaterialId foregroundMatId;
     if (foregroundMat == "")
       foregroundMatId = StructureMaterialId;
-    else
+    else {
+#ifdef STAR_PLATFORM_N3DS
+      try { foregroundMatId = matDb->materialId(foregroundMat); }
+      catch (MapException const&) { foregroundMatId = StructureMaterialId; }
+#else
       foregroundMatId = matDb->materialId(foregroundMat);
+#endif
+    }
 
     auto backgroundMat = blockKeyConfig.getString("backgroundMat", "");
     MaterialId backgroundMatId;
     if (backgroundMat == "")
       backgroundMatId = StructureMaterialId;
-    else
+    else {
+#ifdef STAR_PLATFORM_N3DS
+      try { backgroundMatId = matDb->materialId(backgroundMat); }
+      catch (MapException const&) { backgroundMatId = StructureMaterialId; }
+#else
       backgroundMatId = matDb->materialId(backgroundMat);
+#endif
+    }
 
     auto foregroundMod = blockKeyConfig.getString("foregroundMod", "");
     ModId foregroundModId;

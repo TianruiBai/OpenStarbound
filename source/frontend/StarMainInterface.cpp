@@ -91,6 +91,30 @@ MainInterface::MainInterface(UniverseClientPtr client, WorldPainterPtr painter, 
   m_overflowMessage = make_shared<GuiMessage>("", 0);
   m_disableHud = true;
   Logger::info("N3DS MainInterface: using compact HUD bootstrap");
+  // Register lightweight stub panes to prevent pane manager crashes
+  // when Lua callbacks or packet handlers try to access panes.
+  // Real HUD is rendered via the bottom-screen overlay.
+  m_paneManager.registerPane(MainInterfacePanes::Inventory, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::CraftingPlain, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::EscapeDialog, PaneLayer::ModalWindow, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Songbook, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::QuestLog, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Ai, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Codex, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Options, PaneLayer::ModalWindow, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Popup, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Confirmation, PaneLayer::ModalWindow, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::JoinRequest, PaneLayer::ModalWindow, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::ActionBar, PaneLayer::Hud, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::QuestTracker, PaneLayer::Hud, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::MmUpgrade, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Collections, PaneLayer::Window, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::Chat, PaneLayer::Hud, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::RadioMessagePopup, PaneLayer::Hud, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::WireInterface, PaneLayer::World, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::TeamBar, PaneLayer::Hud, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::StatusPane, PaneLayer::Hud, make_shared<Pane>());
+  m_paneManager.registerPane(MainInterfacePanes::PlanetText, PaneLayer::Hud, make_shared<Pane>());
   return;
 #endif
 

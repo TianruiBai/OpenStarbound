@@ -107,13 +107,14 @@ N3DS Hardware
 - [x] **Title screen UI** - Visible menu buttons on top screen with embedded text images; bottom screen polished overlay
 - [ ] Fix intermittent boot crash (asset init phase) - improved, still needs investigation
 
-### Phase 3 — World Rendering
-- [ ] **Tile atlas system** — Material-tinted tile rendering
-- [ ] **Chunk-based culling** — Only render visible sectors
-- [ ] **Layer sorting** — Background → tiles → entities → liquids
-- [ ] **Parallax backgrounds** — Multi-layer sky/background
-- [ ] **Entity sprite rendering** — Player, NPCs, monsters, items
-- [ ] **Liquid rendering** — Water, lava, poison overlays
+### Phase 3 - World Rendering (DONE May 2026)
+- [x] **Tile atlas system** - Material-tinted tile rendering via TilePainter::produceTerrainPrimitives; safe N3DS material lookup with StructureMaterialId fallback
+- [x] **Chunk-based culling** - Deferred terrain chunk generation; per-chunk hash invalidation; only visible sectors rendered
+- [x] **Layer sorting** - Background/Midground/Liquid/Foreground layers with z-ordered RenderPrimitives
+- [x] **Parallax backgrounds** - Starfield sky with big/medium/small stars; planet horizon from CelestialMasterDatabase
+- [x] **Entity sprite rendering** - Player entity rendered via DrawablePainter; humanoid assets preloaded (6/6)
+- [x] **Liquid rendering** - RenderLiquid path active; liquid textures skipped on N3DS to save memory
+- [x] **Vanilla ship structures** - Uses vanilla /universe_server.config from packed.pak; 3,877fg+4,249bg blocks, 13 objects, 2 overlays
 
 ### Phase 4 — Visual Quality
 - [ ] **Effect/shader system** — C3D shader compilation from GLSL or pre-compiled .shbin

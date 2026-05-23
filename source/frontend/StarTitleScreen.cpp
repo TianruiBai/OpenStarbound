@@ -189,13 +189,23 @@ bool TitleScreen::handleInputEvent(InputEvent const& event) {
 
     if (keyDown->key == Key::Return) {
       if (m_titleState == TitleState::Main) {
-        Logger::info("N3DS TitleScreen: A shortcut quick-starting single player");
-        n3dsQuickStartSinglePlayer();
+        Logger::info("N3DS TitleScreen: A shortcut entering single player character select");
+        switchState(TitleState::SinglePlayerSelectCharacter);
         return true;
       }
 
       if (m_titleState == TitleState::SinglePlayerSelectCharacter) {
-        n3dsQuickStartSinglePlayer();
+        if (auto playerUuid = m_playerStorage->playerUuidAt(0)) {
+          m_mainAppPlayer = m_playerStorage->loadPlayer(*playerUuid);
+          if (m_mainAppPlayer) {
+            m_playerStorage->moveToFront(m_mainAppPlayer->uuid());
+            Logger::info("N3DS TitleScreen: A shortcut selected singleplayer player {}", m_mainAppPlayer->uuid().hex());
+            switchState(TitleState::StartSinglePlayer);
+            return true;
+          }
+        }
+        Logger::info("N3DS TitleScreen: no saved players, entering character creation");
+        switchState(TitleState::SinglePlayerCreateCharacter);
         return true;
       }
 

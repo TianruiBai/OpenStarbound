@@ -86,6 +86,8 @@ public:
   bool multiPlayerForceLegacy() const;
   void setMultiPlayerForceLegacy(bool const& forceLegacy);
 
+  void switchState(TitleState titleState);
+
 private:
   void initMainMenu();
   void initCharSelectionMenu();
@@ -96,7 +98,6 @@ private:
 
   void renderCursor();
 
-  void switchState(TitleState titleState);
   void back();
 
   void populateServerList(ListWidgetPtr list);

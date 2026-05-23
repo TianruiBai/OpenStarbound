@@ -27,18 +27,24 @@ namespace {
 
 Json readUniverseServerConfig() {
 #ifdef STAR_PLATFORM_N3DS
-  return JsonObject{
-    {"usePendingConnectionStateMachine", true},
-    {"clientWaitLimit", 10000},
-    {"persistenceWorkerThreads", 0},
-    {"useAsyncPersistence", false},
-    {"maxQueuedPersistenceSnapshots", 16},
-    {"maxPersistenceWriteRetries", 0},
-    {"workerPoolThreads", 0},
-    {"networkWorkerThreads", 0},
-    {"queueOnlyConnectionSend", false},
-    {"speciesShips", JsonObject{{"human", JsonArray{"/ships/human/humant0.structure"}}}}
-  };
+  // Use vanilla universe_server.config from packed assets for speciesShips
+  // and other game data. Only override N3DS-specific resource limits.
+  auto& root = Root::singleton();
+  auto universeConfig = root.assets()->json("/universe_server.config");
+
+  // Apply N3DS resource overrides on top of vanilla config
+  universeConfig = universeConfig.set("usePendingConnectionStateMachine", true);
+  universeConfig = universeConfig.set("clientWaitLimit", 10000);
+  universeConfig = universeConfig.set("persistenceWorkerThreads", 0);
+  universeConfig = universeConfig.set("useAsyncPersistence", false);
+  universeConfig = universeConfig.set("maxQueuedPersistenceSnapshots", 16);
+  universeConfig = universeConfig.set("maxPersistenceWriteRetries", 0);
+  universeConfig = universeConfig.set("workerPoolThreads", 0);
+  universeConfig = universeConfig.set("networkWorkerThreads", 0);
+  universeConfig = universeConfig.set("queueOnlyConnectionSend", false);
+
+  Logger::info("N3DS UniverseServer: merged vanilla config with N3DS overrides");
+  return universeConfig;
 #else
   auto& root = Root::singleton();
   auto universeConfig = root.assets()->json("/universe_server.config");
@@ -3650,7 +3656,8 @@ Maybe<WorkerPoolPromise<WorldServerThreadPtr>> UniverseServer::shipWorldPromise(
       Logger::info("N3DS UniverseServer: original ship structure placed blocks fg={} bg={} objects={} overlays={}",
           shipForegroundBlocks, shipBackgroundBlocks, shipObjects, shipOverlays);
       currentUpgrades.apply(Root::singleton().assets()->json("/ships/shipupgrades.config"));
-        currentUpgrades.apply(shipUpgradeConfig);
+        if (shipUpgradeConfig.type() != Json::Type::Null)
+          currentUpgrades.apply(shipUpgradeConfig);
       if (currentUpgrades.maxFuel == 0)
         currentUpgrades.maxFuel = 1000;
       if (currentUpgrades.crewSize == 0)

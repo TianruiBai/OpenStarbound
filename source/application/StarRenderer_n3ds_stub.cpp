@@ -95,6 +95,35 @@ static C2D_Image n3dsBottomTextureImage(String const& name) {
   return {};
 }
 
+static bool drawBottomTextureAt(String const& key, float x, float y, float scale = 1.0f, u32 color = C2D_Color32(255, 255, 255, 255)) {
+  auto image = n3dsBottomTextureImage(key);
+  if (!image.tex)
+    return false;
+
+  C2D_ImageTint tint;
+  C2D_PlainImageTint(&tint, color, 1.0f);
+  C2D_SetTintMode(C2D_TintMult);
+  C2D_DrawImageAt(image, x, y, 0.0f, &tint, scale, scale);
+  C2D_SetTintMode(C2D_TintSolid);
+  return true;
+}
+
+static bool drawBottomTextureFit(String const& key, float x, float y, float width, float height, u32 color = C2D_Color32(255, 255, 255, 255)) {
+  auto image = n3dsBottomTextureImage(key);
+  if (!image.tex)
+    return false;
+
+  float imageWidth = static_cast<float>(image.subtex ? image.subtex->width : image.tex->width);
+  float imageHeight = static_cast<float>(image.subtex ? image.subtex->height : image.tex->height);
+  if (imageWidth <= 0.0f || imageHeight <= 0.0f)
+    return false;
+
+  float scale = std::min(width / imageWidth, height / imageHeight);
+  float drawX = x + (width - imageWidth * scale) * 0.5f;
+  float drawY = y + (height - imageHeight * scale) * 0.5f;
+  return drawBottomTextureAt(key, drawX, drawY, scale, color);
+}
+
 static void n3dsReleaseBottomTextures() {
   for (auto& pair : sN3dsBottomTextures) {
     if (pair.second.tex) {
@@ -432,90 +461,86 @@ void drawTopScreenTextOverlay(FrameReplayStats const& frameStats) {
 void drawBottomTitleMenu(N3dsHandheldOverlayState const& overlayState) {
   C2D_TextBufClear(bottomOverlayTextBuffer());
 
-  // Dark gradient-like backdrop with subtle vertical bands for depth
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(8, 12, 20, 245));
-  // Top accent line
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 2.0f, C2D_Color32(160, 180, 210, 128));
-  // Bottom divider before controls hint
-  C2D_DrawRectSolid(0.0f, 222.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(48, 56, 72, 180));
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(6, 8, 12, 255));
+  drawBottomTextureFit("titleblackbar", 0.0f, 0.0f, 320.0f, 40.0f, C2D_Color32(255, 255, 255, 220));
+  drawBottomTextureFit("titlelogo", 20.0f, 8.0f, 280.0f, 54.0f);
+  drawBottomTextureFit("titleheader", 0.0f, 0.0f, 320.0f, 16.0f);
+  drawBottomTextureFit("titlefooter", 0.0f, 220.0f, 320.0f, 20.0f);
 
-  // Game title with subtle glow (layered text)
-  drawBottomText("OpenStarbound", 14.0f, 12.0f, 0.52f, C2D_Color32(48, 54, 66, 255));
-  drawBottomText("OpenStarbound", 13.0f, 11.0f, 0.52f, C2D_Color32(220, 230, 248, 255));
-  drawBottomText("Nintendo 3DS", 16.0f, 32.0f, 0.36f, C2D_Color32(140, 156, 176, 200));
-
-  // System status beads
-  drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
-
-  constexpr float ButtonX = 16.0f;
-  constexpr float ButtonY = 58.0f;
-  constexpr float ButtonTargetH = 24.0f;
-  constexpr float ButtonGap = 10.0f;
-
-  struct { char const* label; char const* textureKey; u32 accent; } const MenuItems[] = {
-      {"Single Player", "singleplayer", C2D_Color32(255, 218, 82, 255)},
-      {"Multiplayer",   "multiplayer",  C2D_Color32(92, 196, 255, 255)},
-      {"Settings",      "options",      C2D_Color32(96, 226, 148, 255)},
-      {"Exit",          "exit",         C2D_Color32(242, 86, 96, 255)},
+  struct MenuItem {
+    char const* base;
+    char const* hover;
+    char const* label;
   };
 
-  float y = ButtonY;
-  for (unsigned item = 0; item < 4; ++item) {
-    bool selected = item == overlayState.selectedTitleMenuItem;
-    float rowHeight = ButtonTargetH;
+  MenuItem const menuItems[] = {
+      {"singleplayer", "singleplayerover", "Single Player"},
+      {"multiplayer", "multiplayerover", "Multiplayer"},
+      {"options", "optionsover", "Options"},
+      {"exit", "exitover", "Quit"},
+  };
 
-    auto texImage = n3dsBottomTextureImage(MenuItems[item].textureKey);
-    static bool loggedTexStatus[4] = {false, false, false, false};
-    if (!loggedTexStatus[item]) {
-      Logger::info("N3DS drawBottomTitleMenu item '{}': texImage.tex={} subtex={}",
-          MenuItems[item].textureKey, (void*)texImage.tex, (void*)texImage.subtex);
-      loggedTexStatus[item] = true;
+  float y = 74.0f;
+  for (unsigned i = 0; i < 4; ++i) {
+    bool selected = i == overlayState.selectedTitleMenuItem;
+    char const* key = selected && n3dsBottomTextureReady(menuItems[i].hover) ? menuItems[i].hover : menuItems[i].base;
+    bool drawn = drawBottomTextureFit(key, 20.0f, y, 280.0f, 30.0f);
+    if (!drawn) {
+      C2D_DrawRectSolid(24.0f, y + 3.0f, 0.0f, 272.0f, 24.0f, selected ? C2D_Color32(56, 76, 112, 220) : C2D_Color32(24, 30, 44, 220));
+      drawBottomText(menuItems[i].label, 34.0f, y + 7.0f, 0.44f, C2D_Color32(235, 240, 250, 255));
     }
-    if (texImage.tex) {
-      float texW = static_cast<float>(texImage.subtex ? texImage.subtex->width : texImage.tex->width);
-      float texH = static_cast<float>(texImage.subtex ? texImage.subtex->height : texImage.tex->height);
-
-      // Uniform scale based on target height — preserves aspect ratio.
-      float scale = ButtonTargetH / texH;
-      float drawW = texW * scale;
-      float drawH = texH * scale;
-      float drawX = ButtonX + 6.0f;
-      float drawY = y + (rowHeight - drawH) * 0.5f;
-
-      // Selection background with rounded feel (layered rects)
-      if (selected) {
-        C2D_DrawRectSolid(ButtonX, y - 1.0f, 0.0f, 288.0f, rowHeight + 2.0f, C2D_Color32(36, 44, 60, 220));
-        // Left accent bar for selected item
-        C2D_DrawRectSolid(ButtonX, y, 0.0f, 4.0f, rowHeight, MenuItems[item].accent);
-        // Subtle glow
-        C2D_DrawRectSolid(ButtonX + 4.0f, y, 0.0f, 284.0f, rowHeight, C2D_Color32(250, 252, 255, 16));
-      } else {
-        // Item background for unselected
-        C2D_DrawRectSolid(ButtonX, y, 0.0f, 288.0f, rowHeight, C2D_Color32(22, 28, 40, 200));
-      }
-      // Draw texture with tint-multiply (same as star path) to handle alpha correctly
-      C2D_ImageTint tint;
-      C2D_PlainImageTint(&tint, C2D_Color32(255, 255, 255, 255), 1.0f);
-      C2D_SetTintMode(C2D_TintMult);
-      bool drawResult = C2D_DrawImageAt(texImage, drawX, drawY, 0.0f, &tint, scale, scale);
-      C2D_SetTintMode(C2D_TintSolid);
-    } else {
-      // Fallback button with icon-like coloured bar
-      float drawW = 280.0f;
-      C2D_DrawRectSolid(ButtonX, y, 0.0f, drawW, rowHeight, selected ? C2D_Color32(38, 46, 62, 220) : C2D_Color32(26, 32, 44, 200));
-      C2D_DrawRectSolid(ButtonX, y, 0.0f, 4.0f, rowHeight, MenuItems[item].accent);
-      if (selected)
-        C2D_DrawRectSolid(ButtonX - 2.0f, y - 1.0f, 0.0f, drawW + 4.0f, rowHeight + 2.0f, C2D_Color32(250, 252, 255, 62));
-      drawBottomText(MenuItems[item].label, ButtonX + 14.0f, y + 4.0f, 0.46f,
-          selected ? C2D_Color32(255, 255, 255, 255) : C2D_Color32(196, 210, 228, 255));
-    }
-
-    y += rowHeight + ButtonGap;
+    y += 34.0f;
   }
 
-  // Divider before controls
-  C2D_DrawRectSolid(16.0f, y + 2.0f, 0.0f, 288.0f, 1.0f, C2D_Color32(56, 64, 80, 120));
-  drawBottomText("A: Select   D-Pad: Navigate   B: Exit", 16.0f, 228.0f, 0.33f, C2D_Color32(156, 168, 186, 220));
+  drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
+  drawBottomText("A Select   D-Pad Navigate   B Back", 16.0f, 226.0f, 0.33f, C2D_Color32(178, 188, 206, 220));
+
+  if (overlayState.touchPressed)
+    drawBottomCursor(overlayState.touchPosition, true, true);
+}
+
+void drawBottomCharSelect(N3dsHandheldOverlayState const& overlayState) {
+  C2D_TextBufClear(bottomOverlayTextBuffer());
+
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(6, 9, 14, 255));
+  drawBottomTextureFit("charselectionbackground", 0.0f, 0.0f, 320.0f, 180.0f, C2D_Color32(255, 255, 255, 240));
+  drawBottomTextureFit("titleheader", 0.0f, 0.0f, 320.0f, 16.0f);
+  drawBottomTextureFit("titlefooter", 0.0f, 220.0f, 320.0f, 20.0f);
+
+  for (unsigned i = 0; i < 4; ++i) {
+    float x = 22.0f + i * 74.0f;
+    drawBottomTextureFit("charplate", x, 122.0f, 64.0f, 50.0f, C2D_Color32(255, 255, 255, i == (overlayState.selectedTitleMenuItem % 4) ? 255 : 180));
+    if (i == (overlayState.selectedTitleMenuItem % 4))
+      drawBottomTextureFit("charselected", x + 2.0f, 124.0f, 60.0f, 46.0f, C2D_Color32(255, 255, 255, 210));
+  }
+
+  bool createSelected = (overlayState.selectedTitleMenuItem % 3) == 0;
+  bool startSelected = (overlayState.selectedTitleMenuItem % 3) == 1;
+  bool backSelected = (overlayState.selectedTitleMenuItem % 3) == 2;
+  drawBottomTextureFit(createSelected ? "createcharacterover" : "createcharacter", 8.0f, 186.0f, 102.0f, 30.0f);
+  drawBottomTextureFit(startSelected ? "startgameover" : "startgame", 110.0f, 186.0f, 102.0f, 30.0f);
+  drawBottomTextureFit(backSelected ? "backover" : "back", 212.0f, 186.0f, 100.0f, 30.0f);
+
+  drawBottomText("Use top screen to pick a character", 14.0f, 22.0f, 0.34f, C2D_Color32(214, 224, 244, 235));
+  drawBottomText("A Confirm   Y Create   B Back", 14.0f, 226.0f, 0.32f, C2D_Color32(178, 188, 206, 220));
+
+  if (overlayState.touchPressed)
+    drawBottomCursor(overlayState.touchPosition, true, true);
+}
+
+void drawBottomCharCreation(N3dsHandheldOverlayState const& overlayState) {
+  C2D_TextBufClear(bottomOverlayTextBuffer());
+
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(9, 10, 12, 255));
+  drawBottomTextureFit("charactercreation", 0.0f, 0.0f, 320.0f, 198.0f, C2D_Color32(255, 255, 255, 250));
+  drawBottomTextureFit("charactercreationfooter", 0.0f, 198.0f, 320.0f, 42.0f);
+
+  bool startSelected = (overlayState.selectedTitleMenuItem % 2) == 0;
+  drawBottomTextureFit(startSelected ? "startgameover" : "startgame", 118.0f, 206.0f, 94.0f, 26.0f);
+  drawBottomTextureFit(startSelected ? "back" : "backover", 222.0f, 206.0f, 90.0f, 26.0f);
+
+  drawBottomText("Configure species, style and name on top screen", 10.0f, 8.0f, 0.31f, C2D_Color32(238, 230, 214, 240));
+  drawBottomText("L/R species   D-Pad options   A confirm", 10.0f, 226.0f, 0.30f, C2D_Color32(196, 188, 170, 220));
 
   if (overlayState.touchPressed)
     drawBottomCursor(overlayState.touchPosition, true, true);
@@ -525,127 +550,63 @@ void drawBottomHandheldOverlay(N3dsHandheldOverlayState const& overlayState, uns
   (void)frameCounter;
 
   if (overlayState.titleMenuActive) {
+    if (overlayState.titleSubState == 1) {
+      drawBottomCharSelect(overlayState);
+      return;
+    }
+    if (overlayState.titleSubState == 2) {
+      drawBottomCharCreation(overlayState);
+      return;
+    }
     drawBottomTitleMenu(overlayState);
     return;
   }
 
   C2D_TextBufClear(bottomOverlayTextBuffer());
 
-  // Dark backdrop for the whole bottom screen
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(18, 22, 30, 255));
+  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 240.0f, C2D_Color32(12, 14, 18, 255));
 
-  // === Top bar: status icons + shoulder buttons ===
-  C2D_DrawRectSolid(0.0f, 0.0f, 0.0f, 320.0f, 44.0f, C2D_Color32(24, 28, 38, 235));
-  C2D_DrawRectSolid(0.0f, 44.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(60, 68, 82, 255));
+  drawBottomTextureFit("titleheader", 0.0f, 0.0f, 320.0f, 16.0f);
+  drawBottomTextureFit("titlefooter", 0.0f, 220.0f, 320.0f, 20.0f);
 
-  // Health icon + bar
-  float iconSize = 14.0f;
-  float barWidth = 72.0f;
-  float barHeight = 8.0f;
-  float barStartX = 24.0f;
-  auto heartImg = n3dsBottomTextureImage("heart");
-  auto energyImg = n3dsBottomTextureImage("energy");
-  if (heartImg.tex) {
-    float heartW = static_cast<float>(heartImg.subtex ? heartImg.subtex->width : heartImg.tex->width);
-    float heartH = static_cast<float>(heartImg.subtex ? heartImg.subtex->height : heartImg.tex->height);
-    // Uniform scale preserves aspect ratio — use the smaller dimension to fit in icon area
-    float heartUniformScale = min(iconSize / heartW, iconSize / heartH);
-    float heartDrawW = heartW * heartUniformScale;
-    float heartDrawH = heartH * heartUniformScale;
-    float heartDrawX = 6.0f + (iconSize - heartDrawW) * 0.5f;
-    float heartDrawY = 4.0f + (iconSize - heartDrawH) * 0.5f;
-    C2D_DrawImageAt(heartImg, heartDrawX, heartDrawY, 0.0f, nullptr, heartUniformScale, heartUniformScale);
-    C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth, barHeight, C2D_Color32(48, 16, 16, 255));
-    C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth * overlayState.healthFill, barHeight, C2D_Color32(232, 64, 72, 255));
-    C2D_DrawRectSolid(barStartX, 6.0f, 0.0f, barWidth * overlayState.healthFill, 3.0f, C2D_Color32(255, 160, 160, 80));
-  } else {
-    drawBottomStatusBar(barStartX, 6.0f, barWidth, barHeight, overlayState.healthFill, C2D_Color32(232, 64, 72, 255));
-  }
+  drawBottomTextureFit("heart", 6.0f, 4.0f, 14.0f, 14.0f);
+  drawBottomTextureFit("energy", 6.0f, 22.0f, 14.0f, 14.0f);
 
-  // Energy icon + bar
-  if (energyImg.tex) {
-    float energyW = static_cast<float>(energyImg.subtex ? energyImg.subtex->width : energyImg.tex->width);
-    float energyH = static_cast<float>(energyImg.subtex ? energyImg.subtex->height : energyImg.tex->height);
-    // Uniform scale preserves aspect ratio
-    float energyUniformScale = min(iconSize / energyW, iconSize / energyH);
-    float energyDrawW = energyW * energyUniformScale;
-    float energyDrawH = energyH * energyUniformScale;
-    float energyDrawX = 6.0f + (iconSize - energyDrawW) * 0.5f;
-    float energyDrawY = 22.0f + (iconSize - energyDrawH) * 0.5f;
-    C2D_DrawImageAt(energyImg, energyDrawX, energyDrawY, 0.0f, nullptr, energyUniformScale, energyUniformScale);
-    C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth, barHeight, C2D_Color32(16, 40, 64, 255));
-    C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth * overlayState.energyFill, barHeight, C2D_Color32(72, 176, 255, 255));
-    C2D_DrawRectSolid(barStartX, 24.0f, 0.0f, barWidth * overlayState.energyFill, 3.0f, C2D_Color32(160, 220, 255, 80));
-  } else {
-    drawBottomStatusBar(barStartX, 24.0f, barWidth, barHeight, overlayState.energyFill, C2D_Color32(72, 176, 255, 255));
-  }
+  if (!drawBottomTextureFit("healthbar", 24.0f, 6.0f, 106.0f, 10.0f))
+    drawBottomStatusBar(24.0f, 6.0f, 106.0f, 10.0f, overlayState.healthFill, C2D_Color32(232, 64, 72, 255));
+  C2D_DrawRectSolid(26.0f, 8.0f, 0.0f, 102.0f * std::clamp(overlayState.healthFill, 0.0f, 1.0f), 6.0f, C2D_Color32(232, 64, 72, 200));
 
-  // Breath bar (smaller, no icon — shows only when relevant)
-  C2D_DrawRectSolid(110.0f, 6.0f, 0.0f, 42.0f, barHeight, C2D_Color32(16, 48, 32, 255));
-  C2D_DrawRectSolid(110.0f, 6.0f, 0.0f, 42.0f * overlayState.breathFill, barHeight, C2D_Color32(72, 220, 128, 255));
-  C2D_DrawRectSolid(110.0f, 6.0f, 0.0f, 42.0f * overlayState.breathFill, 3.0f, C2D_Color32(160, 255, 200, 80));
+  if (!drawBottomTextureFit("energybar", 24.0f, 24.0f, 106.0f, 10.0f))
+    drawBottomStatusBar(24.0f, 24.0f, 106.0f, 10.0f, overlayState.energyFill, C2D_Color32(72, 176, 255, 255));
+  C2D_DrawRectSolid(26.0f, 26.0f, 0.0f, 102.0f * std::clamp(overlayState.energyFill, 0.0f, 1.0f), 6.0f, C2D_Color32(72, 176, 255, 200));
 
-  // Movement indicator
-  float active = overlayState.circlePadActive ? 1.0f : 0.22f;
-  C2D_DrawRectSolid(110.0f, 22.0f, 0.0f, 42.0f, barHeight, C2D_Color32(40, 36, 16, 255));
-  C2D_DrawRectSolid(110.0f, 22.0f, 0.0f, 42.0f * active, barHeight, C2D_Color32(255, 224, 48, 255));
-  C2D_DrawRectSolid(110.0f, 22.0f, 0.0f, 42.0f * active, 3.0f, C2D_Color32(255, 244, 160, 80));
-
-  // Startup diagnostic beads (top-right)
+  C2D_DrawRectSolid(138.0f, 6.0f, 0.0f, 44.0f, 8.0f, C2D_Color32(16, 44, 30, 220));
+  C2D_DrawRectSolid(138.0f, 6.0f, 0.0f, 44.0f * std::clamp(overlayState.breathFill, 0.0f, 1.0f), 8.0f, C2D_Color32(72, 220, 128, 240));
   drawBottomStartupDiagnostics(overlayState.startupDiagnostics);
 
-  // Shoulder buttons (right side of top bar)
-  drawBottomRoundButton(198.0f, 22.0f, 7.0f, overlayState.shoulderZL, C2D_Color32(216, 120, 255, 255));
-  drawBottomRoundButton(224.0f, 22.0f, 9.0f, overlayState.shoulderL, C2D_Color32(96, 224, 255, 255));
-  drawBottomRoundButton(256.0f, 22.0f, 9.0f, overlayState.shoulderR, C2D_Color32(255, 224, 48, 255));
-  drawBottomRoundButton(288.0f, 22.0f, 7.0f, overlayState.shoulderZR, C2D_Color32(255, 104, 160, 255));
+  C2D_DrawRectSolid(8.0f, 48.0f, 0.0f, 304.0f, 144.0f, C2D_Color32(14, 16, 22, 180));
+  drawBottomText(overlayState.inWorld ? "In-world controls are active" : "Entering world...", 16.0f, 56.0f, 0.38f, C2D_Color32(220, 228, 240, 245));
+  drawBottomText("Circle Pad move  A interact  X jump", 16.0f, 74.0f, 0.30f, C2D_Color32(182, 194, 214, 235));
+  drawBottomText("Touch selects hotbar slots", 16.0f, 88.0f, 0.30f, C2D_Color32(182, 194, 214, 235));
 
-  // === Middle area: tool icons + movement pad + face buttons ===
-  for (unsigned icon = 0; icon < 4; ++icon)
-    drawBottomToolIcon(60.0f + icon * 40.0f, 72.0f, icon, icon == overlayState.selectedHotbarSlot % 4);
-
-  drawBottomMissionCard(overlayState.inWorld);
-
-  // Movement pad (left)
-  C2D_DrawRectSolid(10.0f, 100.0f, 0.0f, 96.0f, 80.0f, C2D_Color32(17, 20, 26, 220));
-  drawBottomMovementPad(58.0f, 140.0f, overlayState.circlePadActive, overlayState.dpadActive);
-
-  // C-Stick indicator
-  C2D_DrawRectSolid(118.0f, 110.0f, 0.0f, 48.0f, 48.0f, C2D_Color32(16, 19, 24, 225));
-  C2D_DrawCircleSolid(142.0f, 134.0f, 0.0f, 16.0f, C2D_Color32(68, 74, 84, 255));
-  C2D_DrawCircleSolid(142.0f, 134.0f, 0.0f, 9.0f, C2D_Color32(38, 42, 50, 255));
-  C2D_DrawCircleSolid(142.0f, 134.0f, 0.0f, 4.0f, C2D_Color32(255, 224, 48, 255));
-
-  // Face buttons (right)
-  C2D_DrawRectSolid(180.0f, 98.0f, 0.0f, 130.0f, 90.0f, C2D_Color32(18, 21, 27, 225));
-  drawBottomQuickButton(282.0f, 138.0f, 14.0f, overlayState.buttonA, C2D_Color32(255, 224, 48, 255), BottomButtonGlyph::Check);
-  drawBottomQuickButton(252.0f, 168.0f, 14.0f, overlayState.buttonB, C2D_Color32(232, 64, 72, 255), BottomButtonGlyph::Cross);
-  drawBottomQuickButton(252.0f, 108.0f, 14.0f, overlayState.buttonX, C2D_Color32(96, 224, 255, 255), BottomButtonGlyph::Up);
-  drawBottomQuickButton(222.0f, 138.0f, 14.0f, overlayState.buttonY, C2D_Color32(72, 220, 128, 255), BottomButtonGlyph::Diamond);
-  C2D_DrawRectSolid(190.0f, 94.0f, 0.0f, 20.0f, 5.0f, C2D_Color32(216, 120, 255, 255));
-  C2D_DrawRectSolid(190.0f, 190.0f, 0.0f, 26.0f, 5.0f, C2D_Color32(255, 104, 160, 255));
-
-  // === Bottom bar: hotbar ===
-  auto hotbarBg = n3dsBottomTextureImage("hotbar");
   float slotSize = 28.0f;
   float slotGap = 2.0f;
   float slotX = 10.0f;
   float slotY = 204.0f;
-
   C2D_DrawRectSolid(0.0f, 196.0f, 0.0f, 320.0f, 44.0f, C2D_Color32(28, 30, 36, 240));
-  C2D_DrawRectSolid(0.0f, 195.0f, 0.0f, 320.0f, 1.0f, C2D_Color32(82, 88, 98, 255));
+  drawBottomTextureFit("hotbar", 0.0f, 196.0f, 320.0f, 44.0f, C2D_Color32(255, 255, 255, 220));
+  drawBottomTextureFit("hotbaroverlay", 0.0f, 196.0f, 320.0f, 44.0f, C2D_Color32(255, 255, 255, 220));
 
-  if (hotbarBg.tex) {
-    float bgW = static_cast<float>(hotbarBg.subtex ? hotbarBg.subtex->width : hotbarBg.tex->width);
-    float bgScale = (slotSize * 10.0f + slotGap * 9.0f + 20.0f) / bgW;
-    C2D_DrawImageAt(hotbarBg, 0.0f, 196.0f, 0.0f, nullptr, bgScale, bgScale);
+  for (unsigned slot = 0; slot < 10; ++slot) {
+    bool selected = slot == overlayState.selectedHotbarSlot;
+    float x = slotX + slot * (slotSize + slotGap);
+    C2D_DrawRectSolid(x, slotY, 0.0f, slotSize, slotSize, C2D_Color32(20, 23, 29, 220));
+    C2D_DrawRectSolid(x + 2.0f, slotY + 2.0f, 0.0f, slotSize - 4.0f, slotSize - 4.0f, C2D_Color32(42, 48, 58, 230));
+    if (selected) {
+      if (!drawBottomTextureFit("selectedslot", x - 2.0f, slotY - 2.0f, slotSize + 4.0f, slotSize + 4.0f))
+        C2D_DrawRectSolid(x - 1.0f, slotY - 1.0f, 0.0f, slotSize + 2.0f, slotSize + 2.0f, C2D_Color32(255, 228, 126, 180));
+    }
   }
-
-  u32 slotColors[] = {
-      C2D_Color32(232, 188, 72, 255), C2D_Color32(220, 104, 240, 255), C2D_Color32(120, 190, 255, 255), C2D_Color32(255, 234, 116, 255), C2D_Color32(80, 160, 255, 255),
-      C2D_Color32(255, 144, 72, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255), C2D_Color32(80, 86, 96, 255)};
-  for (unsigned slot = 0; slot < 10; ++slot)
-    drawBottomSlot(slotX + slot * (slotSize + slotGap), slotY, slotSize, slot == overlayState.selectedHotbarSlot, slot < 6, slotColors[slot]);
 
   // Cursors
   Vec2F bottomPointer = {overlayState.pointerPosition[0] * (static_cast<float>(N3dsBottomScreenWidth) / static_cast<float>(N3dsTopScreenWidth)), overlayState.pointerPosition[1]};
@@ -1187,6 +1148,10 @@ void N3dsStubRenderer::setHandheldTitleMenuState(bool active) {
   if (active)
     m_handheldOverlayState.inWorld = false;
   setN3dsTitleMenuInputActive(active);
+}
+
+void N3dsStubRenderer::setHandheldTitleSubState(unsigned subState) {
+  m_handheldOverlayState.titleSubState = subState;
 }
 
 void N3dsStubRenderer::sealImmediatePrimitiveBatch() {

@@ -605,16 +605,58 @@ void ClientApplication::render() {
         StringMap<Image> images;
         // Title menu buttons
         images["singleplayer"] = loadImage(menuButtonImagePath("singleplayer", "/interface/title/singleplayer.png"));
+        images["singleplayerover"] = loadImage(menuButtonImagePath("singleplayer", "/interface/title/singleplayerOver.png"));
         images["multiplayer"]   = loadImage(menuButtonImagePath("multiplayer", "/interface/title/multiplayer.png"));
+        images["multiplayerover"] = loadImage(menuButtonImagePath("multiplayer", "/interface/title/multiplayerover.png"));
         images["options"]       = loadImage(menuButtonImagePath("options", "/interface/title/options.png"));
+        images["optionsover"] = loadImage(menuButtonImagePath("options", "/interface/title/optionsover.png"));
         images["exit"]          = loadImage(menuButtonImagePath("quit", "/interface/title/quit.png"));
+        images["exitover"] = loadImage(menuButtonImagePath("quit", "/interface/title/quitover.png"));
+        images["titleheader"] = loadImage("/interface/title/titleheader.png");
+        images["titlefooter"] = loadImage("/interface/title/titlefooter.png");
+        images["titleblackbar"] = loadImage("/interface/title/blackbar.png");
+        images["titlelogo"] = loadImage("/interface/title/FirstLogo.png");
+
+        images["charselectionbackground"] = loadImage("/interface/title/charselectionbackground.png");
+        images["charplate"] = loadImage("/interface/title/charplate.png");
+        images["charselected"] = loadImage("/interface/title/charselected.png");
+        images["createcharacter"] = loadImage("/interface/title/createcharacter.png");
+        images["createcharacterover"] = loadImage("/interface/title/createcharacterover.png");
+        images["startgame"] = loadImage("/interface/title/startgame.png");
+        images["startgameover"] = loadImage("/interface/title/startgameover.png");
+        images["switchcharacter"] = loadImage("/interface/title/switchcharacter.png");
+        images["switchcharacterover"] = loadImage("/interface/title/switchcharacterover.png");
+        images["back"] = loadImage("/interface/title/back.png");
+        images["backover"] = loadImage("/interface/title/backover.png");
+
+        images["charactercreation"] = loadImage("/interface/title/charactercreation.png");
+        images["charactercreationfooter"] = loadImage("/interface/title/charactercreationfooter.png");
+
         // HUD icons
         images["heart"]  = loadImage("/interface/inventory/heart.png");
         images["energy"] = loadImage("/interface/inventory/lightning.png");
         images["hotbar"] = loadImage("/interface/actionbar/actionbarbg.png");
+        images["hotbaroverlay"] = loadImage("/interface/actionbar/actionbaroverlay.png");
+        images["selectedslot"] = loadImage("/interface/actionbar/selectedslot-custom.png");
+        // Vanilla bar textures for HUD
+        images["healthbar"] = loadImage("/interface/healthbar.png");
+        images["energybar"] = loadImage("/interface/energybar.png");
         n3dsRenderer->preloadN3dsBottomTextures(images);
       }
-      n3dsRenderer->setHandheldTitleMenuState(m_titleScreen && m_titleScreen->currentState() == TitleState::Main);
+      n3dsRenderer->setHandheldTitleMenuState(m_titleScreen != nullptr);
+      if (m_titleScreen) {
+        auto ts = m_titleScreen->currentState();
+        unsigned subState = 0;
+        if (ts == TitleState::SinglePlayerSelectCharacter || ts == TitleState::MultiPlayerSelectCharacter)
+          subState = 1;
+        else if (ts == TitleState::SinglePlayerCreateCharacter || ts == TitleState::MultiPlayerCreateCharacter)
+          subState = 2;
+        else if (ts == TitleState::Options)
+          subState = 3;
+        else if (ts == TitleState::Mods)
+          subState = 4;
+        n3dsRenderer->setHandheldTitleSubState(subState);
+      }
     }
 #endif
     if (m_titleScreen)
@@ -1040,8 +1082,8 @@ void ClientApplication::changeState(MainAppState newState) {
         Logger::info("N3DS game bootstrap: default player ship species set to {}", m_player->shipSpecies());
         m_player->setName("N3DS Explorer");
         Logger::info("N3DS game bootstrap: default player named");
-        m_player->log()->setIntroComplete(true);
-        Logger::info("N3DS game bootstrap: default player intro complete");
+        // Do NOT skip intro - let the player experience the intro mission
+        Logger::info("N3DS game bootstrap: default player intro pending");
       #ifdef STAR_PLATFORM_N3DS
         Logger::info("N3DS game bootstrap: using unsaved in-memory default player");
       #else
@@ -1089,9 +1131,21 @@ void ClientApplication::changeState(MainAppState newState) {
     m_timeSinceJoin = (int64_t)Time::millisecondsSinceEpoch() / 1000;
 
 #ifdef STAR_PLATFORM_N3DS
-  m_cinematicOverlay->stop();
-  m_player->setPendingCinematic(Json());
-  Logger::info("N3DS game bootstrap: skipped loading cinematic");
+  // Load cinematics properly - don't skip intro for test characters
+  {
+    auto assets = m_root->assets();
+    String loadingCinematic = assets->json("/client.config:loadingCinematic").toString();
+    m_cinematicOverlay->load(assets->json(loadingCinematic));
+    if (!m_player->log()->introComplete()) {
+      String introCinematic = assets->json("/client.config:introCinematic").toString();
+      introCinematic = introCinematic.replaceTags(StringMap<String>{{"species", m_player->species()}});
+      m_player->setPendingCinematic(Json(introCinematic));
+      Logger::info("N3DS game bootstrap: intro cinematic pending for species {}", m_player->species());
+    } else {
+      m_player->setPendingCinematic(Json());
+      Logger::info("N3DS game bootstrap: intro already complete");
+    }
+  }
 #else
     auto assets = m_root->assets();
     String loadingCinematic = assets->json("/client.config:loadingCinematic").toString();
@@ -1443,13 +1497,8 @@ void ClientApplication::updateTitle(float dt) {
     String autoStartMarker = m_root->toStoragePath("n3ds_autostart_singleplayer");
     if (File::exists(autoStartMarker)) {
       sN3dsAutoStartConsumed = true;
-      Logger::info("N3DS Title update: consuming singleplayer autostart marker");
-      try {
-        File::remove(autoStartMarker);
-      } catch (std::exception const& e) {
-        Logger::warn("N3DS Title update: could not remove autostart marker: {}", outputException(e, false));
-      }
-
+      Logger::info("N3DS Title update: auto-start quick-launching single player");
+      try { File::remove(autoStartMarker); } catch (...) {}
       m_titleScreen->n3dsQuickStartSinglePlayer();
     }
   }
@@ -1497,11 +1546,10 @@ void ClientApplication::updateTitle(float dt) {
 
   if (m_titleScreen->currentState() == TitleState::StartSinglePlayer) {
 #ifdef STAR_PLATFORM_N3DS
-    // World rendering (tiles, entities, liquids) is not yet implemented for N3DS.
-    // Redirect back to title screen instead of crashing in the world init path.
-    Logger::info("N3DS: Single Player requested but world rendering not yet available — returning to title");
-    if (m_titleScreen)
-      m_titleScreen->resetState();
+    // World rendering (tiles, entities, liquids) now has N3DS support via
+    // TilePainter::produceTerrainPrimitives path.
+    Logger::info("N3DS: Single Player starting with N3DS world rendering...");
+    changeState(MainAppState::SinglePlayer);
 #else
     changeState(MainAppState::SinglePlayer);
 #endif

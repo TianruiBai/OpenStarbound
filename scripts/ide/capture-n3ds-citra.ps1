@@ -265,7 +265,7 @@ if (!$UseExistingCitraLayout -and (Test-Path $citraConfigPath)) {
   Write-Host "Using temporary Citra custom layout: top ${topWidth}x${topHeight}, bottom ${bottomWidth}x${bottomHeight}"
 }
 
-$sdmcStorage = Join-Path $env:APPDATA "Citra\sdmc\OpenStarbound\storage"
+$sdmcStorage = Join-Path $env:APPDATA "Citra\sdmc\OpenStarbound"
 $autoStartMarker = Join-Path $sdmcStorage "n3ds_autostart_singleplayer"
 if ($AutoStartSinglePlayer) {
   New-Item -ItemType Directory -Path $sdmcStorage -Force | Out-Null

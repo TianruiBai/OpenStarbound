@@ -19,6 +19,9 @@ struct N3dsHandheldOverlayState {
   float breathFill = 1.0f;
   bool inWorld = false;
   bool titleMenuActive = false;
+  // Title sub-state for bottom screen context:
+  // 0=main menu, 1=char select, 2=char creation, 3=options, 4=mods
+  unsigned titleSubState = 0;
   bool pointerPressed = false;
   bool touchPressed = false;
   bool circlePadActive = false;
@@ -69,6 +72,7 @@ public:
   void setHandheldOverlayState(N3dsHandheldOverlayState overlayState);
   void setHandheldGameplayState(bool inWorld, float healthFill, float energyFill, float breathFill);
   void setHandheldTitleMenuState(bool active);
+  void setHandheldTitleSubState(unsigned subState);
   // Pre-load bottom-screen textures from the Starbound-packed assets so the
   // bottom screen can draw real images instead of coloured rectangles.
   // Caller provides Images keyed by logical name:
